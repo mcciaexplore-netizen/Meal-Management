@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meal-management"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "mysql-connector-python>=9.2,<10",
+    "cryptography>=44,<49",
+    "qrcode>=8,<9",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "pydantic>=2.10,<3",
+    "pillow>=11,<13",
+    "python-dotenv>=1,<2",
+]
+
+[project.optional-dependencies]
+test = ["httpx>=0.28,<1"]
+production = ["boto3>=1.35,<2"]
+
+[project.scripts]
+meal-management = "meal_management.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["backend"]

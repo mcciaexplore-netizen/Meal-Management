@@ -1,0 +1,23 @@
+[Unit]
+Description=Meal management administrator application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meal-management
+Group=meal-management
+WorkingDirectory=/opt/meal-management
+EnvironmentFile=/etc/meal-management/application.env
+ExecStart=/opt/meal-management/.venv/bin/uvicorn meal_management.admin_api:create_app --factory --app-dir backend --host 127.0.0.1 --port 8000 --workers 2 --no-access-log --no-proxy-headers
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
