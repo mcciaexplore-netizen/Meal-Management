@@ -1,7 +1,10 @@
 import importlib.util
+import hashlib
 import json
 import os
 import runpy
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -94,10 +97,71 @@ class VercelPackagingTests(unittest.TestCase):
         self.assertEqual(lines[0], "*")
         manifest = json.loads((directory / "bundle-manifest.json").read_text())
         expected = set(manifest["files"]) | {"bundle-manifest.json", ".vercelignore"}
-        explicit_files = {line[1:] for line in lines[1:] if not line.endswith("/")}
-        self.assertEqual(explicit_files, expected)
+        directories = {parent.as_posix() for name in expected for parent in Path(name).parents if parent != Path(".")}
+        self.assertEqual({line[2:] for line in lines[1:]}, expected | directories)
+        self.assertTrue(all(line.startswith("!/") and not line.endswith("/") for line in lines[1:]))
         self.assertTrue(all("*" not in line for line in lines[1:]))
-        self.assertTrue(all("!" + name not in lines for name in self.private_files))
+        self.assertTrue(all("!/" + name not in lines for name in self.private_files))
+
+    def test_installed_cli_upload_traversal_includes_complete_bundles_and_excludes_unlisted_files(self):
+        engine = ROOT / "build/vercel-tools/node_modules/vercel/dist/chunks/chunk-562OXD3F.js"
+        node = shutil.which("node")
+        if not node or not engine.is_file():
+            self.skipTest("Installed Vercel 59.15.1 and Node are required for this offline upload regression")
+        script = """
+globalThis.fetch = () => { throw new Error('Network access is forbidden'); };
+const {require_dist} = await import(process.argv[1]);
+const {buildFileTree} = require_dist();
+const {relative} = await import('node:path');
+const root = process.argv[2];
+const result = await buildFileTree(root, {isDirectory:true, prebuilt:false}, () => {});
+process.stdout.write(JSON.stringify(result.fileList.map(path => relative(root, path)).sort()));
+"""
+
+        def selected(directory):
+            result = subprocess.run(
+                [node, "--input-type=module", "-e", script, engine.as_uri(), str(directory)],
+                cwd=self.root, env={"PATH": os.environ.get("PATH", ""), "HOME": str(self.root), "CI": "1", "VERCEL_TELEMETRY_DISABLED": "1"},
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False,
+            )
+            self.assertEqual(result.returncode, 0)
+            return set(json.loads(result.stdout))
+
+        for role in packaging.ASSETS:
+            with self.subTest(role=role):
+                directory, _ = self._package(role)
+                manifest = json.loads((directory / "bundle-manifest.json").read_text())
+                expected = set(manifest["files"]) | {"bundle-manifest.json", ".vercelignore"}
+                directories = {parent.as_posix() for name in expected for parent in Path(name).parents if parent != Path(".")}
+                extra = {
+                    ".env", ".vercel/project.json", "backend/meal_management/private_secret.py",
+                    "backend/meal_management/.env", "backend/meal_management/shadow/app.py",
+                    "frontend/dist/" + role + "/private.env", "public/assets/private.txt",
+                    "frontend/dist/" + ("scanner" if role == "admin" else "admin") + "/index.html",
+                }
+                for name in extra:
+                    path = directory / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("FICTIONAL_PRIVATE_MARKER", encoding="utf-8")
+                (directory / ".env.local").symlink_to(self.project / ".env")
+                ignore = directory / ".vercelignore"
+                corrected = ignore.read_bytes()
+                old_lines = ["*"] + ["!" + name + "/" for name in sorted(directories)] + ["!" + name for name in sorted(expected)]
+                ignore.write_text("\n".join(old_lines) + "\n", encoding="utf-8")
+                old_selected = selected(directory)
+                self.assertEqual(old_selected, {name for name in expected if "/" not in name})
+                self.assertEqual(len(old_selected), 7)
+                ignore.write_bytes(corrected)
+                uploaded = selected(directory)
+                self.assertEqual(uploaded, expected)
+                self.assertFalse(uploaded.intersection(extra | {".env.local"}))
+                target = self.root / (role + "-uploaded")
+                target.mkdir()
+                for name in uploaded:
+                    path = target / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(directory / name, path)
+                self.assertEqual(verification.verify_bundle(target, {}), role)
 
     def test_entry_uses_fixed_role_and_refuses_conflicting_environment_before_factory(self):
         directory, _ = self._package("scanner")
@@ -132,6 +196,10 @@ class VercelPackagingTests(unittest.TestCase):
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertEqual(headers["Content-Security-Policy"], packaging.CONTENT_SECURITY_POLICY)
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        raw = (directory / "vercel.json").read_bytes()
+        manifest = json.loads((directory / "bundle-manifest.json").read_text())
+        self.assertEqual(manifest["files"]["vercel.json"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(manifest["json_files"], {"vercel.json": verification.canonical_json_sha256(raw)})
 
     def test_existing_output_is_preserved_and_never_overwritten(self):
         output = self.root / "existing"

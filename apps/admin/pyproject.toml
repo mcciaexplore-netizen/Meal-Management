@@ -1,0 +1,25 @@
+[project]
+name = "meal-management-admin"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mysql-connector-python>=9.2,<10",
+    "cryptography>=44,<49",
+    "qrcode>=8,<9",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "pydantic>=2.10,<3",
+    "pillow>=11,<13",
+    "python-dotenv>=1,<2",
+    "vercel>=0.5,<1",
+    "httpx>=0.28,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.vercel]
+entrypoint = "app:app"
+
+[tool.vercel.fastapi.static]
+cdn = false

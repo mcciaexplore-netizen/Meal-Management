@@ -124,8 +124,8 @@ def _requirements(project_root):
 def _ignore_file(files):
     allowed = set(files) | {"bundle-manifest.json", ".vercelignore"}
     directories = {parent.as_posix() for name in allowed for parent in Path(name).parents if parent != Path(".")}
-    lines = ["*"] + ["!" + name + "/" for name in sorted(directories, key=lambda name: (name.count("/"), name))]
-    lines.extend("!" + name for name in sorted(allowed))
+    lines = ["*"] + ["!/" + name for name in sorted(directories, key=lambda name: (name.count("/"), name))]
+    lines.extend("!/" + name for name in sorted(allowed))
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -163,6 +163,9 @@ def package_application(application, *, project_root=PROJECT_ROOT, output_direct
         manifest = {
             "format_version": 1, "application": application,
             "files": {name: hashlib.sha256(content).hexdigest() for name, content in sorted(source_files.items())},
+            "json_files": {"vercel.json": hashlib.sha256(json.dumps(
+                json.loads(source_files["vercel.json"]), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")).hexdigest()},
         }
         _write(stage / "bundle-manifest.json", (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         _write(stage / ".vercelignore", _ignore_file(source_files))

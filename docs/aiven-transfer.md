@@ -10,7 +10,7 @@ Final verification passed with 4 employees, 5 QR credentials, 13 email-history r
 
 The first post-migration verification stopped because migration 006 automatically advanced `email_queue.updated_at` for the two queued messages whose status changed. The corrected verifier permits only those expected timestamp changes within the migration's recorded execution window. A subsequent read-only verification passed without repeating the import or migration. The private verification report is `var/private/backups/20260910T065506Z-0f524f477517d625.restore-20260910T070213646618Z.json`.
 
-The application cutover is pending. `.env` still selects the local database; `.env.aiven` still contains the migration account and has preview email selected with both sending flags disabled. No runtime account was created and neither application was restarted. Automatic approval review blocked the proposed account creation and configuration switch because its host scope had not been explicitly approved. The proposed scope is recorded below for review.
+The application cutover is pending. The user executed the prepared account command and it reported `meal_runtime`@`%` created and verified on Aiven. Its generated connection settings are saved in `var/private/vercel/database-runtime.env`, confirmed locally as an owner-only file with the expected account and target. `.env` still selects the local database; `.env.aiven` still contains the migration account and preview email settings with both sending flags disabled. Neither local application was restarted or switched. The earlier account-approval block is superseded by the user's manual execution; Vercel environment configuration and application deployment remain separate pending steps.
 
 The remaining numbered sections describe the repeatable procedure. Backup and restore steps are already complete for the transfer above. Full application writes, concurrent MySQL integration tests, physical camera checks, and real email delivery remain unverified for this cutover.
 
@@ -79,9 +79,9 @@ MySQL DDL is not an all-or-nothing application transaction. A failed import or m
 
 Provision and verify a separate restricted Aiven runtime database account before starting either application against Aiven. Account creation and grants require their own approved database changes. Replace the migration-owner credentials in `.env.aiven` with the runtime account only after restore verification. Do not run the applications under the migration account or Aiven's provider administrator account.
 
-### Pending account and configuration proposal
+### Account permissions and original laptop cutover proposal
 
-Create a new `meal_runtime` account with a securely generated password and mandatory SSL. The proposed MySQL host is `%`, which allows the account to authenticate from any source host that can reach the existing Aiven service. It is not an IP restriction. This does not change Aiven firewall settings or expose the application servers; both HTTP servers remain bound to laptop loopback. Approval of this account scope is still required.
+The user-created `meal_runtime` account uses a securely generated password and mandatory SSL. Its MySQL host is `%`, which allows the account to authenticate from any source host that can reach the existing Aiven service. It is not an IP restriction. Account creation did not change Aiven firewall settings or expose the local application servers. The original laptop configuration-switch instructions below remain unexecuted; the selected current workflow prepares Vercel settings separately.
 
 Grant `SELECT` on `defaultdb.*` and only the following table-specific write privileges for the current HTTP applications:
 
@@ -94,7 +94,7 @@ No `DELETE`, schema changes, trigger creation, account management, or grant opti
 
 Before switching, preserve the original local configuration privately as `.env.local` and the migration configuration as `.env.aiven.migration`, refusing to overwrite existing files. Store the generated runtime credentials only in private files with mode `0600`. Verify the account's exact grants, TLS connection, migration ledger, and existing scanner profile before updating `.env` and `.env.aiven` together. Retain the existing encryption keys, photos, browser secrets, and loopback origins. Keep `EMAIL_BACKEND=preview`, `EMAIL_SEND_ENABLED=false`, and `EMAIL_AUTO_SEND_ENABLED=false`.
 
-The proposed account and configuration changes have not run. After approval and successful verification, start each application independently and check its live and ready endpoints before resuming normal use.
+The runtime account has been created through the user-run Vercel-only workflow; the laptop configuration changes described here have not run. If that separate local cutover is later chosen, start each application independently after updating its selected configuration and check its live and ready endpoints before resuming normal use.
 
 Keep the same private local photo directory and all applicable encryption keys. Photo files remain on the laptop for this phase; moving MySQL does not upload photos to Aiven. Retain the backup copies separately.
 
@@ -118,7 +118,7 @@ The current next step targets the two prepared Vercel projects. It does not auth
 
 Verify the new account's exact grants, verified TLS connection, and migration ledger using read-only checks. Save the connection settings and generated password only in a new `var/private/vercel/database-runtime.env` file with mode `0600`, refusing to overwrite an existing file and using a private parent directory. This path is ignored by Git. Preserve `.env`, `.env.aiven`, existing QR keys, photos, database objects, records, and local application processes. No migrations, existing-row changes, deployment, email sending, firewall changes, or cloud environment updates are included in this account-only proposal.
 
-The user chose to execute this step manually. The [terminal command and recovery instructions](aiven-runtime-account.md) implement this proposal with an explicit change flag and typed target confirmation. The account has not been created by the agent. Successful grants and read-only checks will not establish that application writes, triggers, concurrent requests, email providers, or hosted runtime behavior work under the new account; those checks remain separate.
+The user executed the [terminal command](aiven-runtime-account.md), entered the exact target confirmation, and received its verified-success result. The final credentials file exists with mode `0600` and no pending file remains. Local checks confirm the expected runtime account and database target and preserved QR/application secrets without printing them. The agent did not rerun account creation or connect to either database during these checks. Application writes, triggers, concurrent requests, email providers, and hosted runtime behavior under the new account remain unverified.
 
 ## 6. Preserve a recovery point
 

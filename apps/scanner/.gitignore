@@ -1,0 +1,6 @@
+/backend/
+/frontend/
+/public/
+/git-build-manifest.json
+/.git-build.lock
+/.vercel/
