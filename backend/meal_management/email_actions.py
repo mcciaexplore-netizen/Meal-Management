@@ -59,10 +59,18 @@ class EmailActions:
         self._enabled()
         return self.services.email_queue.approve_bulk(context, email_ids)
 
+    @property
+    def process_batch_size(self):
+        limit = getattr(self.runtime, "email_process_limit", 10)
+        if type(limit) is not int or not 1 <= limit <= 10:
+            raise DomainError("INVALID_SETTING_EMAIL_PROCESS_LIMIT")
+        return limit
+
     def process_bulk(self, context, email_ids):
         self._enabled()
+        limit = self.process_batch_size
         if (
-            not isinstance(email_ids, (list, tuple)) or not 1 <= len(email_ids) <= 10
+            not isinstance(email_ids, (list, tuple)) or not 1 <= len(email_ids) <= limit
             or any(type(identifier) is not int or not 1 <= identifier <= 2**64 - 1 for identifier in email_ids)
             or len(set(email_ids)) != len(email_ids)
         ):

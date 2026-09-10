@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from meal_management.local_server import PROJECT_ROOT, main
+from meal_management.local_server import PROJECT_ROOT, _environment, main
 
 
 def environment():
@@ -24,6 +24,46 @@ def environment():
 
 
 class LocalServerTests(unittest.TestCase):
+    def test_file_only_ignores_exported_database_and_email_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "selected.env"
+            path.write_text("DB_HOST=selected.invalid\nEMAIL_SEND_ENABLED=false\nDB_PASSWORD=literal${DB_HOST}\n")
+            with patch.dict(os.environ, {"DB_HOST": "stale.invalid", "EMAIL_SEND_ENABLED": "true"}):
+                before = dict(os.environ)
+                selected = _environment(path, file_only=True)
+                inherited = _environment(path)
+                self.assertEqual(dict(os.environ), before)
+        self.assertEqual(selected["DB_HOST"], "selected.invalid")
+        self.assertEqual(selected["EMAIL_SEND_ENABLED"], "false")
+        self.assertEqual(selected["DB_PASSWORD"], "literal${DB_HOST}")
+        self.assertEqual(inherited["DB_HOST"], "stale.invalid")
+        self.assertEqual(inherited["EMAIL_SEND_ENABLED"], "true")
+
+    def test_both_launchers_pass_selected_file_without_inherited_settings(self):
+        for name in ("admin", "scanner"):
+            with self.subTest(application=name), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "aiven.env"
+                values = environment()
+                path.write_text("\n".join(key + "=" + value for key, value in values.items()))
+                listener = Mock()
+                port = 8000 if name == "admin" else 8001
+                listener.getsockname.return_value = ("127.0.0.1", port)
+                with (
+                    patch.dict(os.environ, {"DB_HOST": "stale.invalid", "EMAIL_SEND_ENABLED": "true"}),
+                    patch("meal_management.local_server._validate_assets"),
+                    patch("meal_management.local_server.socket.socket", return_value=listener),
+                    patch("meal_management.local_server._application") as application,
+                    patch("uvicorn.Config"),
+                    patch("uvicorn.Server") as server,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    server.return_value.started = True
+                    self.assertEqual(main([name, "--env-file", str(path), "--env-file-only"]), 0)
+                settings, runtime = application.call_args.args[1:]
+                self.assertEqual(settings.db_host, values["DB_HOST"])
+                self.assertFalse(runtime.email_send_enabled)
+                listener.bind.assert_called_once_with(("127.0.0.1", port))
+
     def test_missing_environment_file_fails_before_binding_or_loading_application(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch("meal_management.local_server.socket.socket") as listener:

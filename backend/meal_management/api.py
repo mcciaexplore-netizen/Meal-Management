@@ -149,7 +149,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
 
     @app.get("/api/application")
     def application():
-        return {"scanner_url": runtime.scanner_origin}
+        return {"scanner_url": runtime.scanner_origin, "max_photo_bytes": runtime.max_photo_bytes}
 
     @app.get("/api/auth/csrf")
     def csrf(request: Request, response: Response):
@@ -440,6 +440,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
             "backend": runtime.email_backend,
             "sending_enabled": runtime.email_send_enabled,
             "preview_available": runtime.environment == "development" and runtime.email_backend == "preview",
+            "process_batch_size": app.state.email_actions.process_batch_size,
             **app.state.email_lifecycle.snapshot(),
         }
 

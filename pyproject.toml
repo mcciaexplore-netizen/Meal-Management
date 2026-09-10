@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 test = ["httpx>=0.28,<1"]
 production = ["boto3>=1.35,<2"]
+vercel = ["vercel>=0.5,<1", "httpx>=0.28,<1"]
 
 [project.scripts]
 meal-management = "meal_management.cli:main"

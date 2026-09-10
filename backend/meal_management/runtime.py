@@ -87,12 +87,15 @@ class RuntimeSettings:
     email_backend: str = "preview"
     aws_region: str | None = None
     photo_bucket: str | None = None
+    blob_store_host: str | None = None
+    blob_read_write_token: str | None = field(default=None, repr=False)
     email_sender: str | None = None
     gmail_app_password: str | None = field(default=None, repr=False)
     email_send_enabled: bool = False
     email_auto_send_enabled: bool = False
     email_poll_seconds: int = 5
     email_batch_size: int = 10
+    email_process_limit: int = 10
     max_photo_bytes: int = 5 * 1024 * 1024
     session_idle_minutes: int = 30
     login_limit: int = 5
@@ -147,7 +150,7 @@ class RuntimeSettings:
             raise ConfigurationError("INVALID_SETTING_ALLOWED_HOSTS")
         photo_backend = env.get("PHOTO_BACKEND", "local").strip().lower()
         email_backend = env.get("EMAIL_BACKEND", "preview").strip().lower()
-        if photo_backend not in {"local", "s3"}:
+        if photo_backend not in {"local", "s3", "vercel_blob"}:
             raise ConfigurationError("INVALID_SETTING_PHOTO_BACKEND")
         if email_backend not in {"preview", "ses", "gmail"}:
             raise ConfigurationError("INVALID_SETTING_EMAIL_BACKEND")
@@ -156,13 +159,25 @@ class RuntimeSettings:
         if email_auto_send_enabled and (not email_send_enabled or email_backend not in {"gmail", "ses"}):
             raise ConfigurationError("EMAIL_AUTO_SEND_REQUIRES_ENABLED_REAL_EMAIL")
         if environment == "production" and (photo_backend == "local" or email_backend == "preview"):
-            raise ConfigurationError("PRODUCTION_REQUIRES_S3_STORAGE_AND_REAL_EMAIL")
+            raise ConfigurationError("PRODUCTION_REQUIRES_REMOTE_STORAGE_AND_REAL_EMAIL")
         region = _required(env, "AWS_REGION") if photo_backend == "s3" or email_backend == "ses" else None
         if region and not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d", region):
             raise ConfigurationError("INVALID_SETTING_AWS_REGION")
         bucket = _required(env, "PHOTO_S3_BUCKET") if photo_backend == "s3" else None
         if bucket and not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket):
             raise ConfigurationError("INVALID_SETTING_PHOTO_S3_BUCKET")
+        blob_host = None
+        blob_token = None
+        if photo_backend == "vercel_blob":
+            blob_host = _required(env, "BLOB_STORE_HOST").lower()
+            if not re.fullmatch(r"[a-z0-9]+\.private\.blob\.vercel-storage\.com", blob_host):
+                raise ConfigurationError("INVALID_SETTING_BLOB_STORE_HOST")
+            blob_token = _required(env, "BLOB_READ_WRITE_TOKEN")
+            if (
+                not re.fullmatch(r"[!-~]{32,512}", blob_token)
+                or blob_token.lower().startswith(("replace", "change", "example", "placeholder"))
+            ):
+                raise ConfigurationError("INVALID_SETTING_BLOB_READ_WRITE_TOKEN")
         sender = _required(env, "EMAIL_SENDER") if email_backend in {"ses", "gmail"} else None
         if sender and not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", sender):
             raise ConfigurationError("INVALID_SETTING_EMAIL_SENDER")
@@ -192,12 +207,15 @@ class RuntimeSettings:
             email_backend=email_backend,
             aws_region=region,
             photo_bucket=bucket,
+            blob_store_host=blob_host,
+            blob_read_write_token=blob_token,
             email_sender=sender,
             gmail_app_password=gmail_password,
             email_send_enabled=email_send_enabled,
             email_auto_send_enabled=email_auto_send_enabled,
             email_poll_seconds=_integer(env, "EMAIL_POLL_SECONDS", 5, 1, 300),
             email_batch_size=_integer(env, "EMAIL_BATCH_SIZE", 10, 1, 100),
+            email_process_limit=_integer(env, "EMAIL_PROCESS_LIMIT", 10, 1, 10),
             max_photo_bytes=_integer(env, "MAX_PHOTO_BYTES", 5 * 1024 * 1024, 1024, 20 * 1024 * 1024),
             session_idle_minutes=_integer(env, "SESSION_IDLE_MINUTES", 30, 1, 480),
             login_limit=_integer(env, "LOGIN_ATTEMPT_LIMIT", 5, 1, 100),

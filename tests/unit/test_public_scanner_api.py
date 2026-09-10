@@ -324,10 +324,10 @@ class SeparateApplicationTests(ApiTestCase):
         self.assertFalse(hasattr(self.scanner.app.state, "storage"))
         self.assertFalse(hasattr(self.scanner.app.state, "queries"))
 
-    def test_admin_application_exposes_only_safe_scanner_location_metadata(self):
+    def test_admin_application_exposes_safe_scanner_location_and_photo_limit_metadata(self):
         response = self.admin.client.get("/api/application")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"scanner_url": "http://testserver:8001"})
+        self.assertEqual(response.json(), {"scanner_url": "http://testserver:8001", "max_photo_bytes": 5 * 1024 * 1024})
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.admin.services.database.transaction.assert_not_called()
         self.assert_error(self.scanner.client.get("/api/application"), 404, "NOT_FOUND")

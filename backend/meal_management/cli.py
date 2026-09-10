@@ -19,6 +19,9 @@ from .runtime import RuntimeSettings
 from .security import QrRenderer, TokenVault
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="meal-management")
     parser.add_argument("--env-file", type=Path)
@@ -50,6 +53,18 @@ def build_parser():
     send.add_argument("--email-id", type=int, required=True)
     send.add_argument("--allow-database-changes", action="store_true")
     send.add_argument("--allow-real-email", action="store_true")
+    backup = commands.add_parser("backup-local")
+    backup.add_argument("--allow-database-access", action="store_true")
+    backup.add_argument("--writers-paused", action="store_true")
+    backup.add_argument("--directory", type=Path, default=PROJECT_ROOT / "database" / "migrations")
+    restore = commands.add_parser("restore-aiven")
+    restore.add_argument("--backup", type=Path, required=True)
+    restore.add_argument("--expected-target", required=True)
+    restore.add_argument("--allow-database-changes", action="store_true")
+    restore.add_argument("--writers-paused", action="store_true")
+    restore.add_argument("--directory", type=Path, default=PROJECT_ROOT / "database" / "migrations")
+    account = commands.add_parser("create-aiven-runtime", help="Review and create the restricted Aiven account for Vercel.")
+    account.add_argument("--allow-database-changes", action="store_true", help="Allow account creation only after interactive target confirmation.")
     return parser
 
 
@@ -63,6 +78,110 @@ def _load_environment(path):
     except ImportError:
         raise DomainError("PYTHON_DOTENV_NOT_INSTALLED") from None
     load_dotenv(path, override=False)
+
+
+def _transfer_environment(path):
+    if path is None:
+        raise DomainError("EXPLICIT_ENV_FILE_REQUIRED")
+    path = path.expanduser().absolute()
+    if not path.is_file():
+        raise DomainError("ENVIRONMENT_FILE_NOT_FOUND")
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        raise DomainError("PYTHON_DOTENV_NOT_INSTALLED") from None
+    values = dict(dotenv_values(path, interpolate=False))
+    if (values.get("APP_ENV") or "").strip().lower() != "development":
+        raise DomainError("TRANSFER_REQUIRES_DEVELOPMENT")
+    if (values.get("PHOTO_BACKEND") or "").strip().lower() != "local":
+        raise DomainError("TRANSFER_REQUIRES_LOCAL_PHOTOS")
+    photo_root = Path(values.get("PRIVATE_PHOTO_ROOT") or "var/private/photos").expanduser()
+    if not photo_root.is_absolute():
+        photo_root = PROJECT_ROOT / photo_root
+    runtime_values = {**values, "PRIVATE_PHOTO_ROOT": str(photo_root)}
+    return path, Settings.from_env(values), RuntimeSettings.from_env(runtime_values)
+
+
+def _transfer_command(args):
+    if args.command == "backup-local" and not args.allow_database_access:
+        raise DomainError("EXPLICIT_DATABASE_ACCESS_APPROVAL_REQUIRED")
+    if args.command == "restore-aiven" and not args.allow_database_changes:
+        raise DomainError("EXPLICIT_DATABASE_CHANGE_APPROVAL_REQUIRED")
+    if not args.writers_paused:
+        raise DomainError("TRANSFER_REQUIRES_PAUSED_WRITERS")
+    env_file, settings, runtime = _transfer_environment(args.env_file)
+    directory = args.directory.expanduser().resolve()
+    if args.command == "backup-local":
+        from .backup import interactive_backup
+
+        destination = interactive_backup(
+            settings, project_root=PROJECT_ROOT, env_file=env_file, photo_root=runtime.photo_root,
+            migration_directory=directory, allow_database_access=args.allow_database_access,
+            writers_paused=args.writers_paused,
+        )
+        print("Backup completed and file checksums verified: " + str(destination))
+        print("Keep the complete backup private. Source data and application configuration were not changed.")
+    else:
+        from .transfer import restore_aiven_backup
+
+        result = restore_aiven_backup(
+            settings, runtime, args.backup.expanduser().absolute(), directory,
+            expected_target=args.expected_target, allow_database_changes=args.allow_database_changes,
+            writers_paused=args.writers_paused,
+        )
+        print(json.dumps(result, default=str))
+        print("Restore verification completed. No application startup or configuration switch was performed.")
+    return 0
+
+
+def _runtime_account_command(args):
+    if not args.allow_database_changes:
+        raise DomainError("EXPLICIT_DATABASE_CHANGE_APPROVAL_REQUIRED")
+    if args.env_file is None:
+        raise DomainError("EXPLICIT_ENV_FILE_REQUIRED")
+    if not sys.stdin.isatty():
+        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_INTERACTIVE_TERMINAL")
+    from .runtime_account import INSERT_TABLES, UPDATE_TABLES, create_aiven_runtime_account, target_confirmation
+
+    _, settings, runtime = _transfer_environment(args.env_file)
+    expected = target_confirmation(settings, runtime)
+    output = PROJECT_ROOT / "var" / "private" / "vercel" / "database-runtime.env"
+    print("Create and verify meal_runtime@% with a generated private password and mandatory SSL.")
+    print("The % host scope permits authentication from any host that can reach this Aiven service.")
+    print("Grant SELECT on " + settings.db_name + ".*.")
+    print("Grant INSERT on these " + settings.db_name + " tables: " + ", ".join(INSERT_TABLES) + ".")
+    print("Grant UPDATE on these " + settings.db_name + " tables: " + ", ".join(UPDATE_TABLES) + ".")
+    print("No DELETE, schema changes, trigger creation, account management, or GRANT OPTION privileges are granted.")
+    confirmation = input("Type " + expected + " to continue: ")
+    result = create_aiven_runtime_account(
+        settings, runtime, PROJECT_ROOT / "database" / "migrations", output,
+        confirmation=confirmation, allow_database_changes=True,
+    )
+    if (
+        not isinstance(result, dict) or result.get("status") != "verified"
+        or result.get("account") != "meal_runtime@%"
+        or not isinstance(result.get("credentials_file"), (str, Path))
+        or Path(result["credentials_file"]).absolute() != output.absolute()
+    ):
+        raise DomainError("RUNTIME_ACCOUNT_VERIFICATION_UNCONFIRMED")
+    print("Aiven account meal_runtime@% created and verified.")
+    print("Private credentials file: " + str(output))
+    print("No deployment or application configuration switch was performed.")
+    return 0
+
+
+def _runtime_account_failure_message(error):
+    stages = {"PREFLIGHT", "PRIVATE_CREDENTIALS", "CREATE_ACCOUNT", "GRANTS", "VERIFY_ACCOUNT", "PUBLISH_CREDENTIALS"}
+    stage = getattr(error, "runtime_account_stage", None)
+    if not isinstance(stage, str) or stage not in stages:
+        return None
+    message = "Account creation stage: " + stage + "."
+    number = getattr(error, "runtime_account_mysql_error", None)
+    if type(number) is int and 1 <= number <= 65535:
+        message += " MySQL error " + str(number) + "."
+    if stage != "PREFLIGHT":
+        message += " Keep any database-runtime.pending.env and database-runtime.env files private. Do not rerun the command or delete these files; share only the error code, stage, and MySQL error number for review."
+    return message
 
 
 def _database_settings(args):
@@ -196,6 +315,10 @@ def _send_email(args):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
+        if args.command in {"backup-local", "restore-aiven"}:
+            return _transfer_command(args)
+        if args.command == "create-aiven-runtime":
+            return _runtime_account_command(args)
         _load_environment(args.env_file)
         if args.command == "check-config":
             database_settings = Settings.from_env()
@@ -245,6 +368,16 @@ def main(argv=None):
     except DomainError as error:
         missing = getattr(error, "missing", ())
         print(error.code + (": " + ", ".join(missing) if missing else ""), file=sys.stderr)
+        if args.command == "backup-local":
+            from .backup import backup_failure_message
+
+            message = backup_failure_message(error)
+            if message:
+                print(message, file=sys.stderr)
+        if args.command == "create-aiven-runtime":
+            message = _runtime_account_failure_message(error)
+            if message:
+                print(message, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("Operation cancelled.", file=sys.stderr)

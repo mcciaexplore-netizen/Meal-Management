@@ -97,6 +97,7 @@ async function navigate() {
     user,
     catalog,
     scanner_url: application.scanner_url,
+    max_photo_bytes: application.max_photo_bytes,
     isCurrent: () => version === navigationVersion,
     reload: navigate,
     refreshCatalog: async () => { catalog = await api("/catalog"); context.catalog = catalog; return catalog; }

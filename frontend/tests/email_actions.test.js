@@ -129,6 +129,37 @@ test("approved bulk processing uses sequential chunks of at most ten", async () 
   assert.ok(calls.every(row => row[0] === "/email-queue/process"));
 });
 
+test("configured one-message requests remain sequential and preserve the full approved selection", async () => {
+  const chunks = [];
+  let active = 0;
+  const operation = new BulkEmailOperation(async (path, options) => {
+    active += 1;
+    assert.equal(active, 1);
+    chunks.push(options.body.email_ids);
+    await Promise.resolve();
+    active -= 1;
+    return { results: options.body.email_ids.map(email_id => ({ email_id, status: "SENT" })) };
+  });
+  operation.setProcessBatchSize(1);
+  const results = await operation.process(bulkRows(3), [3, 1, 2]);
+  assert.deepEqual(chunks, [[1], [2], [3]]);
+  assert.deepEqual(results.map(row => row.email_id), [1, 2, 3]);
+});
+
+test("invalid processing limits cannot start requests or alter an in-flight batch", async () => {
+  let calls = 0;
+  let finish;
+  const request = () => { calls += 1; return new Promise(resolve => { finish = resolve; }); };
+  for (const size of [null, true, 0, 11, 1.5, "1"]) assert.throws(() => new BulkEmailOperation(request, size), /settings could not be confirmed/);
+  const operation = new BulkEmailOperation(request, 1);
+  assert.equal(calls, 0);
+  const pending = operation.process(bulkRows(1), [1]);
+  assert.throws(() => operation.setProcessBatchSize(2), /current email operation/);
+  finish({ results: [{ email_id: 1, status: "SENT" }] });
+  await pending;
+  assert.equal(calls, 1);
+});
+
 test("unapproved messages cannot reach the bulk processing endpoint", async () => {
   let calls = 0;
   const operation = new BulkEmailOperation(async () => { calls += 1; });

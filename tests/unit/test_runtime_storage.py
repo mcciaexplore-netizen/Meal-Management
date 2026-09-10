@@ -11,7 +11,7 @@ from meal_management.delivery import LocalEmailPreview, SESDelivery, delivery_fr
 from meal_management.email_queue import EmailPreview
 from meal_management.errors import ConfigurationError, DomainError
 from meal_management.runtime import RuntimeSettings
-from meal_management.storage import LocalFileStorage, S3Storage, storage_from_settings
+from meal_management.storage import LocalFileStorage, S3Storage, VercelBlobStorage, storage_from_settings
 
 
 def environment(**overrides):
@@ -126,7 +126,7 @@ class RuntimeSettingsTests(unittest.TestCase):
             RuntimeSettings.from_env(environment(APP_ENV="production"))
 
     def test_production_rejects_development_adapters(self):
-        with self.assertRaisesRegex(ConfigurationError, "PRODUCTION_REQUIRES_S3"):
+        with self.assertRaisesRegex(ConfigurationError, "PRODUCTION_REQUIRES_REMOTE_STORAGE"):
             RuntimeSettings.from_env(environment(APP_ENV="production", APP_ORIGIN="https://meal.example.com"))
 
     def test_production_requires_explicit_aws_configuration(self):
@@ -157,6 +157,69 @@ class RuntimeSettingsTests(unittest.TestCase):
             with self.subTest(name=name):
                 with self.assertRaises(ConfigurationError):
                     RuntimeSettings.from_env(environment(**{name: value}))
+
+    def test_production_blob_and_gmail_require_no_aws_or_sending(self):
+        token = "vercel_blob_rw_fictional_" + "t" * 32
+        settings = RuntimeSettings.from_env(environment(
+            APP_ENV="production", APP_ORIGIN="https://admin.example.test",
+            SCANNER_ORIGIN="https://scanner.example.test", PHOTO_BACKEND="vercel_blob",
+            BLOB_STORE_HOST="fixturestore.private.blob.vercel-storage.com",
+            BLOB_READ_WRITE_TOKEN=token, EMAIL_BACKEND="gmail",
+            EMAIL_SENDER="fictional.meals@gmail.com", GMAIL_APP_PASSWORD="abcdefghijklmnop",
+        ))
+        self.assertIsInstance(storage_from_settings(settings), VercelBlobStorage)
+        self.assertIsNone(settings.aws_region)
+        self.assertIsNone(settings.photo_bucket)
+        self.assertFalse(settings.email_send_enabled)
+        self.assertFalse(settings.email_auto_send_enabled)
+        self.assertNotIn(token, repr(settings))
+        self.assertEqual(settings.for_application("scanner").blob_read_write_token, token)
+
+    def test_blob_requires_explicit_private_host_and_token(self):
+        base = {"PHOTO_BACKEND": "vercel_blob"}
+        with self.assertRaisesRegex(ConfigurationError, "MISSING_SETTING_BLOB_STORE_HOST"):
+            RuntimeSettings.from_env(environment(**base))
+        base["BLOB_STORE_HOST"] = "fixturestore.private.blob.vercel-storage.com"
+        with self.assertRaisesRegex(ConfigurationError, "MISSING_SETTING_BLOB_READ_WRITE_TOKEN"):
+            RuntimeSettings.from_env(environment(**base))
+        for value in ("short", "secret\n" + "t" * 32, "replace-with-blob-read-write-token-value"):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigurationError) as caught:
+                    RuntimeSettings.from_env(environment(**base, BLOB_READ_WRITE_TOKEN=value))
+                self.assertEqual(caught.exception.code, "INVALID_SETTING_BLOB_READ_WRITE_TOKEN")
+                self.assertNotIn(value, str(caught.exception))
+
+    def test_blob_rejects_public_or_arbitrary_hosts(self):
+        for host in (
+            "fixturestore.public.blob.vercel-storage.com", "example.test",
+            "fixturestore.private.blob.vercel-storage.com.example.test",
+            "https://fixturestore.private.blob.vercel-storage.com",
+            "fixturestore.private.blob.vercel-storage.com:443",
+        ):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(ConfigurationError, "INVALID_SETTING_BLOB_STORE_HOST"):
+                    RuntimeSettings.from_env(environment(
+                        PHOTO_BACKEND="vercel_blob", BLOB_STORE_HOST=host,
+                        BLOB_READ_WRITE_TOKEN="t" * 32,
+                    ))
+
+    def test_blob_does_not_enable_preview_email_in_production(self):
+        with self.assertRaisesRegex(ConfigurationError, "PRODUCTION_REQUIRES_REMOTE_STORAGE_AND_REAL_EMAIL"):
+            RuntimeSettings.from_env(environment(
+                APP_ENV="production", APP_ORIGIN="https://admin.example.test",
+                PHOTO_BACKEND="vercel_blob", BLOB_STORE_HOST="fixturestore.private.blob.vercel-storage.com",
+                BLOB_READ_WRITE_TOKEN="t" * 32,
+            ))
+
+    def test_email_process_limit_is_bounded_independently_of_background_batch(self):
+        self.assertEqual(RuntimeSettings.from_env(environment()).email_process_limit, 10)
+        settings = RuntimeSettings.from_env(environment(EMAIL_PROCESS_LIMIT="1", EMAIL_BATCH_SIZE="50"))
+        self.assertEqual(settings.email_process_limit, 1)
+        self.assertEqual(settings.email_batch_size, 50)
+        for value in ("0", "11", "1.5", "many", "true"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ConfigurationError, "INVALID_SETTING_EMAIL_PROCESS_LIMIT"):
+                    RuntimeSettings.from_env(environment(EMAIL_PROCESS_LIMIT=value))
 
 
 class LocalStorageTests(unittest.TestCase):

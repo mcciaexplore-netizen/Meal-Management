@@ -2,7 +2,7 @@ import { allPages, api } from "./api.js";
 import { dateInput, dateRange, escape, list, optionalExpiry, positive, query, randomIdentifier, timestamp } from "./core.js";
 import { badge, closeModal, empty, errorMessage, field, formAction, heading, icon, loading, modal, notify, options, qrCard, qrStatus, selectField, stats, table } from "./ui.js";
 import { employeeDepartmentOptions, resolveEmployeeDepartment } from "./facility_departments.js";
-import { bindEmployeePhoto, employeePhotoField, validateEmployeePhoto as validatePhoto } from "./employee_photo.js";
+import { bindEmployeePhoto, employeePhotoField, employeePhotoLimitLabel, validateEmployeePhoto as validatePhoto } from "./employee_photo.js";
 import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "./email_delivery.js";
 import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
@@ -52,13 +52,13 @@ export async function employees(target, context) {
   };
   target.querySelector("#new-employee").onclick = () => {
     photoEditor?.dispose();
-    const dialog = modal("Register an employee", `<p class="muted">Registration creates a personal QR and an email draft. Review the employee, then choose Send email. Registration does not send email.</p><form id="employee-register">${employeeForm(context.catalog)}${employeePhotoField()}${formEnd("Register employee")}</form>`, true);
+    const dialog = modal("Register an employee", `<p class="muted">Registration creates a personal QR and an email draft. Review the employee, then choose Send email. Registration does not send email.</p><form id="employee-register">${employeeForm(context.catalog)}${employeePhotoField(context.max_photo_bytes)}${formEnd("Register employee")}</form>`, true);
     const form = dialog.querySelector("form");
-    const photoInput = bindEmployeePhoto(dialog);
+    const photoInput = bindEmployeePhoto(dialog, context.max_photo_bytes);
     photoEditor = photoInput;
     formAction(form, async data => {
       const photo = photoInput.photo ?? data.get("photo");
-      validatePhoto(photo);
+      validatePhoto(photo, false, context.max_photo_bytes);
       photoInput.setBusy(true);
       try {
         const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
@@ -98,7 +98,7 @@ export async function employeeDetail(id, context, onChange) {
     const emailSettings = emailDeliverySettings(deliverySettings);
     const qr = qrResponse.qr;
     const noQr = qrResponse.error?.status === 404 || ["QR_NOT_FOUND", "ACTIVE_QR_NOT_FOUND"].includes(qrResponse.error?.code);
-    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
+    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
     formAction(dialog.querySelector("#employee-edit"), async data => {
       const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
       await api(`/employees/${id}`, { method: "PATCH", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), department_id: departmentId } });
@@ -107,7 +107,7 @@ export async function employeeDetail(id, context, onChange) {
     });
     formAction(dialog.querySelector("#employee-photo"), async data => {
       const photo = data.get("photo");
-      validatePhoto(photo);
+      validatePhoto(photo, false, context.max_photo_bytes);
       await api(`/employees/${id}/photo`, { method: "POST", body: photo });
       notify("Private employee photo saved.");
       await employeeDetail(id, context, onChange);
@@ -375,6 +375,7 @@ export async function emails(target, context) {
       ]);
       if (!context.isCurrent() || version !== loadVersion) return;
       settings = emailDeliverySettings(configuration);
+      operation.setProcessBatchSize(settings.process_batch_size);
       rows = append ? rows.concat(list(result)) : list(result);
       cursor = result.next_cursor;
       if (!append) operation.unknown = false;

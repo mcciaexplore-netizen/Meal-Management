@@ -157,6 +157,32 @@ test("photo validation rejects empty unsupported and oversized files without rep
   controller.dispose();
 });
 
+test("photo input displays and enforces the exact server byte limit while retaining the local default", () => {
+  assert.match(employeePhotoField(), /up to 5 MB/);
+  assert.match(employeePhotoField(4000000), /up to 4 MB/);
+  assert.doesNotThrow(() => validateEmployeePhoto({ size: 4000000, type: "image/jpeg" }, true, 4000000));
+  assert.throws(() => validateEmployeePhoto({ size: 4000001, type: "image/jpeg" }, true, 4000000), /4 MB or smaller/);
+  assert.doesNotThrow(() => validateEmployeePhoto({ size: 5 * 1024 * 1024, type: "image/jpeg" }, true));
+  assert.throws(() => validateEmployeePhoto({ size: 5 * 1024 * 1024 + 1, type: "image/jpeg" }, true), /5 MB or smaller/);
+  for (const limit of [null, true, 0, 1023, 1.5, "4000000", 20 * 1024 * 1024 + 1]) assert.throws(() => employeePhotoField(limit), /photo upload limit could not be confirmed/);
+});
+
+test("configured limits protect uploads and camera captures without replacing the existing photo", async () => {
+  const { controller, canvas, tracks, created } = fixture({ maxBytes: 1024 });
+  const original = jpeg();
+  controller.select(original);
+  const oversized = new Blob([new Uint8Array(1025)], { type: "image/jpeg" });
+  assert.throws(() => controller.select(oversized), /1,024 bytes or smaller/);
+  canvas.toBlob = callback => callback(oversized);
+  await controller.start();
+  await assert.rejects(controller.capture(), /1,024 bytes or smaller/);
+  assert.equal(controller.photo, original);
+  assert.equal(controller.candidate, null);
+  assert.equal(created.length, 1);
+  assert.equal(tracks[0].stopped, 1);
+  controller.dispose();
+});
+
 test("camera denial and insecure connection use photo-specific fallback messages", async () => {
   assert.match(photoCameraError({ name: "NotAllowedError" }), /permission was denied/);
   assert.doesNotMatch(photoCameraError({ name: "NotAllowedError" }), /QR/);

@@ -25,13 +25,14 @@ def _port(value):
     return number
 
 
-def _environment(path):
+def _environment(path, *, file_only=False):
     from dotenv import dotenv_values
 
     if not path.is_file():
         raise DomainError("LOCAL_ENV_FILE_REQUIRED")
     values = {key: value for key, value in dotenv_values(path, interpolate=False).items() if value is not None}
-    values.update(os.environ)
+    if not file_only:
+        values.update(os.environ)
     return values
 
 
@@ -75,12 +76,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="meal-local-server")
     parser.add_argument("application", choices=("admin", "scanner"))
     parser.add_argument("--env-file", type=Path, default=PROJECT_ROOT / ".env")
+    parser.add_argument("--env-file-only", action="store_true", help="Use application settings only from the selected environment file.")
     parser.add_argument("--port", type=_port)
     arguments = parser.parse_args(argv)
     listener = None
     requested_port = arguments.port
     try:
-        environment = _environment(arguments.env_file.expanduser().resolve())
+        environment = _environment(arguments.env_file.expanduser().resolve(), file_only=arguments.env_file_only)
         os.chdir(PROJECT_ROOT)
         settings = Settings.from_env(environment)
         runtime = RuntimeSettings.from_env(environment)

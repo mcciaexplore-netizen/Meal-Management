@@ -10,8 +10,16 @@ test("admin navigation uses the scanner origin returned by its own application e
     return { scanner_url: "http://localhost:8001" };
   });
   assert.deepEqual(calls, ["/application"]);
-  assert.deepEqual(configuration, { scanner_url: "http://localhost:8001" });
+  assert.deepEqual(configuration, { scanner_url: "http://localhost:8001", max_photo_bytes: 5 * 1024 * 1024 });
   assert.equal(scannerUrl({ scanner_url: "https://scanner.example.test/" }), "https://scanner.example.test");
+});
+
+test("application carries the server photo limit and rejects invalid configured values", async () => {
+  const configuration = await loadApplication(async () => ({ scanner_url: "https://scanner.example.test", max_photo_bytes: 4000000 }));
+  assert.equal(configuration.max_photo_bytes, 4000000);
+  for (const max_photo_bytes of [null, true, 0, 1023, 1.5, "4000000", 20 * 1024 * 1024 + 1]) {
+    await assert.rejects(loadApplication(async () => ({ scanner_url: "https://scanner.example.test", max_photo_bytes })), /photo upload limit could not be confirmed/);
+  }
 });
 
 test("invalid scanner configuration cannot silently navigate to admin routes or executable URLs", () => {

@@ -37,7 +37,12 @@ test("background delivery is restricted to approved bulk messages in explanatory
 
 test("invalid settings cannot bypass approval or imply running delivery", () => {
   for (const value of [null, {}, { ...gmail, approval_required: false }, { ...gmail, approval_required: undefined }, { ...gmail, backend: "unknown" }, { ...gmail, preview_available: true }, { ...gmail, sending_enabled: "true" }, { ...gmail, automatic_enabled: true }, { ...gmail, worker_running: true }, { ...preview, sending_enabled: true, automatic_enabled: true }, { ...gmail, poll_seconds: 0 }, { ...gmail, batch_size: 101 }]) assert.throws(() => emailDeliverySettings(value), /could not be confirmed/);
-  assert.deepEqual(emailDeliverySettings({ ...gmail, sender: "private@example.test" }), { ...gmail, automatic_enabled: false, worker_running: false, poll_seconds: 5, batch_size: 10 });
+  assert.deepEqual(emailDeliverySettings({ ...gmail, sender: "private@example.test" }), { ...gmail, automatic_enabled: false, worker_running: false, poll_seconds: 5, batch_size: 10, process_batch_size: 10 });
+});
+
+test("manual processing uses its independently validated server limit", () => {
+  assert.equal(emailDeliverySettings({ ...gmail, process_batch_size: 1, batch_size: 100 }).process_batch_size, 1);
+  for (const process_batch_size of [null, true, false, 0, 11, 1.5, "1"]) assert.throws(() => emailDeliverySettings({ ...gmail, process_batch_size }), /processing settings could not be confirmed/);
 });
 
 test("only unsent messages in local preview mode expose Preview", () => {
@@ -87,7 +92,7 @@ test("registration prepares drafts and exposes bulk import without changing the 
   const source = await readFile(new URL("../src/screens.js", import.meta.url), "utf8");
   assert.match(source, /Registration does not send email/);
   assert.match(source, /showEmployeeImport\(context, load\)/);
-  assert.match(source, /const photoInput = bindEmployeePhoto\(dialog\)/);
+  assert.match(source, /const photoInput = bindEmployeePhoto\(dialog, context\.max_photo_bytes\)/);
   assert.match(source, /photoInput\.dispose\(\)/);
   assert.doesNotMatch(source, /queues its email automatically|QR email queued|Queue email resend/);
 });
@@ -110,5 +115,6 @@ test("bulk batch review link and loaded-row selection stay explicit", async () =
   assert.match(source, /ids\.length > 100/);
   assert.match(source, /Approve and send/);
   assert.match(source, /operation\.approveAndProcess/);
+  assert.match(source, /operation\.setProcessBatchSize\(settings\.process_batch_size\)/);
   assert.match(importer, /#emails\?bulk_batch_id=/);
 });

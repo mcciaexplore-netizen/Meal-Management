@@ -7,6 +7,7 @@ import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .errors import DependencyError, DomainError
 
@@ -208,6 +209,145 @@ class S3Storage:
         self._get_client().delete_object(Bucket=self.bucket, Key=_photo_key(key))
 
 
+class VercelBlobStorage:
+    def __init__(self, token, store_host, max_bytes=5 * 1024 * 1024, client=None, http_client=None):
+        if not isinstance(token, str) or not re.fullmatch(r"[!-~]{32,512}", token):
+            raise DomainError("VERCEL_BLOB_CONFIGURATION_REQUIRED")
+        if not isinstance(store_host, str) or not re.fullmatch(
+            r"[a-z0-9]+\.private\.blob\.vercel-storage\.com", store_host,
+        ):
+            raise DomainError("VERCEL_BLOB_CONFIGURATION_REQUIRED")
+        self._token = token
+        self.store_host = store_host
+        self.max_bytes = max_bytes
+        self._client = client
+        self._http_client = http_client
+
+    def _url(self, key):
+        return "https://" + self.store_host + "/" + _photo_key(key)
+
+    def _validate_result(self, result, key, content_type):
+        try:
+            parsed = urlsplit(result.url)
+            valid = (
+                parsed.scheme == "https"
+                and parsed.netloc == self.store_host
+                and parsed.path == "/" + key
+                and not parsed.query
+                and not parsed.fragment
+                and result.url == self._url(key)
+                and result.pathname == key
+                and result.content_type == content_type
+            )
+        except (AttributeError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise DomainError("INVALID_PHOTO_STORAGE_RESPONSE")
+
+    def _sdk_call(self, method, *args, **kwargs):
+        client = self._client
+        not_found = ()
+        if client is None:
+            try:
+                from vercel.blob import BlobClient, BlobNotFoundError
+            except ImportError:
+                raise DependencyError("VERCEL_SDK_NOT_INSTALLED") from None
+            not_found = (BlobNotFoundError,)
+            try:
+                client = BlobClient(token=self._token)
+            except Exception:
+                raise DomainError("PHOTO_STORAGE_UNAVAILABLE") from None
+        try:
+            try:
+                return getattr(client, method)(*args, **kwargs)
+            finally:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
+        except not_found:
+            raise DomainError("PHOTO_NOT_FOUND") from None
+        except Exception:
+            raise DomainError("PHOTO_STORAGE_UNAVAILABLE") from None
+
+    @contextmanager
+    def _http(self):
+        client = self._http_client
+        if client is None:
+            try:
+                import httpx
+            except ImportError:
+                raise DependencyError("HTTPX_NOT_INSTALLED") from None
+            client = httpx.Client(timeout=20.0, follow_redirects=False, trust_env=False)
+        try:
+            yield client
+        finally:
+            client.close()
+
+    def put(self, data, content_type):
+        normalized, actual_type = sanitize_photo(data, content_type, self.max_bytes)
+        key = secrets.token_hex(32) + (".jpg" if actual_type == "image/jpeg" else ".png")
+        result = self._sdk_call(
+            "put", key, normalized, access="private", content_type=actual_type,
+            add_random_suffix=False, overwrite=False,
+        )
+        self._validate_result(result, key, actual_type)
+        return StoredPhoto(key=key, content_type=actual_type, size=len(normalized))
+
+    def read(self, key):
+        key = _photo_key(key)
+        content_type = _content_type(key)
+        metadata = self._sdk_call("head", key)
+        self._validate_result(metadata, key, content_type)
+        expected_size = getattr(metadata, "size", None)
+        if type(expected_size) is not int or not 0 < expected_size <= self.max_bytes:
+            raise DomainError("INVALID_PHOTO_SIZE")
+        try:
+            with self._http() as client:
+                with client.stream(
+                    "GET", self._url(key),
+                    headers={"Authorization": "Bearer " + self._token, "Accept-Encoding": "identity"},
+                    timeout=20.0, follow_redirects=False,
+                ) as response:
+                    if response.status_code == 404:
+                        raise DomainError("PHOTO_NOT_FOUND")
+                    if response.status_code != 200:
+                        raise DomainError("PHOTO_STORAGE_UNAVAILABLE")
+                    if (
+                        response.headers.get("content-type", "").split(";", 1)[0].strip() != content_type
+                        or response.headers.get("content-encoding", "identity").lower() != "identity"
+                    ):
+                        raise DomainError("INVALID_PHOTO_STORAGE_RESPONSE")
+                    declared_size = response.headers.get("content-length")
+                    if declared_size is not None and (
+                        not declared_size.isascii() or not declared_size.isdecimal()
+                        or not 0 < int(declared_size) <= self.max_bytes
+                    ):
+                        raise DomainError("INVALID_PHOTO_SIZE")
+                    data = bytearray()
+                    for chunk in response.iter_raw(chunk_size=min(65536, self.max_bytes + 1)):
+                        if len(data) + len(chunk) > self.max_bytes:
+                            raise DomainError("INVALID_PHOTO_SIZE")
+                        data.extend(chunk)
+                    if not data or len(data) != expected_size:
+                        raise DomainError("INVALID_PHOTO_SIZE")
+        except DomainError:
+            raise
+        except Exception:
+            raise DomainError("PHOTO_STORAGE_UNAVAILABLE") from None
+        return bytes(data), content_type
+
+    def delete(self, key):
+        key = _photo_key(key)
+        try:
+            metadata = self._sdk_call("head", key)
+        except DomainError as error:
+            if error.code == "PHOTO_NOT_FOUND":
+                return
+            raise
+        self._validate_result(metadata, key, _content_type(key))
+        self._sdk_call("delete", key)
+
+
 def storage_from_settings(settings):
     if settings.photo_backend == "local":
         if settings.environment == "production":
@@ -215,4 +355,8 @@ def storage_from_settings(settings):
         return LocalFileStorage(settings.photo_root, settings.max_photo_bytes)
     if settings.photo_backend == "s3":
         return S3Storage(settings.photo_bucket, settings.aws_region, settings.max_photo_bytes)
+    if settings.photo_backend == "vercel_blob":
+        return VercelBlobStorage(
+            settings.blob_read_write_token, settings.blob_store_host, settings.max_photo_bytes,
+        )
     raise DomainError("INVALID_PHOTO_BACKEND")

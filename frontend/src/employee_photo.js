@@ -1,19 +1,32 @@
 import { CameraSession, cameraError } from "./camera.js";
 
-export function validateEmployeePhoto(photo, required = false) {
+export function employeePhotoLimit(maxBytes = 5 * 1024 * 1024) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1024 || maxBytes > 20 * 1024 * 1024) throw new Error("The photo upload limit could not be confirmed. Refresh to try again.");
+  return maxBytes;
+}
+
+export function employeePhotoLimitLabel(maxBytes) {
+  const limit = employeePhotoLimit(maxBytes);
+  if (limit % (1024 * 1024) === 0) return `${limit / (1024 * 1024)} MB`;
+  if (limit % 1000000 === 0) return `${limit / 1000000} MB`;
+  return `${limit.toLocaleString("en-US")} bytes`;
+}
+
+export function validateEmployeePhoto(photo, required = false, maxBytes) {
+  const limit = employeePhotoLimit(maxBytes);
   if (!photo?.size) {
     if (required) throw new Error("The photo was empty. Take another photo or choose a JPG or PNG file.");
     return;
   }
   if (!["image/jpeg", "image/png"].includes(photo.type)) throw new Error("Choose a JPG or PNG photo.");
-  if (photo.size > 5 * 1024 * 1024) throw new Error("The photo must be 5 MB or smaller.");
+  if (photo.size > limit) throw new Error(`The photo must be ${employeePhotoLimitLabel(limit)} or smaller.`);
 }
 
 export function photoCameraError(error) {
   return cameraError(error).replaceAll("QR image", "photo").replace("Live camera scanning", "Taking a photo");
 }
 
-export async function captureEmployeePhoto(video, canvas) {
+export async function captureEmployeePhoto(video, canvas, maxBytes) {
   if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) throw new Error("The camera is still starting. Wait until your preview appears, then take the photo.");
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
@@ -25,17 +38,18 @@ export async function captureEmployeePhoto(video, canvas) {
   let photo;
   try { photo = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9)); }
   catch { throw new Error("The photo could not be captured. Try again or upload a JPG or PNG."); }
-  validateEmployeePhoto(photo, true);
+  validateEmployeePhoto(photo, true, maxBytes);
   if (photo.type !== "image/jpeg") throw new Error("The camera could not create a JPEG photo. Try again or upload a JPG or PNG.");
   return photo;
 }
 
 export class EmployeePhotoCapture {
-  constructor({ video, canvas, mediaDevices, secureContext, urls = URL, onChange = () => {} }) {
+  constructor({ video, canvas, mediaDevices, secureContext, urls = URL, onChange = () => {}, maxBytes }) {
     this.video = video;
     this.canvas = canvas;
     this.urls = urls;
     this.onChange = onChange;
+    this.maxBytes = employeePhotoLimit(maxBytes);
     this.photo = null;
     this.photoUrl = null;
     this.candidate = null;
@@ -63,7 +77,7 @@ export class EmployeePhotoCapture {
 
   select(photo) {
     if (this.disposed) return false;
-    validateEmployeePhoto(photo, true);
+    validateEmployeePhoto(photo, true, this.maxBytes);
     const url = this.urls.createObjectURL(photo);
     this.cancel();
     if (this.photoUrl) this.urls.revokeObjectURL(this.photoUrl);
@@ -100,7 +114,7 @@ export class EmployeePhotoCapture {
     this.mode = "capturing";
     this.changed();
     try {
-      const photo = await captureEmployeePhoto(this.video, this.canvas);
+      const photo = await captureEmployeePhoto(this.video, this.canvas, this.maxBytes);
       if (this.disposed || this.epoch !== epoch) return false;
       this.camera.stop();
       this.releaseCandidate();
@@ -148,8 +162,8 @@ export class EmployeePhotoCapture {
   }
 }
 
-export function employeePhotoField() {
-  return `<section class="registration-photo" aria-labelledby="registration-photo-label"><div class="registration-photo-header"><span id="registration-photo-label">Selfie photo <span class="optional">Optional</span></span><button type="button" class="button" data-photo-start>Take photo</button></div><label class="photo-upload-label">Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png"></label><p class="field-help">Take a selfie or upload a JPG or PNG, up to 5 MB. Stored privately after registration.</p><div class="registration-photo-selected" data-photo-selected hidden><img alt="Selected employee selfie"><span>Photo ready to save</span></div><div class="registration-camera" data-photo-camera hidden><video playsinline muted aria-label="Employee selfie camera preview"></video><img data-photo-preview alt="Captured selfie preview" hidden><div class="registration-camera-status" data-photo-status role="status"></div><div class="registration-camera-actions"><button type="button" class="button primary" data-photo-capture>Take photo</button><button type="button" class="button primary" data-photo-use hidden>Use photo</button><button type="button" class="button" data-photo-retake hidden>Retake</button><button type="button" class="button" data-photo-cancel>Cancel</button></div></div><p class="registration-photo-error" data-photo-error role="alert" hidden></p></section>`;
+export function employeePhotoField(maxBytes) {
+  return `<section class="registration-photo" aria-labelledby="registration-photo-label"><div class="registration-photo-header"><span id="registration-photo-label">Selfie photo <span class="optional">Optional</span></span><button type="button" class="button" data-photo-start>Take photo</button></div><label class="photo-upload-label">Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png"></label><p class="field-help">Take a selfie or upload a JPG or PNG, up to ${employeePhotoLimitLabel(maxBytes)}. Stored privately after registration.</p><div class="registration-photo-selected" data-photo-selected hidden><img alt="Selected employee selfie"><span>Photo ready to save</span></div><div class="registration-camera" data-photo-camera hidden><video playsinline muted aria-label="Employee selfie camera preview"></video><img data-photo-preview alt="Captured selfie preview" hidden><div class="registration-camera-status" data-photo-status role="status"></div><div class="registration-camera-actions"><button type="button" class="button primary" data-photo-capture>Take photo</button><button type="button" class="button primary" data-photo-use hidden>Use photo</button><button type="button" class="button" data-photo-retake hidden>Retake</button><button type="button" class="button" data-photo-cancel>Cancel</button></div></div><p class="registration-photo-error" data-photo-error role="alert" hidden></p></section>`;
 }
 
 export function attachEmployeePhotoLifecycle(controller, { dialog, container, document, window, observerFactory = callback => new MutationObserver(callback) }) {
@@ -181,7 +195,7 @@ export function attachEmployeePhotoLifecycle(controller, { dialog, container, do
   return close;
 }
 
-export function bindEmployeePhoto(dialog) {
+export function bindEmployeePhoto(dialog, maxBytes) {
   const container = dialog.querySelector(".registration-photo");
   const video = container.querySelector("video");
   const upload = container.querySelector('input[name="photo"]');
@@ -231,7 +245,7 @@ export function bindEmployeePhoto(dialog) {
     catch (failure) { if (!controller.disposed) showError(failure); }
   }
 
-  controller = new EmployeePhotoCapture({ video, canvas: document.createElement("canvas"), mediaDevices: navigator.mediaDevices, secureContext: window.isSecureContext, onChange: render });
+  controller = new EmployeePhotoCapture({ video, canvas: document.createElement("canvas"), mediaDevices: navigator.mediaDevices, secureContext: window.isSecureContext, onChange: render, maxBytes });
   const dispose = attachEmployeePhotoLifecycle(controller, { dialog, container, document, window });
   start.onclick = () => run(() => controller.start());
   capture.onclick = () => run(() => controller.capture());

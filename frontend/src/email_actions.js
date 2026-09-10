@@ -1,4 +1,4 @@
-import { canApproveEmail, canProcessEmail } from "./email_delivery.js";
+import { canApproveEmail, canProcessEmail, emailProcessBatchSize } from "./email_delivery.js";
 
 const outcomes = new Set(["SENT", "ALREADY_SENT", "FAILED", "CANCELLED", "NEEDS_REVIEW"]);
 const identifier = value => Number.isSafeInteger(value) && value > 0;
@@ -62,13 +62,19 @@ export function selectedEmailIds(rows, selected, mode) {
 }
 
 export class BulkEmailOperation {
-  constructor(request) {
+  constructor(request, processBatchSize = 10) {
     this.request = request;
+    this.processBatchSize = emailProcessBatchSize(processBatchSize);
     this.inFlight = false;
     this.ids = [];
     this.results = [];
     this.unknown = false;
     this.cancelled = false;
+  }
+
+  setProcessBatchSize(value) {
+    if (this.inFlight) throw new Error("Wait for the current email operation to finish before updating its settings.");
+    this.processBatchSize = emailProcessBatchSize(value);
   }
 
   cancel() {
@@ -106,14 +112,15 @@ export class BulkEmailOperation {
     if (this.inFlight) return null;
     if (this.unknown) throw new Error("Refresh the selected messages before processing again.");
     const ids = selectedEmailIds(rows, selected, "process");
+    const batchSize = emailProcessBatchSize(this.processBatchSize);
     this.inFlight = true;
     this.ids = ids;
     this.results = [];
     this.unknown = false;
     try {
-      for (let index = 0; index < ids.length; index += 10) {
+      for (let index = 0; index < ids.length; index += batchSize) {
         if (this.cancelled) break;
-        const chunk = ids.slice(index, index + 10);
+        const chunk = ids.slice(index, index + batchSize);
         this.unknown = true;
         const response = await this.request("/email-queue/process", { method: "POST", body: { email_ids: chunk } });
         if (!Array.isArray(response?.results) || response.results.length !== chunk.length || new Set(response.results.map(row => row.email_id)).size !== chunk.length) throw new Error("The processing result is not confirmed. Refresh these messages before processing again.");

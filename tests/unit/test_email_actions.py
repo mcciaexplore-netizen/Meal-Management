@@ -129,6 +129,29 @@ class EmailActionsTests(unittest.TestCase):
         self.queue.validate_approved_bulk.assert_not_called()
         self.actions._worker.assert_not_called()
 
+    def test_configured_processing_limit_rejects_larger_batch_before_approval_or_delivery(self):
+        self.actions.runtime = SimpleNamespace(email_backend="gmail", email_send_enabled=True, email_process_limit=1)
+        with self.assertRaisesRegex(DomainError, "^INVALID_EMAIL_IDS$"):
+            self.actions.process_bulk(self.context, [9, 10])
+        self.queue.validate_approved_bulk.assert_not_called()
+        self.actions._worker.assert_not_called()
+        self.assertEqual(self.actions.process_bulk(self.context, [9])["results"][0]["status"], "SENT")
+        self.queue.validate_approved_bulk.assert_called_once_with(self.context, [9])
+
+    def test_processing_limit_defaults_to_ten_and_rejects_invalid_runtime_values(self):
+        self.actions.runtime = SimpleNamespace(email_backend="gmail", email_send_enabled=True)
+        self.assertEqual(self.actions.process_batch_size, 10)
+        self.assertEqual(len(self.actions.process_bulk(self.context, list(range(1, 11)))["results"]), 10)
+        self.queue.reset_mock()
+        self.actions._worker.reset_mock()
+        for limit in (None, True, False, 0, 11, 1.5, "1"):
+            with self.subTest(limit=limit):
+                self.actions.runtime = SimpleNamespace(email_backend="gmail", email_send_enabled=True, email_process_limit=limit)
+                with self.assertRaisesRegex(DomainError, "^INVALID_SETTING_EMAIL_PROCESS_LIMIT$"):
+                    self.actions.process_bulk(self.context, [9])
+        self.queue.validate_approved_bulk.assert_not_called()
+        self.actions._worker.assert_not_called()
+
     def test_bulk_preflight_must_confirm_exact_identifiers(self):
         self.queue.validate_approved_bulk.side_effect = None
         for approved in (None, [9], [9, 11], [9, 9], [True, 10], ["9", 10]):

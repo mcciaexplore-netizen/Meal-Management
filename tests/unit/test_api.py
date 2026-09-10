@@ -542,7 +542,7 @@ class EmailSettingsApiTests(ApiTestCase):
         self.assertEqual(response.json(), {
             "backend": "preview", "sending_enabled": False, "preview_available": True,
             "automatic_enabled": False, "worker_running": False, "poll_seconds": 5, "batch_size": 10,
-            "approval_required": True,
+            "approval_required": True, "process_batch_size": 10,
         })
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.harness.services.database.transaction.assert_not_called()
@@ -560,12 +560,25 @@ class EmailSettingsApiTests(ApiTestCase):
                     self.assertEqual(response.json(), {
                         "backend": backend, "sending_enabled": enabled, "preview_available": False,
                         "automatic_enabled": False, "worker_running": False, "poll_seconds": 5, "batch_size": 10,
-                        "approval_required": True,
+                        "approval_required": True, "process_batch_size": 10,
                     })
                     self.assertNotIn("private-sender", response.text)
                     harness.services.database.transaction.assert_not_called()
                     self.assert_error(harness.client.get("/api/email-queue/1/preview"), 400, "EMAIL_PREVIEW_DISABLED")
                     harness.services.email_queue.preview.assert_not_called()
+
+    def test_runtime_limits_are_exposed_without_database_access(self):
+        runtime = replace(self.harness.runtime, max_photo_bytes=4000000, email_process_limit=1)
+        harness = ApiHarness(runtime)
+        self.addCleanup(harness.client.close)
+        configuration = harness.client.get("/api/application")
+        self.assertEqual(configuration.json(), {"scanner_url": runtime.scanner_origin, "max_photo_bytes": 4000000})
+        harness.login()
+        settings = harness.client.get("/api/email-settings")
+        self.assertEqual(settings.status_code, 200)
+        self.assertEqual(settings.json()["process_batch_size"], 1)
+        self.assertEqual(settings.json()["batch_size"], 10)
+        harness.services.database.transaction.assert_not_called()
 
     def test_email_settings_are_not_exposed_on_scanner_application(self):
         harness = ApiHarness(application="scanner")

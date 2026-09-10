@@ -10,5 +10,6 @@ export function scannerUrl(configuration) {
 
 export async function loadApplication(request) {
   const configuration = await request("/application");
-  return { scanner_url: scannerUrl(configuration) };
+  return { scanner_url: scannerUrl(configuration), max_photo_bytes: employeePhotoLimit(configuration.max_photo_bytes) };
 }
+import { employeePhotoLimit } from "./employee_photo.js";

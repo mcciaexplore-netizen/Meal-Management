@@ -1,3 +1,8 @@
+export function emailProcessBatchSize(value = 10) {
+  if (!Number.isInteger(value) || value < 1 || value > 10) throw new Error("Email processing settings could not be confirmed. Refresh to try again.");
+  return value;
+}
+
 export function emailDeliverySettings(value) {
   if (value && value.approval_required !== true) throw new Error("Email approval settings could not be confirmed. Ask the administrator to update the admin application and apply the email approval migration before sending.");
   if (!value || !["preview", "gmail", "ses"].includes(value.backend) || typeof value.sending_enabled !== "boolean" || typeof value.preview_available !== "boolean" || value.preview_available && value.backend !== "preview" || value.approval_required !== true) throw new Error("Email delivery settings could not be confirmed. Refresh to try again.");
@@ -5,8 +10,9 @@ export function emailDeliverySettings(value) {
   const running = value.worker_running ?? false;
   const interval = value.poll_seconds ?? 5;
   const batch = value.batch_size ?? 10;
+  const processBatch = emailProcessBatchSize(value.process_batch_size);
   if (typeof automatic !== "boolean" || typeof running !== "boolean" || !Number.isInteger(interval) || interval < 1 || interval > 300 || !Number.isInteger(batch) || batch < 1 || batch > 100 || automatic && (!value.sending_enabled || value.backend === "preview") || running && !automatic) throw new Error("Email delivery settings could not be confirmed. Refresh to try again.");
-  return { backend: value.backend, sending_enabled: value.sending_enabled, preview_available: value.preview_available, approval_required: true, automatic_enabled: automatic, worker_running: running, poll_seconds: interval, batch_size: batch };
+  return { backend: value.backend, sending_enabled: value.sending_enabled, preview_available: value.preview_available, approval_required: true, automatic_enabled: automatic, worker_running: running, poll_seconds: interval, batch_size: batch, process_batch_size: processBatch };
 }
 
 export function emailModeLabel(settings) {
