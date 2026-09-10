@@ -17,6 +17,7 @@ _CODES = frozenset({
     "EMAIL_DELIVERY_FAILED", "EMAIL_NOT_DELIVERABLE", "REAL_EMAIL_NOT_AUTHORIZED",
     "EMAIL_CLAIM_UNCONFIRMED", "EMAIL_CLAIM_LOST", "EMAIL_NOT_FOUND",
     "INVALID_EMAIL_STATUS", "EMAIL_QUEUE_UNAVAILABLE", "EMAIL_DISPATCH_FAILED",
+    "EMAIL_APPROVAL_REQUIRED",
 })
 _GLOBAL_FAILURES = frozenset({
     "EMAIL_AUTHENTICATION_FAILED", "GMAIL_CONFIGURATION_REQUIRED", "INVALID_EMAIL_SENDER",
@@ -82,8 +83,10 @@ class EmailDispatcher:
         with self.db.transaction() as tx:
             rows = tx.all(
                 "SELECT id FROM email_queue WHERE status = %s "
+                "AND delivery_mode IN (%s, %s) "
+                "AND approved_by_staff_id IS NOT NULL AND approved_at IS NOT NULL "
                 "ORDER BY created_at, id LIMIT %s",
-                ("QUEUED", self.batch_size),
+                ("QUEUED", "BULK", "LEGACY", self.batch_size),
             )
             identifiers = [row["id"] for row in rows]
             if (

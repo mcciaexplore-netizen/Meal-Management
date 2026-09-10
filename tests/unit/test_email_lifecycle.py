@@ -266,6 +266,7 @@ class EmailLifecycleApiTests(unittest.TestCase):
                 response = harness.client.get("/api/email-settings")
                 self.assertEqual(response.json(), {
                     "backend": "gmail", "sending_enabled": True, "preview_available": False,
+                    "approval_required": True,
                     "automatic_enabled": True, "worker_running": True, "poll_seconds": 8, "batch_size": 3,
                 })
                 self.assertEqual(response.headers["cache-control"], "no-store")

@@ -55,7 +55,11 @@ class WorkerDatabase:
         self.now = datetime(2026, 9, 9, 12)
         self.employee = {"id": 7, "email": "fictional-employee@gmail.com", "is_active": True}
         self.credential = {"token_hash": token_digest(token), "revoked_at": None, "expires_at": None}
-        self.queue = {"id": 9, "recipient_email": self.employee["email"], "payload_ciphertext": b"encrypted", "status": "QUEUED", "last_error": None}
+        self.queue = {
+            "id": 9, "recipient_email": self.employee["email"], "payload_ciphertext": b"encrypted",
+            "status": "QUEUED", "last_error": None, "delivery_mode": "SINGLE", "bulk_batch_id": None,
+            "approved_by_staff_id": 1, "approved_at": self.now,
+        }
         self.exists = True
         self.transactions = 0
         self.commits = 0
@@ -277,6 +281,52 @@ class EmailWorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(DomainError, "EMAIL_NOT_FOUND"):
             self.send()
         self.delivery.send.assert_not_called()
+
+    def test_drafts_and_pending_approval_cannot_be_claimed_even_with_sending_enabled(self):
+        for status in ("DRAFT", "PENDING_APPROVAL"):
+            with self.subTest(status=status):
+                self.setUp()
+                self.db.queue.update(status=status, approved_by_staff_id=None, approved_at=None)
+                original = copy.deepcopy(self.db.queue)
+                with self.assertRaisesRegex(DomainError, "^EMAIL_APPROVAL_REQUIRED$"):
+                    self.send()
+                self.assertEqual(self.db.queue, original)
+                self.assertFalse(any(sql.startswith("UPDATE") for sql, _ in self.db.queries))
+                self.delivery.send.assert_not_called()
+
+    def test_queued_rows_require_complete_valid_approval_metadata(self):
+        for change in (
+            {"approved_by_staff_id": None}, {"approved_at": None}, {"approved_by_staff_id": True},
+            {"approved_by_staff_id": 0}, {"approved_by_staff_id": "1"}, {"approved_at": "yesterday"},
+            {"delivery_mode": "UNKNOWN"},
+        ):
+            with self.subTest(change=change):
+                self.setUp()
+                self.db.queue.update(change)
+                original = copy.deepcopy(self.db.queue)
+                with self.assertRaisesRegex(DomainError, "^EMAIL_APPROVAL_REQUIRED$"):
+                    self.send()
+                self.assertEqual(self.db.queue, original)
+                self.delivery.send.assert_not_called()
+
+    def test_approval_is_rechecked_after_durable_claim_before_provider_access(self):
+        self.db.after_claim = lambda db: db.queue.update(approved_by_staff_id=None, approved_at=None)
+        self.assertEqual(self.send(), {"email_id": 9, "status": "FAILED", "code": "EMAIL_APPROVAL_REQUIRED"})
+        self.delivery.send.assert_not_called()
+
+    def test_sent_legacy_rows_without_approval_are_returned_without_resending(self):
+        self.db.queue.update(status="SENT", delivery_mode="LEGACY", approved_by_staff_id=None, approved_at=None)
+        self.assertEqual(self.send(), {"email_id": 9, "status": "ALREADY_SENT", "code": None})
+        self.delivery.send.assert_not_called()
+
+    def test_approved_single_bulk_and_legacy_rows_use_same_durable_claim(self):
+        for mode in ("SINGLE", "BULK", "LEGACY"):
+            with self.subTest(mode=mode):
+                self.setUp()
+                self.db.queue["delivery_mode"] = mode
+                self.assertEqual(self.send()["status"], "SENT")
+                self.assertEqual(self.send()["status"], "ALREADY_SENT")
+                self.delivery.send.assert_called_once()
 
 
 if __name__ == "__main__":

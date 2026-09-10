@@ -1,5 +1,7 @@
 # Development fixtures and waiter testing
 
+The current employee email workflow also requires migration `006_employee_email_approval.sql`. Single registration creates a private draft, and bulk imports create pending approvals. Development previews never send or approve messages. Read [email delivery workflow](email-delivery-workflow.md) before applying this separately approved schema update.
+
 The application continues to use MySQL 8.4. No fixture insertion, migration, or network-exposure change happens on startup. Default preview configuration sends no real email and performs no AWS operation. Separately enabling real automatic email causes the admin process to poll the queue and contact the configured provider. Confirm the exact target development database before applying pending migrations or inserting the fixtures. The existing administrator remains the administrator; the seed does not bootstrap or replace that account.
 
 ## Prepare the database after approval

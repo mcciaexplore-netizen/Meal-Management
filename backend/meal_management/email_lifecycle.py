@@ -70,6 +70,7 @@ class EmailLifecycle:
         with self._lock:
             running = self._thread is not None and self._thread.is_alive()
         return {
+            "approval_required": True,
             "automatic_enabled": self.runtime.email_auto_send_enabled is True,
             "worker_running": running,
             "poll_seconds": self.runtime.email_poll_seconds,

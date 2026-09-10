@@ -3,7 +3,9 @@ import { dateInput, dateRange, escape, list, optionalExpiry, positive, query, ra
 import { badge, closeModal, empty, errorMessage, field, formAction, heading, icon, loading, modal, notify, options, qrCard, qrStatus, selectField, stats, table } from "./ui.js";
 import { employeeDepartmentOptions, resolveEmployeeDepartment } from "./facility_departments.js";
 import { bindEmployeePhoto, employeePhotoField, validateEmployeePhoto as validatePhoto } from "./employee_photo.js";
-import { canPreviewEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "./email_delivery.js";
+import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "./email_delivery.js";
+import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
+import { showEmployeeImport } from "./employee_import.js";
 
 const active = rows => (rows ?? []).filter(row => row.is_active !== false && row.is_active !== 0);
 const rowId = row => row.id ?? row.qr_id ?? row.authorization_id;
@@ -28,7 +30,7 @@ function employeeForm(catalog, employee = {}) {
 }
 
 export async function employees(target, context) {
-  target.innerHTML = `${heading("PEOPLE & ACCESS", "Employees", "Personal reusable QRs. A separate record for every meal.", '<button class="button primary" id="new-employee">' + icon("plus") + ' Add employee</button>')}<section class="panel"><form id="employee-filters" class="filter-bar"><label class="grow">Search employees<input name="q" type="search" placeholder="Name, email, or employee code" maxlength="150"></label><label>Status<select name="active"><option value="">All employees</option><option value="true" selected>Active</option><option value="false">Inactive</option></select></label><button class="button" type="submit">Apply</button></form><div id="employee-list">${loading()}</div><div class="pagination" id="employee-pagination"></div></section>`;
+  target.innerHTML = `${heading("PEOPLE & ACCESS", "Employees", "Personal reusable QRs. A separate record for every meal.", '<div class="inline-actions"><button class="button" id="import-employees">Import CSV</button><button class="button primary" id="new-employee">' + icon("plus") + ' Add employee</button></div>')}<section class="panel"><form id="employee-filters" class="filter-bar"><label class="grow">Search employees<input name="q" type="search" placeholder="Name, email, or employee code" maxlength="150"></label><label>Status<select name="active"><option value="">All employees</option><option value="true" selected>Active</option><option value="false">Inactive</option></select></label><button class="button" type="submit">Apply</button></form><div id="employee-list">${loading()}</div><div class="pagination" id="employee-pagination"></div></section>`;
   let cursor = null;
   let rows = [];
   let photoEditor = null;
@@ -44,9 +46,13 @@ export async function employees(target, context) {
     target.querySelectorAll('[data-action="employee-open"]').forEach(button => button.onclick = () => employeeDetail(Number(button.dataset.id), context, load));
   }
   formAction(target.querySelector("#employee-filters"), () => load());
+  target.querySelector("#import-employees").onclick = () => {
+    photoEditor?.dispose();
+    showEmployeeImport(context, load);
+  };
   target.querySelector("#new-employee").onclick = () => {
     photoEditor?.dispose();
-    const dialog = modal("Register an employee", `<p class="muted">Registration creates a personal QR and queues its email automatically.</p><form id="employee-register">${employeeForm(context.catalog)}${employeePhotoField()}${formEnd("Register employee")}</form>`, true);
+    const dialog = modal("Register an employee", `<p class="muted">Registration creates a personal QR and an email draft. Review the employee, then choose Send email. Registration does not send email.</p><form id="employee-register">${employeeForm(context.catalog)}${employeePhotoField()}${formEnd("Register employee")}</form>`, true);
     const form = dialog.querySelector("form");
     const photoInput = bindEmployeePhoto(dialog);
     photoEditor = photoInput;
@@ -64,7 +70,7 @@ export async function employees(target, context) {
           try { await api(`/employees/${result.employee_id}/photo`, { method: "POST", body: photo }); }
           catch (error) { notify(`Employee registered; photo was not saved. ${error.message}`, "error"); }
         }
-        notify("Employee registered. QR email queued.");
+        notify("Employee registered. Review the draft and choose Send email when ready.");
         if (!context.isCurrent()) return;
         await load();
         if (stillOpen && context.isCurrent()) await employeeDetail(result.employee_id, context, load);
@@ -85,14 +91,14 @@ export async function employeeDetail(id, context, onChange) {
     const [employee, qrResponse, queue, deliverySettings] = await Promise.all([
       api(`/employees/${id}`),
       api(`/employees/${id}/qr`).then(qr => ({ qr })).catch(error => ({ error })),
-      api(`/email-queue?${query({ employee_id: id, limit: 10 })}`),
+      allPages(`/email-queue?${query({ employee_id: id })}`),
       api("/email-settings")
     ]);
     if (!ownsDialog() || !context.isCurrent()) return;
     const emailSettings = emailDeliverySettings(deliverySettings);
     const qr = qrResponse.qr;
     const noQr = qrResponse.error?.status === 404 || ["QR_NOT_FOUND", "ACTIVE_QR_NOT_FOUND"].includes(qrResponse.error?.code);
-    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Queue email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p>${emailTable(list(queue), true, emailSettings)}</section></div></div>`;
+    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
     formAction(dialog.querySelector("#employee-edit"), async data => {
       const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
       await api(`/employees/${id}`, { method: "PATCH", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), department_id: departmentId } });
@@ -116,13 +122,13 @@ export async function employeeDetail(id, context, onChange) {
       event.currentTarget.disabled = true;
       try {
         await api(`/employees/${id}/qr/resend`, { method: "POST" });
-        notify("The same active QR has been queued for email.");
+        notify("Email draft ready. Choose Send email to send the same active QR.");
         await employeeDetail(id, context, onChange);
       } catch (error) { notify(error.message, "error"); event.target.disabled = false; }
     });
     dialog.querySelector("#replace-qr").onclick = () => expiryDialog(qr ? "Replace employee QR" : "Issue employee QR", async expiresAt => {
       await api(`/employees/${id}/qr/replace`, { method: "POST", body: { expires_at: expiresAt } });
-      notify("Employee QR issued and email queued.");
+      notify("Employee QR issued. Review the email draft before sending.");
       await employeeDetail(id, context, onChange);
     });
     dialog.querySelector("#revoke-qr")?.addEventListener("click", () => revokeDialog(async reason => {
@@ -130,7 +136,7 @@ export async function employeeDetail(id, context, onChange) {
       notify("Employee QR revoked.");
       await employeeDetail(id, context, onChange);
     }));
-    bindEmailPreviews(dialog);
+    bindEmployeeEmails(dialog.querySelector("#employee-email-history"), id, list(queue), emailSettings, ownsDialog);
   } catch (error) {
     if (ownsDialog() && context.isCurrent()) content.innerHTML = errorMessage(error);
   }
@@ -255,12 +261,57 @@ export async function reports(target, context) {
   await load();
 }
 
-export function emailTable(rows, compact = false, settings = null) {
-  if (!rows.length) return empty("No email messages", "Register an employee or queue a QR resend.", "mail");
-  const previews = rows.some(row => canPreviewEmail(row, settings));
-  const columns = compact ? ["Queue ID", "Status", "Queued"] : ["Queue ID", "Recipient", "Status", "Queued"];
-  if (previews) columns.push("");
-  return table(columns, rows.map(row => `<tr><td class="mono">${escape(row.id ?? row.email_id)}</td>${compact ? "" : `<td><strong>${escape(row.recipient_email ?? row.recipient)}</strong><span class="cell-subtitle">${escape(row.subject ?? "Employee meal QR")}</span></td>`}<td>${badge(row.status, row.status === "SENT" ? "positive" : row.status === "FAILED" ? "danger" : "neutral")}<span class="cell-subtitle">${escape(emailStatusDetail(row.status))}</span></td><td>${escape(timestamp(row.created_at ?? row.queued_at))}</td>${previews ? `<td>${canPreviewEmail(row, settings) ? action("email-preview", row.id ?? row.email_id, "Preview") : ""}</td>` : ""}</tr>`), "Email queue");
+export function emailTable(rows, compact = false, settings = null, controls = {}) {
+  if (!rows.length) return empty("No email messages", compact ? "This employee has no email drafts or delivery history." : "Bulk imports and earlier messages appear here. Individual email drafts are in employee details.", "mail");
+  const actions = rows.some(row => canPreviewEmail(row, settings) || controls.single && row.delivery_mode === "SINGLE" && ["DRAFT", "QUEUED", "NEEDS_REVIEW", "FAILED"].includes(row.status));
+  const columns = compact ? ["Email ID", "Status", "Created"] : ["Email ID", "Recipient", "Type", "Status", "Created"];
+  if (controls.select) columns.unshift("Select");
+  if (actions) columns.push("Actions");
+  return table(columns, rows.map(row => {
+    const id = row.id ?? row.email_id;
+    const eligible = canApproveEmail(row) || canProcessEmail(row);
+    const selected = controls.selected?.has(id);
+    const unknown = controls.unknown?.has(id);
+    const single = controls.single && row.delivery_mode === "SINGLE";
+    const send = single && ["DRAFT", "QUEUED"].includes(row.status) && !unknown;
+    const check = single && (unknown || ["QUEUED", "NEEDS_REVIEW", "FAILED"].includes(row.status));
+    return `<tr>${controls.select ? `<td>${eligible ? `<input class="email-selection" type="checkbox" data-email-select="${escape(id)}" aria-label="Select email ${escape(id)}" ${selected ? "checked" : ""}>` : ""}</td>` : ""}<td class="mono">${escape(id)}</td>${compact ? "" : `<td><strong>${escape(row.recipient_email ?? row.recipient)}</strong><span class="cell-subtitle">${escape(row.subject ?? "Employee meal QR")}</span></td><td>${escape(row.delivery_mode ?? "—")}${row.bulk_batch_id ? `<span class="cell-subtitle">Batch ${escape(row.bulk_batch_id)}</span>` : ""}</td>`}<td>${badge(unknown ? "RESULT UNCONFIRMED" : row.status, ["SENT", "ALREADY_SENT"].includes(row.status) ? "positive" : ["FAILED", "NEEDS_REVIEW"].includes(row.status) ? "danger" : "neutral")}<span class="cell-subtitle">${escape(unknown ? "Check this email's status before retrying. Do not create another resend." : single && row.status === "QUEUED" ? "Approved but not yet confirmed. Resume sending this same email ID." : emailStatusDetail(row.status))}</span></td><td>${escape(timestamp(row.created_at ?? row.queued_at))}</td>${actions ? `<td><div class="stack-actions">${canPreviewEmail(row, settings) ? action("email-preview", id, "Preview") : ""}${send ? `<button type="button" class="small-button" data-action="email-send" data-id="${escape(id)}" ${canSendEmail(settings) ? "" : "disabled"}>${row.status === "QUEUED" ? "Resume send" : "Send email"}</button>` : ""}${check ? action("email-check", id, "Check status") : ""}</div></td>` : ""}</tr>`;
+  }), compact ? "Employee email history" : "Bulk email queue");
+}
+
+function bindEmployeeEmails(target, employeeId, rows, settings, isCurrent) {
+  const operations = new Map(rows.filter(row => row.delivery_mode === "SINGLE").map(row => [row.id ?? row.email_id, new SingleEmailOperation(employeeId, row, api)]));
+  let busy = false;
+  function render(message = "", failed = false) {
+    if (!isCurrent()) return;
+    const unknown = new Set([...operations].filter(([, operation]) => operation.unknown).map(([id]) => id));
+    const resend = target.closest("dialog")?.querySelector("#resend-qr");
+    if (resend) resend.disabled = unknown.size > 0;
+    target.innerHTML = `${emailTable(rows, true, settings, { single: true, unknown })}<div class="${failed ? "alert error" : "field-help"}" role="status" aria-live="polite">${escape(message)}</div>`;
+    bindEmailPreviews(target);
+    target.querySelectorAll('[data-action="email-send"], [data-action="email-check"]').forEach(button => button.onclick = async () => {
+      if (busy) return;
+      const id = positive(button.dataset.id, "email ID");
+      const operation = operations.get(id);
+      if (!operation) return;
+      busy = true;
+      if (resend) resend.disabled = true;
+      target.querySelectorAll("button").forEach(control => { control.disabled = true; });
+      button.textContent = button.dataset.action === "email-send" ? "Sending…" : "Checking…";
+      try {
+        const result = button.dataset.action === "email-send" ? await operation.send() : await operation.check();
+        if (!result) return;
+        const row = rows.find(item => (item.id ?? item.email_id) === id);
+        row.status = operation.status;
+        render(emailStatusDetail(operation.status), ["FAILED", "NEEDS_REVIEW"].includes(operation.status));
+      } catch (error) {
+        render(error.message, true);
+      } finally {
+        busy = false;
+      }
+    });
+  }
+  render();
 }
 
 function bindEmailPreviews(target) {
@@ -276,26 +327,118 @@ function bindEmailPreviews(target) {
 }
 
 export async function emails(target, context) {
-  target.innerHTML = `${heading("EMPLOYEE QR DELIVERY", "Email queue", "Review QR email status and the configured delivery mode.", '<button class="button" id="refresh-email">Refresh queue</button>')}<div class="info-banner">${icon("mail")}<div id="email-mode">Checking email delivery settings…</div></div><section class="panel"><div id="email-list">${loading()}</div><div class="pagination" id="email-pagination"></div></section>`;
+  const requestedBatch = new URLSearchParams(location.hash.split("?")[1] ?? "").get("bulk_batch_id") ?? "";
+  target.innerHTML = `${heading("BULK QR EMAIL DELIVERY", "Email queue", "Review and approve bulk emails before sending. Individual drafts are in employee details.", '<button class="button" id="refresh-email">Refresh queue</button>')}<div class="info-banner">${icon("mail")}<div id="email-mode">Checking email delivery settings…</div></div><section class="panel"><form id="email-batch-filter" class="filter-bar">${field("Bulk batch ID", "bulk_batch_id", requestedBatch, "number", 'min="1" step="1" placeholder="All bulk and legacy messages"')}<button class="button" type="submit">Filter batch</button><div data-form-error></div></form><div class="filter-bar"><span id="email-selection-summary" class="grow">Select messages to approve or process.</span><button class="button primary" id="approve-emails" disabled>Approve and send</button><button class="button" id="process-emails" disabled>Process approved</button></div><div class="filter-bar"><button class="small-button" id="select-pending-emails">Select pending shown</button><button class="small-button" id="select-approved-emails">Select approved shown</button><button class="small-button" id="clear-email-selection">Clear selection</button></div><div id="email-operation-status" class="email-operation-status" role="status" aria-live="polite"></div><div id="email-list">${loading()}</div><div class="pagination" id="email-pagination"></div></section>`;
   let rows = [];
   let cursor = null;
-  async function load(append = false) {
-    const [result, configuration] = await Promise.all([
-      api(`/email-queue?${query({ limit: 30, after_id: append ? cursor : null })}`),
-      api("/email-settings"),
-    ]);
-    if (!context.isCurrent()) return;
-    const delivery = emailDeliverySettings(configuration);
-    rows = append ? rows.concat(list(result)) : list(result);
-    cursor = result.next_cursor;
-    target.querySelector("#email-mode").innerHTML = `<strong>${escape(emailModeLabel(delivery))}</strong><p class="small">${escape(emailModeDescription(delivery))}</p>`;
-    target.querySelector("#email-list").innerHTML = emailTable(rows, false, delivery);
-    target.querySelector("#email-pagination").innerHTML = `<span>${rows.length} messages shown</span>${cursor ? '<button class="button" id="more-email">Load more</button>' : ""}`;
-    target.querySelector("#more-email")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
-    bindEmailPreviews(target);
+  let settings = null;
+  let loadingRows = false;
+  let loadVersion = 0;
+  const selected = new Set();
+  const operation = new BulkEmailOperation(api);
+  const status = target.querySelector("#email-operation-status");
+  const approveButton = target.querySelector("#approve-emails");
+  const processButton = target.querySelector("#process-emails");
+  const eligibleSelection = predicate => rows.filter(row => selected.has(row.id ?? row.email_id) && predicate(row)).map(row => row.id ?? row.email_id);
+  function updateActions() {
+    const pending = eligibleSelection(canApproveEmail);
+    const approved = eligibleSelection(canProcessEmail);
+    target.querySelector("#email-selection-summary").textContent = `${selected.size} selected · ${pending.length} awaiting approval · ${approved.length} approved`;
+    approveButton.textContent = `Approve and send${pending.length ? ` (${pending.length})` : ""}`;
+    processButton.textContent = `Process approved${approved.length ? ` (${approved.length})` : ""}`;
+    approveButton.disabled = loadingRows || operation.inFlight || operation.unknown || !canSendEmail(settings) || !pending.length;
+    processButton.disabled = loadingRows || operation.inFlight || operation.unknown || !canSendEmail(settings) || !approved.length;
+    target.querySelector("#refresh-email").disabled = operation.inFlight;
+    target.querySelectorAll("[data-email-select], #select-pending-emails, #select-approved-emails, #clear-email-selection, #email-batch-filter input, #email-batch-filter button").forEach(control => { control.disabled = operation.inFlight || loadingRows; });
   }
+  function render() {
+    target.querySelector("#email-list").innerHTML = emailTable(rows, false, settings, { select: true, selected });
+    target.querySelectorAll("[data-email-select]").forEach(control => control.onchange = () => {
+      const id = positive(control.dataset.emailSelect, "email ID");
+      if (control.checked && selected.size >= 100) { control.checked = false; notify("Select at most 100 messages.", "error"); return; }
+      if (control.checked) selected.add(id); else selected.delete(id);
+      updateActions();
+    });
+    bindEmailPreviews(target);
+    updateActions();
+  }
+  async function load(append = false) {
+    const batchInput = target.querySelector('[name="bulk_batch_id"]').value;
+    const batchId = batchInput ? positive(batchInput, "bulk batch ID") : null;
+    const version = ++loadVersion;
+    loadingRows = true;
+    updateActions();
+    try {
+      const [result, configuration] = await Promise.all([
+        api(`/email-queue?${query({ limit: 100, after_id: append ? cursor : null, bulk_batch_id: batchId })}`),
+        api("/email-settings"),
+      ]);
+      if (!context.isCurrent() || version !== loadVersion) return;
+      settings = emailDeliverySettings(configuration);
+      rows = append ? rows.concat(list(result)) : list(result);
+      cursor = result.next_cursor;
+      if (!append) operation.unknown = false;
+      const eligible = new Set(rows.filter(row => canApproveEmail(row) || canProcessEmail(row)).map(row => row.id ?? row.email_id));
+      for (const id of selected) if (!eligible.has(id)) selected.delete(id);
+      target.querySelector("#email-mode").innerHTML = `<strong>${escape(emailModeLabel(settings))}</strong><p class="small">${escape(emailModeDescription(settings))}</p>`;
+      target.querySelector("#email-pagination").innerHTML = `<span>${rows.length} messages shown</span>${cursor ? '<button class="button" id="more-email">Load more</button>' : ""}`;
+      target.querySelector("#more-email")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
+      render();
+    } finally {
+      if (context.isCurrent() && version === loadVersion) { loadingRows = false; updateActions(); }
+    }
+  }
+  approveButton.onclick = async () => {
+    if (approveButton.disabled) return;
+    status.textContent = "Saving your approval…";
+    try {
+      const pending = operation.approveAndProcess(rows, eligibleSelection(canApproveEmail), (results, count) => {
+        if (context.isCurrent()) status.textContent = `Approval saved. ${results.length} of ${count} selected messages checked. Waiting for provider results…`;
+      });
+      updateActions();
+      const result = await pending;
+      if (!result || !context.isCurrent()) return;
+      const accepted = result.results.filter(row => ["SENT", "ALREADY_SENT"].includes(row.status)).length;
+      const review = result.results.filter(row => ["FAILED", "NEEDS_REVIEW"].includes(row.status)).length;
+      status.textContent = `${result.email_ids.length} messages approved. ${accepted} accepted by the email provider; inbox delivery is not confirmed. ${review ? `${review} require review; use Process approved to resume remaining messages after reviewing the failure.` : "Review the statuses below."}`;
+      await load();
+    } catch (error) {
+      if (context.isCurrent()) status.textContent = `${error.message} Refresh the queue before trying again.`;
+    } finally { if (context.isCurrent()) updateActions(); }
+  };
+  processButton.onclick = async () => {
+    if (processButton.disabled) return;
+    status.textContent = "Processing approved messages… Keep this page open until results are confirmed.";
+    try {
+      const pending = operation.process(rows, eligibleSelection(canProcessEmail), (results, count) => {
+        if (context.isCurrent()) status.textContent = `${results.length} of ${count} selected messages checked. Waiting for provider results…`;
+      });
+      updateActions();
+      const results = await pending;
+      if (!results || !context.isCurrent()) return;
+      const accepted = results.filter(result => ["SENT", "ALREADY_SENT"].includes(result.status)).length;
+      const review = results.filter(result => ["FAILED", "NEEDS_REVIEW"].includes(result.status)).length;
+      status.textContent = `${accepted} accepted by the email provider; inbox delivery is not confirmed. ${review ? `${review} require review. Remaining messages were not automatically retried.` : "Refresh status to review every result."}`;
+      await load();
+    } catch (error) {
+      if (context.isCurrent()) status.textContent = error.message;
+    } finally { if (context.isCurrent()) updateActions(); }
+  };
+  function selectShown(predicate) {
+    if (operation.inFlight || loadingRows) return;
+    const ids = rows.filter(predicate).map(row => row.id ?? row.email_id);
+    if (ids.length > 100) { notify("More than 100 matching messages are shown. Select up to 100 individually.", "error"); return; }
+    selected.clear();
+    ids.forEach(id => selected.add(id));
+    render();
+  }
+  formAction(target.querySelector("#email-batch-filter"), async () => { selected.clear(); await load(); });
+  target.querySelector("#select-pending-emails").onclick = () => selectShown(canApproveEmail);
+  target.querySelector("#select-approved-emails").onclick = () => selectShown(canProcessEmail);
+  target.querySelector("#clear-email-selection").onclick = () => { selected.clear(); render(); };
   target.querySelector("#refresh-email").onclick = () => load().catch(error => notify(error.message, "error"));
   await load();
+  return () => operation.cancel();
 }
 
 export async function settings(target, context) {

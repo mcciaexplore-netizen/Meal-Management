@@ -30,10 +30,12 @@ class DeliveryPhaseDatabase:
 class EmailDeliveryMySQLTests(MealServicesFixture):
     def queued_email(self):
         suffix = uuid4().hex
-        return self.employees.register(
+        registration = self.employees.register(
             self.admin_context, "MAIL-" + suffix[:20], "Fictional Email Employee",
             "meal-delivery-test-" + suffix + "@gmail.com", self.department_id,
         )
+        self.qr.email_queue.approve_single(self.admin_context, registration.email_id, registration.employee_id)
+        return registration
 
     def worker(self, adapter, database=None):
         from meal_management.email_worker import EmailDeliveryWorker
@@ -117,10 +119,22 @@ class EmailDeliveryMySQLTests(MealServicesFixture):
 
     def test_reserved_seed_recipient_is_never_passed_to_delivery(self):
         registration, _ = self.employee()
+        self.qr.email_queue.approve_single(self.admin_context, registration.email_id, registration.employee_id)
         adapter = self.adapter()
         result = self.worker(adapter).send(registration.email_id, allow_real_email=True)
         self.assertEqual(result["status"], "CANCELLED")
         self.assertEqual(result["code"], "TEST_EMAIL_RECIPIENT_FORBIDDEN")
+        adapter.send.assert_not_called()
+
+    def test_registration_draft_cannot_be_claimed_without_admin_approval(self):
+        from meal_management.errors import DomainError
+
+        registration, _ = self.employee()
+        adapter = self.adapter()
+        with self.assertRaisesRegex(DomainError, "^EMAIL_APPROVAL_REQUIRED$"):
+            self.worker(adapter).send(registration.email_id, allow_real_email=True)
+        self.assertEqual(self.scalar("SELECT status FROM email_queue WHERE id = %s", (registration.email_id,)), "DRAFT")
+        self.assertIsNone(self.scalar("SELECT approved_by_staff_id FROM email_queue WHERE id = %s", (registration.email_id,)))
         adapter.send.assert_not_called()
 
     def test_uncertain_provider_outcome_stays_failed_without_automatic_retry(self):
@@ -155,12 +169,18 @@ class EmailDeliveryMySQLTests(MealServicesFixture):
 
 
 class EmailDispatcherMySQLTests(MealServicesFixture):
-    def queue_email(self):
+    def queue_email(self, approve=True):
+        from meal_management.employees import Registration
+
         suffix = uuid4().hex
-        return self.employees.register(
-            self.admin_context, "AUTO-" + suffix[:20], "Fictional Automatic Email",
-            "meal-dispatch-test-" + suffix + "@gmail.com", self.department_id,
-        )
+        result = self.employees.register_bulk(self.admin_context, uuid4(), [{
+            "employee_code": "AUTO-" + suffix[:20], "full_name": "Fictional Automatic Email",
+            "email": "meal-dispatch-test-" + suffix + "@gmail.com", "department_id": self.department_id,
+        }])
+        registration = Registration(**result["employees"][0])
+        if approve:
+            self.qr.email_queue.approve_bulk(self.admin_context, [registration.email_id])
+        return registration
 
     def dispatcher(self, adapter, batch_size=10):
         from meal_management.email_dispatcher import EmailDispatcher
@@ -200,3 +220,13 @@ class EmailDispatcherMySQLTests(MealServicesFixture):
         self.assertEqual(sum(result["sent"] for result in results), 1)
         adapter.send.assert_called_once()
         self.assertEqual(self.scalar("SELECT status FROM email_queue WHERE id = %s", (registration.email_id,)), "SENT")
+
+    def test_background_dispatch_never_sends_single_or_unapproved_bulk_messages(self):
+        single, _ = self.employee()
+        self.qr.email_queue.approve_single(self.admin_context, single.email_id, single.employee_id)
+        bulk = self.queue_email(approve=False)
+        adapter = Mock(enabled=True, send=Mock(return_value="<fictional-accepted>"))
+        self.assertEqual(self.dispatcher(adapter).dispatch_once()["selected"], 0)
+        adapter.send.assert_not_called()
+        self.assertEqual(self.scalar("SELECT status FROM email_queue WHERE id = %s", (single.email_id,)), "QUEUED")
+        self.assertEqual(self.scalar("SELECT status FROM email_queue WHERE id = %s", (bulk.email_id,)), "PENDING_APPROVAL")

@@ -1,108 +1,114 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { canPreviewEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "../src/email_delivery.js";
+import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "../src/email_delivery.js";
 import { emailTable } from "../src/screens.js";
 
-const preview = { backend: "preview", sending_enabled: false, preview_available: true };
-const gmail = { backend: "gmail", sending_enabled: false, preview_available: false };
-const rows = ["QUEUED", "CANCELLED", "SENT", "FAILED"].map((status, index) => ({ id: index + 21, recipient_email: "employee@example.test", status, created_at: "2026-09-09T10:00:00Z" }));
+const preview = { backend: "preview", sending_enabled: false, preview_available: true, approval_required: true };
+const gmail = { backend: "gmail", sending_enabled: false, preview_available: false, approval_required: true };
+const rows = ["DRAFT", "PENDING_APPROVAL", "QUEUED", "CANCELLED", "SENT", "FAILED"].map((status, index) => ({ id: index + 21, delivery_mode: status === "DRAFT" ? "SINGLE" : "BULK", recipient_email: "employee@example.test", status, created_at: "2026-09-09T10:00:00Z", approved_at: status === "QUEUED" ? "2026-09-10T01:00:00Z" : null }));
 
-test("preview mode explicitly states that no messages are sent", () => {
+test("preview mode explains disabled real delivery and does not imply approval", () => {
   assert.match(emailModeLabel(preview), /Local previews only; no emails sent/);
   assert.match(emailModeDescription(preview), /does not deliver messages/);
-  assert.match(emailModeDescription(preview), /leaves the message in the queue/);
+  assert.match(emailModeDescription(preview), /does not approve or send/);
+  assert.equal(canSendEmail(preview), false);
 });
 
-test("Gmail and SES distinguish disabled delivery from manual-only delivery", () => {
+test("Gmail and SES explain explicit single sending and approved bulk processing", () => {
   for (const backend of ["gmail", "ses"]) {
     for (const enabled of [false, true]) {
-      const settings = { backend, sending_enabled: enabled, preview_available: false };
+      const settings = { ...gmail, backend, sending_enabled: enabled };
       assert.match(emailModeLabel(settings), enabled ? /sending enabled/ : /sending disabled/);
-      assert.match(emailModeLabel(settings), backend === "gmail" ? /Gmail/ : /Amazon SES/);
-      assert.match(emailModeDescription(settings), enabled ? /approved manual send/ : /delivery is disabled/);
-      assert.doesNotMatch(emailModeDescription(settings), /for automatic delivery/);
+      assert.match(emailModeDescription(settings), enabled ? /only when you choose Send email/ : /delivery is disabled/);
+      assert.match(emailModeDescription(settings), /bulk/i);
+      assert.equal(canSendEmail(settings), enabled);
     }
   }
 });
 
-test("automatic delivery reports the running sender and configured polling interval", () => {
-  for (const backend of ["gmail", "ses"]) {
-    const settings = emailDeliverySettings({ backend, sending_enabled: true, preview_available: false, automatic_enabled: true, worker_running: true, poll_seconds: 7, batch_size: 4 });
-    assert.match(emailModeLabel(settings), /automatic delivery running/);
-    assert.match(emailModeDescription(settings), /Registration and QR resends/);
-    assert.match(emailModeDescription(settings), /every 7 seconds/);
-    assert.match(emailModeDescription(settings), /Refresh this list/);
-    assert.doesNotMatch(emailModeDescription(settings), /manual send/);
-  }
+test("background delivery is restricted to approved bulk messages in explanatory copy", () => {
+  const settings = emailDeliverySettings({ ...gmail, sending_enabled: true, automatic_enabled: true, worker_running: true, poll_seconds: 7, batch_size: 4 });
+  assert.match(emailModeDescription(settings), /Individual drafts send only when you choose Send email/);
+  assert.match(emailModeDescription(settings), /approved bulk messages about every 7 seconds/);
+  assert.doesNotMatch(emailModeDescription(settings), /Registration and QR resends queue/);
+  assert.match(emailModeDescription({ ...settings, worker_running: false }), /background sender is not running/);
 });
 
-test("configured automation without a running sender tells administrators that emails wait", () => {
-  const settings = { ...gmail, sending_enabled: true, automatic_enabled: true, worker_running: false };
-  assert.match(emailModeLabel(settings), /automatic delivery not running/);
-  assert.match(emailModeDescription(settings), /sender is not running/);
-  assert.match(emailModeDescription(settings), /Queued emails will wait/);
-});
-
-test("invalid or contradictory automation settings fail without claiming delivery is running", () => {
-  for (const value of [
-    { ...gmail, automatic_enabled: "true" },
-    { ...gmail, automatic_enabled: true },
-    { ...gmail, worker_running: true },
-    { ...preview, sending_enabled: true, automatic_enabled: true },
-    { ...gmail, poll_seconds: 0 },
-    { ...gmail, poll_seconds: 301 },
-    { ...gmail, poll_seconds: "5" },
-    { ...gmail, batch_size: 0 },
-    { ...gmail, batch_size: 101 },
-  ]) assert.throws(() => emailDeliverySettings(value), /could not be confirmed/);
-});
-
-test("only a queued message in an available local preview mode can expose Preview", () => {
-  assert.equal(canPreviewEmail(rows[0], preview), true);
-  for (const row of rows.slice(1)) assert.equal(canPreviewEmail(row, preview), false);
-  for (const settings of [gmail, { ...preview, preview_available: false }, null]) {
-    for (const row of rows) assert.equal(canPreviewEmail(row, settings), false);
-  }
-});
-
-test("full and compact tables show queue IDs and omit unavailable preview actions", () => {
-  for (const compact of [false, true]) {
-    const local = emailTable(rows, compact, preview);
-    assert.equal((local.match(/data-action="email-preview"/g) ?? []).length, 1);
-    assert.match(local, /data-id="21"/);
-    assert.match(local, /Queue ID/);
-    assert.match(local, /class="mono">24</);
-    const remote = emailTable(rows, compact, gmail);
-    assert.doesNotMatch(remote, /email-preview|>Preview</);
-    assert.match(remote, /Queue ID/);
-  }
-});
-
-test("Sent describes provider acceptance while Failed requests review", () => {
-  assert.match(emailStatusDetail("SENT"), /Accepted by the email provider/);
-  assert.match(emailStatusDetail("SENT"), /inbox delivery is not confirmed/);
-  assert.match(emailStatusDetail("FAILED"), /Review this attempt before retrying/);
-  const html = emailTable(rows, false, gmail);
-  assert.match(html, /inbox delivery is not confirmed/);
-  assert.match(html, /Review this attempt before retrying/);
-});
-
-test("email row display escapes recipient text and never creates a sending action", () => {
-  const html = emailTable([{ ...rows[0], recipient_email: "<script>recipient</script>", subject: "A & B" }], false, preview);
-  assert.match(html, /&lt;script&gt;recipient&lt;\/script&gt;/);
-  assert.match(html, /A &amp; B/);
-  assert.doesNotMatch(html, /data-action="(?:send|email-send)|<script>/);
-});
-
-test("invalid delivery settings fail safely instead of implying previews are available", () => {
-  for (const value of [null, {}, { ...gmail, backend: "unknown" }, { ...gmail, preview_available: true }, { ...gmail, sending_enabled: "true" }]) assert.throws(() => emailDeliverySettings(value), /could not be confirmed/);
+test("invalid settings cannot bypass approval or imply running delivery", () => {
+  for (const value of [null, {}, { ...gmail, approval_required: false }, { ...gmail, approval_required: undefined }, { ...gmail, backend: "unknown" }, { ...gmail, preview_available: true }, { ...gmail, sending_enabled: "true" }, { ...gmail, automatic_enabled: true }, { ...gmail, worker_running: true }, { ...preview, sending_enabled: true, automatic_enabled: true }, { ...gmail, poll_seconds: 0 }, { ...gmail, batch_size: 101 }]) assert.throws(() => emailDeliverySettings(value), /could not be confirmed/);
   assert.deepEqual(emailDeliverySettings({ ...gmail, sender: "private@example.test" }), { ...gmail, automatic_enabled: false, worker_running: false, poll_seconds: 5, batch_size: 10 });
 });
 
-test("employee details and email queue load safe email settings without adding sending endpoints", async () => {
+test("only unsent messages in local preview mode expose Preview", () => {
+  rows.forEach((row, index) => assert.equal(canPreviewEmail(row, preview), index < 3));
+  for (const settings of [gmail, { ...preview, preview_available: false }, null]) for (const row of rows) assert.equal(canPreviewEmail(row, settings), false);
+});
+
+test("individual draft send actions are scoped to employee history and gated by real delivery", () => {
+  const disabled = emailTable(rows, true, gmail, { single: true });
+  assert.match(disabled, /data-action="email-send" data-id="21" disabled/);
+  const enabled = emailTable(rows, true, { ...gmail, sending_enabled: true }, { single: true });
+  assert.match(enabled, /data-action="email-send" data-id="21" >Send email/);
+  assert.equal((enabled.match(/data-action="email-send"/g) ?? []).length, 1);
+  assert.doesNotMatch(emailTable(rows, false, { ...gmail, sending_enabled: true }), /email-send/);
+  const unknown = emailTable(rows, true, gmail, { single: true, unknown: new Set([21]) });
+  assert.doesNotMatch(unknown, /email-send/);
+  assert.match(unknown, /email-check/);
+  assert.match(unknown, /RESULT UNCONFIRMED/);
+});
+
+test("bulk eligibility excludes individual drafts and unapproved queued rows", () => {
+  assert.equal(canApproveEmail(rows[1]), true);
+  assert.equal(canProcessEmail(rows[2]), true);
+  for (const row of [{ ...rows[1], delivery_mode: "SINGLE" }, { ...rows[1], delivery_mode: undefined }, rows[0]]) assert.equal(canApproveEmail(row), false);
+  for (const row of [{ ...rows[2], approved_at: null }, { ...rows[2], delivery_mode: "SINGLE" }, rows[1]]) assert.equal(canProcessEmail(row), false);
+  const html = emailTable(rows, false, gmail, { select: true });
+  assert.equal((html.match(/data-email-select=/g) ?? []).length, 2);
+  assert.match(html, /Email ID/);
+});
+
+test("statuses distinguish drafts, approval, provider acceptance and uncertain delivery", () => {
+  assert.match(emailStatusDetail("SENT"), /inbox delivery is not confirmed/);
+  assert.match(emailStatusDetail("DRAFT"), /Not sent/);
+  assert.match(emailStatusDetail("PENDING_APPROVAL"), /explicit administrator approval/);
+  assert.match(emailStatusDetail("NEEDS_REVIEW"), /Delivery may have occurred/);
+  assert.match(emailStatusDetail("FAILED"), /Review this failed attempt/);
+});
+
+test("email rows escape recipient text and never offer direct sends for bulk messages", () => {
+  const html = emailTable([{ ...rows[1], recipient_email: "<script>recipient</script>", subject: "A & B" }], false, preview, { single: true, select: true });
+  assert.match(html, /&lt;script&gt;recipient&lt;\/script&gt;/);
+  assert.match(html, /A &amp; B/);
+  assert.doesNotMatch(html, /email-send|<script>/);
+});
+
+test("registration prepares drafts and exposes bulk import without changing the photo flow", async () => {
   const source = await readFile(new URL("../src/screens.js", import.meta.url), "utf8");
-  assert.match(source, /emailTable\(list\(queue\), true, emailSettings\)/);
-  assert.equal((source.match(/api\("\/email-settings"\)/g) ?? []).length, 2);
-  assert.doesNotMatch(source, /api\([^\n]*email[^\n]*\/send/);
+  assert.match(source, /Registration does not send email/);
+  assert.match(source, /showEmployeeImport\(context, load\)/);
+  assert.match(source, /const photoInput = bindEmployeePhoto\(dialog\)/);
+  assert.match(source, /photoInput\.dispose\(\)/);
+  assert.doesNotMatch(source, /queues its email automatically|QR email queued|Queue email resend/);
+});
+
+test("queued individual recovery renders Resume send and outdated approval settings fail closed", () => {
+  const queued = { ...rows[2], delivery_mode: "SINGLE" };
+  const html = emailTable([queued], true, { ...gmail, sending_enabled: true }, { single: true });
+  assert.match(html, /data-action="email-send"/);
+  assert.match(html, /Resume send/);
+  assert.match(html, /same email ID/);
+  assert.throws(() => emailDeliverySettings({ ...gmail, approval_required: undefined }), /email approval migration/);
+});
+
+test("bulk batch review link and loaded-row selection stay explicit", async () => {
+  const source = await readFile(new URL("../src/screens.js", import.meta.url), "utf8");
+  const importer = await readFile(new URL("../src/employee_import.js", import.meta.url), "utf8");
+  assert.match(source, /bulk_batch_id: batchId/);
+  assert.match(source, /Select pending shown/);
+  assert.match(source, /Select approved shown/);
+  assert.match(source, /ids\.length > 100/);
+  assert.match(source, /Approve and send/);
+  assert.match(source, /operation\.approveAndProcess/);
+  assert.match(importer, /#emails\?bulk_batch_id=/);
 });

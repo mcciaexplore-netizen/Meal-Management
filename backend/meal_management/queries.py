@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from .auth import require_actor
+from .email_queue import email_delivery_state
 from .errors import DomainError
 from .meals import positive_integer
 from .reports import _date_range
@@ -133,25 +134,36 @@ class QueryService:
                 raise DomainError("QR_NOT_FOUND")
         return _record(row)
 
-    def email_status(self, context, limit=50, after_id=0, employee_id=None):
+    def email_status(self, context, limit=50, after_id=0, employee_id=None, delivery_scope="all", bulk_batch_id=None):
         _pagination(limit, after_id)
+        if delivery_scope not in {"all", "bulk"}:
+            raise DomainError("INVALID_EMAIL_DELIVERY_SCOPE")
         filters = ["q.id > %s"]
         params = [after_id]
+        if delivery_scope == "bulk":
+            filters.append("q.delivery_mode IN ('BULK', 'LEGACY')")
         if employee_id is not None:
             filters.append("c.employee_id = %s")
             params.append(positive_integer(employee_id, "EMPLOYEE_ID"))
+        if bulk_batch_id is not None:
+            filters.append("q.bulk_batch_id = %s")
+            params.append(positive_integer(bulk_batch_id, "EMAIL_BATCH_ID"))
         params.append(limit + 1)
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             rows = tx.all(
                 "SELECT q.id, q.qr_id, c.employee_id, e.full_name AS employee_name, "
                 "q.recipient_email, q.status, q.created_at, q.updated_at, "
-                "CASE WHEN q.last_error IS NULL THEN NULL ELSE 'EMAIL_PROCESSING_FAILED' END AS last_error "
+                "q.delivery_mode, q.bulk_batch_id, q.approved_by_staff_id, q.approved_at, "
+                "q.last_error "
                 "FROM email_queue q JOIN qr_credentials c ON c.id = q.qr_id "
                 "JOIN employees e ON e.id = c.employee_id WHERE "
                 + " AND ".join(filters) + " ORDER BY q.id LIMIT %s",
                 params,
             )
+        for row in rows:
+            row["status"], row["code"] = email_delivery_state(row)
+            row["last_error"] = row["code"]
         return _page(rows, limit)
 
     def meal_history(self, context, start, end, limit=50, after_id=0, employee_id=None):

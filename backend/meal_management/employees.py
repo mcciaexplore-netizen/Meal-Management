@@ -1,8 +1,10 @@
-from dataclasses import dataclass
+import hmac
+from dataclasses import asdict, dataclass
+from uuid import UUID
 
 from .auth import audit, require_actor
 from .errors import DomainError
-from .security import normalize_email, required_text
+from .security import normalize_email, payload_digest, required_text
 
 
 _UNSET = object()
@@ -16,7 +18,7 @@ class Registration:
 
 
 def _positive_id(value, field):
-    if type(value) is not int or value < 1:
+    if type(value) is not int or not 1 <= value <= 2**64 - 1:
         raise DomainError("INVALID_" + field.upper())
     return value
 
@@ -83,55 +85,103 @@ class EmployeeService:
         selfie_object_key = _selfie_key(selfie_object_key)
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
-            self._department(tx, department_id)
-            now = tx.now()
-            try:
-                employee_id = tx.insert(
-                    "INSERT INTO employees "
-                    "(employee_code, full_name, email, department_id, is_active, "
-                    "selfie_object_key, created_at, updated_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        employee_code,
-                        full_name,
-                        email,
-                        department_id,
-                        True,
-                        selfie_object_key,
-                        now,
-                        now,
-                    ),
-                )
-            except Exception as exc:
-                if getattr(exc, "errno", None) == 1062:
-                    raise DomainError("EMPLOYEE_CODE_EXISTS") from None
-                raise
-            issued = self.qr_service._issue(
-                tx, actor.staff_id, "EMPLOYEE", employee_id, expires_at
+            result = self._register(
+                tx, actor, employee_code, full_name, email, department_id,
+                selfie_object_key=selfie_object_key, expires_at=expires_at,
             )
-            email_id = self.qr_service.email_queue.enqueue_employee(
-                tx,
-                issued.qr_id,
-                {"id": employee_id, "full_name": full_name, "email": email},
-                issued.token,
+        return result
+
+    def _register(self, tx, actor, employee_code, full_name, email, department_id, *, selfie_object_key=None, expires_at=None, bulk_batch_id=None):
+        self._department(tx, department_id)
+        now = tx.now()
+        try:
+            employee_id = tx.insert(
+                "INSERT INTO employees "
+                "(employee_code, full_name, email, department_id, is_active, "
+                "selfie_object_key, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (employee_code, full_name, email, department_id, True, selfie_object_key, now, now),
             )
-            audit(
-                tx,
-                actor.staff_id,
-                "EMPLOYEE_REGISTERED",
-                "employees",
-                employee_id,
-                after={
-                    "employee_code": employee_code,
-                    "full_name": full_name,
-                    "email": email,
-                    "department_id": department_id,
-                    "selfie_object_key": selfie_object_key,
-                    "qr_id": issued.qr_id,
-                    "email_id": email_id,
-                },
+        except Exception as exc:
+            if getattr(exc, "errno", None) == 1062:
+                raise DomainError("EMPLOYEE_CODE_EXISTS") from None
+            raise
+        issued = self.qr_service._issue(tx, actor.staff_id, "EMPLOYEE", employee_id, expires_at)
+        email_id = self.qr_service.email_queue.enqueue_employee(
+            tx, issued.qr_id, {"id": employee_id, "full_name": full_name, "email": email},
+            issued.token, bulk_batch_id=bulk_batch_id,
+        )
+        audit(
+            tx, actor.staff_id, "EMPLOYEE_REGISTERED", "employees", employee_id,
+            after={
+                "employee_code": employee_code, "full_name": full_name, "email": email,
+                "department_id": department_id, "selfie_object_key": selfie_object_key,
+                "qr_id": issued.qr_id, "email_id": email_id,
+            },
+        )
+        return Registration(employee_id, issued.qr_id, email_id)
+
+    def _bulk_replay(self, tx, batch, fingerprint, expected_count):
+        if not hmac.compare_digest(bytes(batch["request_hash"]), fingerprint):
+            raise DomainError("IDEMPOTENCY_KEY_REUSED")
+        rows = tx.all(
+            "SELECT c.employee_id, q.qr_id, q.id AS email_id FROM email_queue q "
+            "JOIN qr_credentials c ON c.id = q.qr_id WHERE q.bulk_batch_id = %s ORDER BY q.id",
+            (batch["id"],),
+        )
+        if len(rows) != expected_count or len({row["employee_id"] for row in rows}) != expected_count:
+            raise DomainError("EMPLOYEE_BATCH_UNCONFIRMED")
+        return {"batch_id": batch["id"], "employees": rows, "replayed": True}
+
+    def register_bulk(self, context, request_id, employees):
+        try:
+            identifier = request_id if isinstance(request_id, UUID) else UUID(str(request_id))
+            if identifier.int == 0:
+                raise ValueError
+        except (ValueError, AttributeError, TypeError):
+            raise DomainError("INVALID_REQUEST_ID") from None
+        if not isinstance(employees, list) or not 1 <= len(employees) <= 100:
+            raise DomainError("INVALID_EMPLOYEE_BATCH")
+        normalized = []
+        for employee in employees:
+            if not isinstance(employee, dict) or set(employee) != {"employee_code", "full_name", "email", "department_id"}:
+                raise DomainError("INVALID_EMPLOYEE_BATCH")
+            normalized.append({
+                "employee_code": required_text(employee["employee_code"], "employee_code", 32),
+                "full_name": required_text(employee["full_name"], "full_name", 150),
+                "email": normalize_email(employee["email"]),
+                "department_id": _positive_id(employee["department_id"], "department_id"),
+            })
+        if len({row["employee_code"].casefold() for row in normalized}) != len(normalized):
+            raise DomainError("EMPLOYEE_CODE_EXISTS")
+        fingerprint = payload_digest({"employees": normalized})
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            parameters = (actor.staff_id, identifier.bytes)
+            lookup = (
+                "SELECT id, request_hash FROM employee_email_batches "
+                "WHERE created_by_staff_id = %s AND request_id = %s FOR UPDATE"
             )
-            result = Registration(employee_id, issued.qr_id, email_id)
+            batch = tx.one(lookup, parameters)
+            if batch is not None:
+                result = self._bulk_replay(tx, batch, fingerprint, len(normalized))
+            else:
+                try:
+                    batch_id = tx.insert(
+                        "INSERT INTO employee_email_batches (request_id, created_by_staff_id, request_hash, created_at) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (identifier.bytes, actor.staff_id, fingerprint, tx.now()),
+                    )
+                except Exception as exc:
+                    if getattr(exc, "errno", None) != 1062:
+                        raise
+                    batch = tx.one(lookup, parameters)
+                    if batch is None:
+                        raise DomainError("EMPLOYEE_BATCH_UNCONFIRMED") from None
+                    result = self._bulk_replay(tx, batch, fingerprint, len(normalized))
+                else:
+                    registrations = [asdict(self._register(tx, actor, **employee, bulk_batch_id=batch_id)) for employee in normalized]
+                    result = {"batch_id": batch_id, "employees": registrations, "replayed": False}
         return result
 
     def update(

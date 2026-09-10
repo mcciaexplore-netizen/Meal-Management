@@ -16,6 +16,8 @@ from test_email_worker import WorkerDatabase
 class QueueDatabase:
     def __init__(self, statuses=None):
         self.statuses = dict(statuses or {})
+        self.modes = {}
+        self.approvals = {}
         self.calls = []
         self.transactions = 0
         self.commits = 0
@@ -32,8 +34,12 @@ class QueueDatabase:
             raise RuntimeError("private database connection details")
         if self.rows_override is not None:
             return self.rows_override
-        status, limit = params
-        return [{"id": identifier} for identifier, stored in sorted(self.statuses.items()) if stored == status][:limit]
+        status, bulk, legacy, limit = params
+        return [
+            {"id": identifier} for identifier, stored in sorted(self.statuses.items())
+            if stored == status and self.modes.get(identifier, "BULK") in {bulk, legacy}
+            and self.approvals.get(identifier, True)
+        ][:limit]
 
     @contextmanager
     def transaction(self):
@@ -76,7 +82,10 @@ class SelectedWorkerDatabase(WorkerDatabase):
     @contextmanager
     def transaction(self):
         with super().transaction() as tx:
-            tx.all = lambda sql, params: [{"id": self.queue["id"]}] if self.queue["status"] == "QUEUED" else []
+            tx.all = lambda sql, params: [{"id": self.queue["id"]}] if (
+                self.queue["status"] == "QUEUED" and self.queue["delivery_mode"] in {"BULK", "LEGACY"}
+                and self.queue["approved_by_staff_id"] is not None and self.queue["approved_at"] is not None
+            ) else []
             yield tx
 
 
@@ -118,8 +127,11 @@ class EmailDispatcherTests(unittest.TestCase):
         result = self.dispatcher.dispatch_once()
         self.assertEqual(result["sent"], 2)
         sql, params = self.db.calls[0]
-        self.assertEqual(params, ("QUEUED", 10))
-        self.assertEqual(sql, "SELECT id FROM email_queue WHERE status = %s ORDER BY created_at, id LIMIT %s")
+        self.assertEqual(params, ("QUEUED", "BULK", "LEGACY", 10))
+        self.assertEqual(sql, "SELECT id FROM email_queue WHERE status = %s "
+                         "AND delivery_mode IN (%s, %s) "
+                         "AND approved_by_staff_id IS NOT NULL AND approved_at IS NOT NULL "
+                         "ORDER BY created_at, id LIMIT %s")
         self.assertNotIn("FOR UPDATE", sql)
 
     def test_failed_selection_commit_cannot_start_any_delivery(self):
@@ -135,6 +147,23 @@ class EmailDispatcherTests(unittest.TestCase):
         self.assertEqual(dispatcher.dispatch_once()["selected"], 1)
         self.worker.send.assert_called_once_with(4, allow_real_email=True)
         self.assertEqual(self.db.statuses[5], "QUEUED")
+
+    def test_only_approved_bulk_or_legacy_rows_are_selected(self):
+        self.db.statuses = {
+            1: "DRAFT", 2: "PENDING_APPROVAL", 3: "QUEUED", 4: "QUEUED", 5: "QUEUED", 6: "QUEUED",
+        }
+        self.db.modes = {1: "SINGLE", 2: "BULK", 3: "SINGLE", 4: "BULK", 5: "BULK", 6: "LEGACY"}
+        self.db.approvals = {1: False, 2: False, 3: True, 4: False, 5: True, 6: True}
+        result = self.dispatcher.dispatch_once()
+        self.assertEqual(result["sent"], 2)
+        self.assertEqual([call.args[0] for call in self.worker.send.call_args_list], [5, 6])
+        self.assertEqual(self.db.statuses[3], "QUEUED")
+        self.assertEqual(self.db.statuses[4], "QUEUED")
+
+    def test_new_single_and_bulk_registration_never_start_provider_delivery(self):
+        self.db.statuses = {1: "DRAFT", 2: "PENDING_APPROVAL"}
+        self.assertEqual(self.dispatcher.dispatch_once()["selected"], 0)
+        self.worker.send.assert_not_called()
 
     def test_same_selected_row_claimed_elsewhere_reuses_worker_result(self):
         self.worker.send.side_effect = lambda identifier, **kwargs: {"email_id": identifier, "status": "ALREADY_SENT", "code": None}
@@ -317,6 +346,7 @@ class EmailDispatcherTests(unittest.TestCase):
     def test_two_dispatchers_reuse_real_worker_durable_claim_without_second_delivery(self):
         token = generate_token()
         db = SelectedWorkerDatabase(token)
+        db.queue["delivery_mode"] = "BULK"
         payload = {"employee_id": 7, "employee_name": "Fictional Employee", "token": token}
         vault = Mock(decrypt=Mock(return_value=json.dumps(payload)))
         delivery = Mock(enabled=True, send=Mock(return_value="<fake-accepted>"))

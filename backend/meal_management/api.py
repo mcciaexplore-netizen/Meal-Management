@@ -15,12 +15,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, CatalogInput, DepartmentInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeesInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
 from .development_seed import DevelopmentSeedService
 from .email_lifecycle import EmailLifecycle
+from .email_actions import EmailActions
 from .errors import ConfigurationError, DomainError
 from .http_security import DatabaseLoginLimiter, SecurityMiddleware, csrf_token, error_body, status_for
 from .models import ScanInput, ServerContext
@@ -35,7 +36,7 @@ Cursor = Annotated[int, Query(ge=0, le=2**64 - 1)]
 PathIdentifier = Annotated[int, ApiPath(gt=0, le=2**64 - 1)]
 
 
-def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None):
+def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None):
     runtime = (RuntimeSettings.from_env() if runtime is None else runtime).for_application("admin")
     services = create_services() if services is None else services
     if runtime.environment == "production" and not services.database.settings.db_ssl_ca:
@@ -54,6 +55,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     app.state.services = services
     app.state.runtime = runtime
     app.state.email_lifecycle = email_lifecycle
+    app.state.email_actions = EmailActions(runtime, services) if email_actions is None else email_actions
     app.state.queries = QueryService(services.database) if queries is None else queries
     app.state.storage = storage_from_settings(runtime) if storage is None else storage
     app.state.limiter = DatabaseLoginLimiter(services.database, runtime) if limiter is None else limiter
@@ -245,6 +247,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def employee_create(body: EmployeeInput, ctx=Depends(admin)):
         return asdict(services.employees.register(ctx, **body.model_dump()))
 
+    @app.post("/api/employees/bulk", status_code=201)
+    def employee_bulk_create(body: BulkEmployeesInput, ctx=Depends(admin)):
+        return services.employees.register_bulk(ctx, str(body.request_id), [item.model_dump() for item in body.employees])
+
     @app.get("/api/employees/{employee_id}")
     def employee_get(employee_id: PathIdentifier, ctx=Depends(admin)):
         return app.state.queries.employee(ctx, employee_id)
@@ -306,7 +312,16 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
 
     @app.post("/api/employees/{employee_id}/qr/resend", status_code=202)
     def employee_qr_resend(employee_id: PathIdentifier, ctx=Depends(admin)):
-        return {"email_id": services.qr.resend_employee(ctx, employee_id), "status": "QUEUED"}
+        email_id = services.qr.resend_employee(ctx, employee_id)
+        return services.email_queue.status(ctx, email_id, employee_id=employee_id)
+
+    @app.post("/api/employees/{employee_id}/emails/{email_id}/send")
+    def employee_email_send(employee_id: PathIdentifier, email_id: PathIdentifier, ctx=Depends(admin)):
+        return app.state.email_actions.send_single(ctx, employee_id, email_id)
+
+    @app.get("/api/employees/{employee_id}/emails/{email_id}")
+    def employee_email_status(employee_id: PathIdentifier, email_id: PathIdentifier, ctx=Depends(admin)):
+        return services.email_queue.status(ctx, email_id, employee_id=employee_id)
 
     @app.post("/api/employees/{employee_id}/photo", status_code=201)
     async def employee_photo_upload(employee_id: PathIdentifier, request: Request, ctx=Depends(admin)):
@@ -429,8 +444,23 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         }
 
     @app.get("/api/email-queue")
-    def emails(limit: Limit = 50, after_id: Cursor = 0, employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
-        return app.state.queries.email_status(ctx, limit=limit, after_id=after_id, employee_id=employee_id)
+    def emails(limit: Limit = 50, after_id: Cursor = 0, employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
+               bulk_batch_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
+        filters = {} if bulk_batch_id is None else {"bulk_batch_id": bulk_batch_id}
+        return app.state.queries.email_status(ctx, limit=limit, after_id=after_id, employee_id=employee_id,
+                                             delivery_scope="all" if employee_id is not None else "bulk", **filters)
+
+    @app.post("/api/email-queue/approve")
+    def email_approve(body: EmailApprovalInput, ctx=Depends(admin)):
+        return app.state.email_actions.approve_bulk(ctx, body.email_ids)
+
+    @app.post("/api/email-queue/process")
+    def email_process(body: EmailProcessInput, ctx=Depends(admin)):
+        return app.state.email_actions.process_bulk(ctx, body.email_ids)
+
+    @app.get("/api/email-queue/{email_id}")
+    def email_status(email_id: PathIdentifier, ctx=Depends(admin)):
+        return services.email_queue.status(ctx, email_id)
 
     @app.get("/api/email-queue/{email_id}/preview", response_class=HTMLResponse)
     def email_preview(email_id: PathIdentifier, ctx=Depends(admin)):

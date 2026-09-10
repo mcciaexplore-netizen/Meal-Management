@@ -1,6 +1,6 @@
 # Gmail QR email setup
 
-The admin application can automatically send queued employee QR emails through Gmail after registration or a QR resend. The email is queued in the same transaction as the registration or QR operation, and a background sender processes committed queue entries. Automatic delivery requires explicit configuration and approval. The sender runs inside the admin process; no additional application server or AWS account is required. The scanner process never starts email delivery.
+The administrator sends an individual employee's QR using **Send email** in employee details. Bulk imports wait in an approval queue until the administrator selects **Approve and send**. Registration alone sends nothing. Both flows reuse the existing Gmail adapter and durable delivery records; no additional application server or AWS account is required. The scanner never starts email delivery. See [the delivery workflow](email-delivery-workflow.md).
 
 The implementation uses `smtp.gmail.com` on port 465 with verified TLS and an App Password. Google documents this configuration for Gmail SMTP in [its application email setup guide](https://knowledge.workspace.google.com/admin/gmail/send-email-from-a-printer-scanner-or-app?hl=en).
 
@@ -35,23 +35,23 @@ From the project folder, validate configuration without a database or Gmail conn
 
 Both valid Gmail credentials and an enabled-sending flag are needed for delivery. Automatic delivery additionally requires `EMAIL_AUTO_SEND_ENABLED=true`; configuring automation with sending disabled or a preview backend fails validation. Configuration validation checks required settings and their format; it cannot establish that Google accepts an App Password. Existing shell environment variables take precedence over `.env`, so resolve conflicting exported settings if validation does not reflect the file.
 
-## Enable automatic delivery
+## Enable administrator-controlled delivery
 
-Obtain approval for ongoing real employee QR email delivery and queue-status updates in the intended development database before enabling these settings. The earlier one-message test approval does not authorize sending all future queued messages.
+Review and apply migration 006 to the confirmed database before running the updated applications. It holds old queued messages for approval and preserves delivery history. Obtain approval before changing database state or enabling real delivery; a source change does not send messages.
 
-After approval, set both `EMAIL_SEND_ENABLED=true` and `EMAIL_AUTO_SEND_ENABLED=true` in the private `.env`, then restart the admin application with `sh deploy/start-admin.sh`. Restarting an already running process requires stopping that admin process first. Preserve the separate scanner process. The admin **Email queue** shows whether automatic delivery is configured and its sender is running.
+After approval, set `EMAIL_SEND_ENABLED=true` in the private `.env`. Keep `EMAIL_AUTO_SEND_ENABLED=false` for direct single sending and browser-driven bulk processing. Restart the admin application with `sh deploy/start-admin.sh` after stopping its old process. Coordinate migration and application restarts without terminating unrelated processes.
 
-The background sender checks for `QUEUED` entries about every five seconds by default, selects a bounded batch, and sends each message through the existing worker. It processes existing queued messages as well as future registrations and resends, so review the pending queue before enabling it. Cancelled, sent, failed, and uncertain attempts are not selected. A global authentication or sender-configuration failure stops automatic processing until the configuration is corrected and the admin server is restarted. Temporary database failures use bounded backoff.
+The optional background sender can separately be enabled with `EMAIL_AUTO_SEND_ENABLED=true`. It selects only approved bulk or legacy `QUEUED` entries. Single drafts, pending approvals, cancelled, sent, failed, and uncertain attempts are never selected. A global authentication or sender-configuration failure stops automatic processing until configuration is corrected and the admin server restarts. Temporary database failures use bounded backoff.
 
-Employee registration returns after its database commit without waiting for Gmail. A queued result is not a delivery confirmation. Refresh the email queue to see `SENT` after provider acceptance and successful acknowledgement commit. If the admin server is stopped, pending emails remain stored in MySQL and processing resumes after restart. The independent scanner can keep recording meals while administration is stopped.
+Employee registration returns after its database commit without contacting Gmail. Its Send email action waits for the provider result. Bulk approval commits before bounded delivery requests begin. Only `SENT` confirms provider acceptance and successful acknowledgement commit. If the browser stops processing, approved bulk entries remain available to resume, or the optional sender can process them. The independent scanner can keep recording meals while administration is stopped.
 
 On admin shutdown, the sender stops selecting new messages and allows the current attempt to finish. Shutdown has a bounded grace period; an unusually stuck database or provider call may outlive it, and an interrupted claimed entry then requires operator review. Set `EMAIL_AUTO_SEND_ENABLED=false` and restart the admin server to stop future automatic processing; also set `EMAIL_SEND_ENABLED=false` to disable manual delivery. Do not terminate or retransmit an uncertain attempt without checking its outcome.
 
 ## Review one message before sending
 
-Open the administrator's **Email queue** and locate the intended queued message. Review its queue ID, employee, recipient address, and current QR. Development fixtures use reserved addresses and cannot be sent by this worker. Inactive employees, changed email addresses, revoked or expired QRs, and invalid encrypted payloads are rejected or cancelled before any provider call.
+Open an employee's details for a single message, or **Email queue** for bulk and legacy messages. Review the employee, recipient, and current QR. Development fixtures use reserved addresses and cannot be sent. Inactive employees, changed email addresses, revoked or expired QRs, and invalid encrypted payloads are rejected before a provider call.
 
-While in preview mode, **Preview** displays the local email. In Gmail mode the preview action is hidden. The employee's current QR remains available to authorized administrators. Queue status `QUEUED` means the message is waiting. With automatic delivery enabled, registering or choosing **Queue email resend** makes the new committed entry eligible for automatic processing.
+While in preview mode, **Preview** displays a local draft or pending email without approving it. In Gmail mode the preview action is hidden. The employee's current QR remains available to authorized administrators. `DRAFT` requires the single Send email action, `PENDING_APPROVAL` requires bulk approval, and `QUEUED` means an approval has already been recorded.
 
 For a manual one-message test, leave `EMAIL_AUTO_SEND_ENABLED=false` and separately approve the exact development database and recipient. Approval to edit code or select Gmail does not authorize a database connection or a real message. Enable `EMAIL_SEND_ENABLED=true` only when ready to perform the approved operation. The CLI rereads the environment file on each invocation; restart only the admin application when its displayed email mode needs to reflect changed configuration.
 
@@ -62,7 +62,7 @@ EMAIL_QUEUE_ID=REPLACE_WITH_REVIEWED_QUEUE_ID
 .venv/bin/python manage.py --env-file .env send-email --email-id "$EMAIL_QUEUE_ID" --allow-database-changes --allow-real-email
 ```
 
-The two CLI flags authorize queue-state changes in the configured database and a real external email for that selected queue entry. No other queue entry is selected by this command. Leave automatic delivery disabled for a single-message test so the admin background sender cannot independently select other queued entries. There is no browser send-now endpoint. No password is entered on the command line, and command output contains only safe identifiers, statuses, and error codes.
+The CLI flags allow processing only the selected already-approved entry. They do not bypass the new database approval requirement or approve drafts. Normal individual delivery uses the browser Send email endpoint. Leave automatic delivery disabled for a selected-message test so the optional sender cannot process other approved bulk entries. No password is entered on the command line; output contains safe identifiers, statuses, and error codes.
 
 ## Results and recovery
 
@@ -76,12 +76,12 @@ The two CLI flags authorize queue-state changes in the configured database and a
 
 Successful or already-sent results exit with code 0; blocked, cancelled, failed, and uncertain outcomes do not. Refresh the dashboard after the command to see persisted queue status. The existing database enum uses `FAILED` for a reserved or uncertain delivery attempt, with a safe error marker; it does not mean that Google definitely rejected the message.
 
-The worker commits its claim before contacting Gmail. Concurrent invocations cannot send the same queue entry. It rechecks the employee, QR, recipient, and token under database locks before sending, and holds those validity locks during the bounded SMTP attempt. It marks `SENT` only after provider acceptance and successful database commit. Interrupted claims are not automatically reclaimed, and failed entries are not automatically retried. An explicit resend from employee management creates a new queue entry for the same valid QR.
+The worker commits its claim before contacting Gmail. Concurrent invocations cannot send the same email entry. It rechecks approval, employee, QR, recipient, and token under database locks before sending, and holds validity locks during the bounded SMTP attempt. It marks `SENT` only after provider acceptance and successful database commit. Interrupted claims are not automatically reclaimed, and failed entries are not automatically retried. A resend reuses an unsent single draft when available; a deliberate resend after confirmed delivery prepares another draft for the same valid QR.
 
 SMTP acceptance and a MySQL commit cannot be one atomic transaction. If the connection fails after Gmail may have accepted the message, or the acknowledgement commit is uncertain, automatic retransmission could duplicate the email. This implementation stops and requires review in those cases. Check delivery before creating a new resend; a new queue entry can intentionally send another copy.
 
 ## Verification and remaining work
 
-Automated Gmail tests use injected SMTP clients and make no Gmail connections. Separate MySQL integration tests use a fake delivery adapter and require the project's existing disposable-database opt-ins. The existing schema is reused; no Gmail migration is needed.
+Automated Gmail tests use injected SMTP clients and make no Gmail connections. Separate MySQL integration tests use a fake delivery adapter and require the project's disposable-database opt-ins. The approval workflow requires migration 006; authoring it does not apply it.
 
 An earlier explicitly approved one-message test was accepted by Gmail and recorded as `SENT` in the local database. Inbox arrival was not confirmed by that provider acknowledgement. Automatic delivery against a live database, MySQL concurrency, and crash recovery remain separate verification steps. Failed entries are not automatically retried. Delivery receipts, bounce or complaint ingestion, provider quota management, OAuth, and production operational verification remain future work.

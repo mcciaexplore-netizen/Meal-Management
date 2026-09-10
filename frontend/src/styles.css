@@ -160,6 +160,14 @@ dialog::backdrop { background: #102632a6; backdrop-filter: blur(3px); }
 .qr-card { display: flex; flex-direction: column; align-items: center; padding: 22px 0; text-align: center; }
 .qr-image { max-width: 240px; width: 100%; aspect-ratio: 1; margin-bottom: 20px; background: #fff; border: 1px solid #dce5e4; border-radius: 6px; padding: 12px; }
 .stack-actions { display: grid; gap: 9px; }
+.inline-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.email-selection { width: 20px; height: 20px; margin: 0; }
+.email-operation-status { padding: 0 24px 18px; }
+.email-operation-status:empty { display: none; }
+#bulk-employee-form textarea { width: 100%; min-height: 180px; resize: vertical; }
+#bulk-employee-form details { margin: 16px 0; }
+#bulk-employee-form summary { cursor: pointer; font-weight: 600; }
+#bulk-import-status:not(:empty) { margin-top: 16px; }
 .stack-actions .button { font-size: 12px; }
 .employee-photo { display: block; width: 110px; height: 110px; object-fit: cover; border-radius: 7px; margin-top: 13px; }
 .registration-photo { margin-top: 14px; padding: 18px; border: 1px solid #dce5e1; border-radius: 9px; background: #f8faf9; }

@@ -55,6 +55,33 @@ class EmployeeUpdate(InputModel):
     selfie_object_key: Annotated[str, Field(min_length=1, max_length=512)] | None = None
 
 
+class BulkEmployeeInput(InputModel):
+    employee_code: Annotated[str, Field(min_length=1, max_length=32)]
+    full_name: Name
+    email: Annotated[str, Field(min_length=3, max_length=254)]
+    department_id: Identifier
+
+
+class BulkEmployeesInput(InputModel):
+    request_id: UUID
+    employees: Annotated[list[BulkEmployeeInput], Field(min_length=1, max_length=100)]
+
+
+class EmailApprovalInput(InputModel):
+    email_ids: Annotated[list[Identifier], Field(min_length=1, max_length=100)]
+
+    @field_validator("email_ids")
+    @classmethod
+    def unique_ids(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("Email identifiers must be unique")
+        return value
+
+
+class EmailProcessInput(EmailApprovalInput):
+    email_ids: Annotated[list[Identifier], Field(min_length=1, max_length=10)]
+
+
 class ExpiryInput(InputModel):
     expires_at: datetime | None = None
 

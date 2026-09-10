@@ -266,7 +266,7 @@ class EmployeeQrServiceTests(unittest.TestCase):
         self.assertTrue(self.db.rolled_back)
 
     def test_resend_uses_existing_token_without_issuing_another_credential(self):
-        self.tx.one.side_effect = [self.employee, self.credential]
+        self.tx.one.side_effect = [self.employee, self.credential, None]
         self.tx.insert.return_value = 93
         self.vault.decrypt.return_value = self.token
         with self._patch_actor("qr"), patch("meal_management.qr.audit"):
@@ -347,7 +347,7 @@ class EmployeeQrServiceTests(unittest.TestCase):
         self.tx.insert.assert_not_called()
 
     def test_tampered_encrypted_token_cannot_be_resent(self):
-        self.tx.one.side_effect = [self.employee, self.credential]
+        self.tx.one.side_effect = [self.employee, self.credential, None]
         self.vault.decrypt.return_value = generate_token()
         with self._patch_actor("qr"):
             with self.assertRaises(DomainError) as error:

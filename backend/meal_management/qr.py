@@ -2,7 +2,7 @@ import hmac
 from dataclasses import dataclass, field
 
 from .auth import audit, require_actor
-from .email_queue import EmailQueueService
+from .email_queue import EmailQueueService, email_delivery_state
 from .errors import DomainError
 from .security import generate_token, required_text, token_digest, utc_naive
 
@@ -205,6 +205,17 @@ class QrService:
             actor = require_actor(tx, context, {"ADMIN"})
             employee = self._lock_employee(tx, employee_id)
             credential = self._active_employee_qr(tx, employee)
+            previous = tx.one(
+                "SELECT id, status, delivery_mode, last_error FROM email_queue "
+                "WHERE qr_id = %s AND recipient_email = %s ORDER BY id DESC LIMIT 1 FOR UPDATE",
+                (credential["id"], employee["email"]),
+            )
+            if previous is not None:
+                status, _ = email_delivery_state(previous)
+                if status == "NEEDS_REVIEW":
+                    raise DomainError("EMAIL_DELIVERY_NEEDS_REVIEW")
+                if previous["delivery_mode"] == "SINGLE" and status in {"DRAFT", "QUEUED"}:
+                    return previous["id"]
             token = self._decrypt_token(credential)
             email_id = self.email_queue.enqueue_employee(tx, credential["id"], employee, token)
             audit(

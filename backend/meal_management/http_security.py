@@ -32,6 +32,10 @@ def error_body(code, request_id=None):
         "SCANNER_NOT_CONFIGURED": "The scanner setup is incomplete. Ask the office administrator to finish setup.",
         "SCANNER_DISABLED": "The meal scanner is currently unavailable.",
         "SCANNER_RATE_LIMITED": "Too many scanner requests. Wait briefly, then retry the same serving.",
+        "REAL_EMAIL_NOT_AUTHORIZED": "Email sending is disabled. An administrator must enable the configured email provider before sending.",
+        "EMAIL_APPROVAL_REQUIRED": "Approve this bulk email before sending it.",
+        "EMAIL_DELIVERY_NEEDS_REVIEW": "The email result is uncertain. Check its delivery status before creating another send.",
+        "EMAIL_CLAIM_UNCONFIRMED": "The send could not be confirmed. Check the same email's status before retrying.",
     }
     return {"error": {"code": code, "message": messages.get(code, code.replace("_", " ").capitalize() + "."), "request_id": request_id}}
 

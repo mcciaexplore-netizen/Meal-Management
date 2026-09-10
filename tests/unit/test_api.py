@@ -197,6 +197,7 @@ class ApiHarness:
         self.services.qr.replace_master.return_value = IssuedQr(202, self.meals.master_token)
         self.services.qr.retrieve.return_value = IssuedQr(201, self.meals.master_token)
         self.services.qr.resend_employee.return_value = 2
+        self.services.email_queue.status.return_value = {"email_id": 2, "status": "DRAFT", "delivery_mode": "SINGLE"}
         self.services.approvals.authorize.return_value = 501
         self.services.reports.meal_report.side_effect = self._totals
         self.services.email_queue.preview.return_value = EmailPreview(
@@ -471,10 +472,10 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
 
-    def test_qr_resend_queues_same_credential_service_without_sending(self):
+    def test_qr_resend_prepares_same_credential_draft_without_sending(self):
         response = self.harness.post("/api/employees/7/qr/resend")
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json(), {"email_id": 2, "status": "QUEUED"})
+        self.assertEqual(response.json(), {"email_id": 2, "status": "DRAFT", "delivery_mode": "SINGLE"})
         self.assertEqual(self.harness.services.qr.resend_employee.call_args.args[1], 7)
         self.harness.services.qr.issue_master.assert_not_called()
 
@@ -541,6 +542,7 @@ class EmailSettingsApiTests(ApiTestCase):
         self.assertEqual(response.json(), {
             "backend": "preview", "sending_enabled": False, "preview_available": True,
             "automatic_enabled": False, "worker_running": False, "poll_seconds": 5, "batch_size": 10,
+            "approval_required": True,
         })
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.harness.services.database.transaction.assert_not_called()
@@ -558,6 +560,7 @@ class EmailSettingsApiTests(ApiTestCase):
                     self.assertEqual(response.json(), {
                         "backend": backend, "sending_enabled": enabled, "preview_available": False,
                         "automatic_enabled": False, "worker_running": False, "poll_seconds": 5, "batch_size": 10,
+                        "approval_required": True,
                     })
                     self.assertNotIn("private-sender", response.text)
                     harness.services.database.transaction.assert_not_called()
@@ -570,11 +573,11 @@ class EmailSettingsApiTests(ApiTestCase):
         self.assert_error(harness.client.get("/api/email-settings"), 404, "NOT_FOUND")
         harness.services.database.transaction.assert_not_called()
 
-    def test_email_configuration_does_not_add_browser_sending_controls(self):
+    def test_email_configuration_and_unscoped_sending_remain_unavailable(self):
         self.harness.login()
         self.assertEqual(self.harness.post("/api/email-settings", json={}).status_code, 405)
-        for path in ("/api/email-queue/1/send", "/api/email-queue/send"):
-            self.assert_error(self.harness.post(path, json={}), 404, "NOT_FOUND")
+        self.assert_error(self.harness.post("/api/email-queue/1/send", json={}), 404, "NOT_FOUND")
+        self.assertEqual(self.harness.post("/api/email-queue/send", json={}).status_code, 405)
 
 
 class MasterAuthorizationApiTests(ApiTestCase):
@@ -830,7 +833,7 @@ class ValidationAndReportApiTests(ApiTestCase):
     def test_email_status_is_paginated_and_filtered(self):
         response = self.client.get("/api/email-queue", params={"limit": 10, "after_id": 3, "employee_id": 7})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.harness.queries.email_status.call_args.kwargs, {"limit": 10, "after_id": 3, "employee_id": 7})
+        self.assertEqual(self.harness.queries.email_status.call_args.kwargs, {"limit": 10, "after_id": 3, "employee_id": 7, "delivery_scope": "all"})
         self.assertNotIn("payload_ciphertext", response.text)
 
     def test_sensitive_errors_include_security_headers(self):
@@ -879,8 +882,8 @@ class HealthApiTests(ApiTestCase):
         self.assert_error(response, 503, "DATABASE_NOT_READY")
         self.assertNotIn("hidden", response.text)
 
-    def test_readiness_requires_shared_scanner_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 200)):
+    def test_readiness_requires_email_approval_migration(self):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

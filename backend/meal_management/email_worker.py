@@ -1,5 +1,6 @@
 import hmac
 import secrets
+from datetime import datetime
 
 from .delivery import DeliveryError, validate_email_recipient
 from .email_queue import EmailQueueService
@@ -14,6 +15,7 @@ _SAFE_FAILURES = frozenset({
     "GMAIL_CONFIGURATION_REQUIRED", "EMAIL_AUTHENTICATION_FAILED",
     "EMAIL_SENDER_REJECTED", "EMAIL_RECIPIENT_REJECTED", "EMAIL_DATA_REJECTED",
     "EMAIL_DELIVERY_FAILED", "EMAIL_NOT_DELIVERABLE", "REAL_EMAIL_NOT_AUTHORIZED",
+    "EMAIL_APPROVAL_REQUIRED",
 })
 
 
@@ -40,9 +42,20 @@ class EmailDeliveryWorker:
             if isinstance(code, str) and (code.startswith(_CLAIM_PREFIX) or code == _REVIEW):
                 return self._result(email_id, "NEEDS_REVIEW", _REVIEW)
             return self._result(email_id, "FAILED", code if code in _SAFE_FAILURES else "EMAIL_DELIVERY_FAILED")
+        if status in {"DRAFT", "PENDING_APPROVAL"}:
+            raise DomainError("EMAIL_APPROVAL_REQUIRED")
         if status != "QUEUED":
             raise DomainError("INVALID_EMAIL_STATUS")
         return None
+
+    def _require_approval(self, queued):
+        actor = queued.get("approved_by_staff_id")
+        if (
+            queued.get("delivery_mode") not in {"SINGLE", "BULK", "LEGACY"}
+            or type(actor) is not int or not 1 <= actor <= 2**64 - 1
+            or not isinstance(queued.get("approved_at"), datetime)
+        ):
+            raise DomainError("EMAIL_APPROVAL_REQUIRED")
 
     def _set_status(self, tx, email_id, status, code, expected_status, expected_error):
         changed = tx.execute(
@@ -57,6 +70,7 @@ class EmailDeliveryWorker:
 
     def _validate(self, tx, employee, credential, queued, statuses):
         try:
+            self._require_approval(queued)
             preview = self.queue.validated_preview(
                 tx, employee, credential, queued, statuses=statuses, include_svg=False,
             )
@@ -75,6 +89,7 @@ class EmailDeliveryWorker:
             employee, credential, queued = self.queue.lock_email(tx, email_id)
             result = self._existing(email_id, queued)
             if result is None:
+                self._require_approval(queued)
                 _, result = self._validate(tx, employee, credential, queued, ("QUEUED",))
                 if result is None:
                     self._set_status(tx, email_id, "FAILED", claim, "QUEUED", queued.get("last_error"))

@@ -114,7 +114,9 @@ class MealServicesMySQLTests(MealServicesFixture):
         email_row = self.rows("SELECT * FROM email_queue WHERE id = %s", (queue_id,))[0]
         self.assertNotIn(token.encode(), bytes(qr_row["token_ciphertext"]))
         self.assertNotIn(token.encode(), bytes(email_row["payload_ciphertext"]))
-        self.assertEqual(email_row["status"], "QUEUED")
+        self.assertEqual(email_row["status"], "DRAFT")
+        self.assertEqual(email_row["delivery_mode"], "SINGLE")
+        self.assertEqual(queue_id, registration.email_id)
         self.assertEqual(
             self.scalar("SELECT COUNT(*) FROM qr_credentials WHERE employee_id = %s", (registration.employee_id,)),
             1,
@@ -546,7 +548,7 @@ class MealServicesMySQLTests(MealServicesFixture):
         self.assertEqual(page["items"][0]["request_id"], str(scan.request_id))
         self.assertEqual(page["items"][0]["employee_id"], registration.employee_id)
         emails = queries.email_status(self.admin_context, employee_id=registration.employee_id)
-        self.assertEqual(emails["items"][0]["status"], "QUEUED")
+        self.assertEqual(emails["items"][0]["status"], "DRAFT")
         self.assertNotIn("payload_ciphertext", emails["items"][0])
         self.assertIn("roles", queries.staff(self.admin_context)["items"][0])
         with self.assertRaises(DomainError):

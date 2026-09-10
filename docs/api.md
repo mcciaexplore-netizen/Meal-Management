@@ -65,20 +65,30 @@ The last active administrator cannot be disabled through the staff service. Eith
 | Method | Path | Access | Behavior |
 | --- | --- | --- | --- |
 | `GET` | `/api/employees` | Admin | Paginated employee list, optional `q` and `active` filters |
-| `POST` | `/api/employees` | Admin | Register employee, issue their QR, and queue encrypted email atomically |
+| `POST` | `/api/employees` | Admin | Register employee, issue their QR, and prepare an encrypted SINGLE DRAFT atomically; no sending |
 | `GET` | `/api/employees/{employee_id}` | Admin | Retrieve employee metadata |
 | `PATCH` | `/api/employees/{employee_id}` | Admin | Update supplied employee fields |
 | `DELETE` | `/api/employees/{employee_id}` | Admin | Deactivate the employee without deleting records |
 | `POST` | `/api/employees/{employee_id}/activate` | Admin | Reactivate the employee |
 | `GET` | `/api/employees/{employee_id}/qr` | Admin | Retrieve current QR metadata and renderable SVG when usable |
 | `POST` | `/api/employees/{employee_id}/qr` | Admin | Issue a QR only when no unrevoked employee QR exists |
-| `POST` | `/api/employees/{employee_id}/qr/replace` | Admin | Revoke the old QR, issue another, and queue its email atomically |
+| `POST` | `/api/employees/{employee_id}/qr/replace` | Admin | Revoke the old QR, issue another, and prepare its single-email draft atomically |
 | `POST` | `/api/employees/{employee_id}/qr/revoke` | Admin | Revoke the current QR using the submitted `reason` |
-| `POST` | `/api/employees/{employee_id}/qr/resend` | Admin | Queue the same active QR again; return 202 |
+| `POST` | `/api/employees/{employee_id}/qr/resend` | Admin | Prepare/reuse a single-email draft for the same active QR; return 202 with safe delivery metadata |
 | `POST` | `/api/employees/{employee_id}/photo` | Admin | Upload a bounded JPEG/PNG body and update its private storage reference |
 | `GET` | `/api/employees/{employee_id}/photo` | Admin | Read the employee's private photo |
 
 Registration requires `employee_code`, `full_name`, `email`, and `department_id`. It accepts optional `selfie_object_key` and timezone-aware `expires_at`. Registration returns `employee_id`, `qr_id`, and `email_id`. Employee updates accept the same employee fields except expiry; only `selfie_object_key` may be explicitly cleared with null.
+
+| Method | Path | Access | Behavior |
+| --- | --- | --- | --- |
+| `POST` | `/api/employees/bulk` | Admin | Atomically import 1–100 employees with personal QRs and pending approval emails |
+| `POST` | `/api/employees/{employee_id}/emails/{email_id}/send` | Admin | Approve only this employee's SINGLE draft, send synchronously, and return a committed delivery result |
+| `GET` | `/api/employees/{employee_id}/emails/{email_id}` | Admin | Recover safe status for the exact employee/email pair without sending |
+
+Bulk import accepts `request_id` and `employees`. Each employee has exactly `employee_code`, `full_name`, `email`, and an existing active `department_id`. The response contains `batch_id`, `employees` with employee/QR/email IDs, and `replayed`. The request UUID is bound to the authenticated administrator and normalized ordered payload. An unchanged retry returns the original IDs, while a changed payload is rejected. Any row failure rolls back the entire new batch.
+
+Single sends reuse their durable email ID on every retry and never create another email entry themselves. Results contain `email_id`, `status`, and a safe `code`; statuses include `SENT`, `ALREADY_SENT`, `FAILED`, `CANCELLED`, and `NEEDS_REVIEW`. A provider or connection error is not successful delivery. Follow unknown results through the status endpoint before considering another request. Browser callers cannot choose an approving staff ID or bypass the real-email configuration gate.
 
 QR issuance and replacement accept an expiry object with optional `expires_at`. An empty object means no expiry. QR responses include `credential_status`; unusable credentials return metadata with `svg` set to null instead of exposing a revoked or expired token. Revoked employee credentials are retained in history but are no longer the current unrevoked employee QR.
 
@@ -139,12 +149,20 @@ The gallery is disabled unless the environment is development, the email backend
 | `GET` | `/api/reports/meals` | Admin | Paginated individual meal history, optionally filtered by `employee_id` |
 | `GET` | `/api/reports/totals` | Admin | Meal and serving totals, grouped by kind, meal type, location, waiter, and authorizing admin |
 | `GET` | `/api/reports/scans` | Admin | Paginated scan attempts, optionally filtered by `outcome` |
-| `GET` | `/api/email-settings` | Admin | Safe backend, sending and automatic-delivery flags, worker-running status, poll interval, batch size, and preview availability; no sender address or credentials |
-| `GET` | `/api/email-queue` | Admin | Paginated safe queue metadata, optionally filtered by `employee_id` |
+| `GET` | `/api/email-settings` | Admin | Safe backend, sending/automatic flags, approval_required=true, worker status, poll interval, batch size, and preview availability; no credentials |
+| `GET` | `/api/email-queue` | Admin | Paginated bulk/legacy metadata by default; employee_id returns full employee history; bulk_batch_id filters one import |
 | `GET` | `/api/email-queue/{email_id}/preview` | Admin in development preview mode | Render an employee email without sending it |
+
+| Method | Path | Access | Behavior |
+| --- | --- | --- | --- |
+| `GET` | `/api/email-queue/{email_id}` | Admin | Safe delivery status without encrypted payloads or internal claim markers |
+| `POST` | `/api/email-queue/approve` | Admin | Approve 1–100 explicit bulk/legacy email IDs atomically; records the authenticated administrator and UTC time |
+| `POST` | `/api/email-queue/process` | Admin | Process 1–10 explicit already-approved bulk/legacy IDs after validating the whole selection |
+
+Approval and processing accept only `email_ids`, a nonempty array of distinct positive integer IDs. Approval returns `email_ids` and `approved_count`; processing returns `results`, each with the single-worker result shape. Approval alone does not call the provider. The dashboard follows approval with bounded process calls; an enabled optional dispatcher may process already-approved rows concurrently using the same claims. No action selects unapproved entries or new employees implicitly. Failed or uncertain deliveries are never automatically retransmitted. Single drafts are excluded from the global queue and cannot be approved through bulk endpoints. Migration 006 is required. See [email delivery workflow](email-delivery-workflow.md).
 
 Paginated endpoints accept `limit` from 1 to 1,000 and an `after_id` cursor. Responses contain `items` and `next_cursor`, which is null when there is no further page. Report endpoints require timezone-aware `start` and `end`; the start is inclusive and the end is exclusive. Scan outcomes are `RECEIVED`, `AWAITING_DETAILS`, `SUCCESS`, or `REJECTED`. Duplicate reads appear as `DUPLICATE_REQUEST` scan rejections while the serving response confirms the previously approved meal. Meal history includes `visitor_company_name`, `visitor_name`, `visitor_email`, and `visitor_phone`; legacy visitor names and organizations remain visible through their original authorization joins. Direct visitor meals count in totals without an invented authorizing administrator.
 
 Errors have an `error` object containing a safe code, message, and correlation request identifier. Typical statuses are 401 for missing or invalid authentication, 403 for access or request-protection failures, 422 for malformed request data, 409 for conflicting lifecycle/idempotency operations, and 503 for unavailable or unconfirmed processing. Database exception details and credentials are not included. Valid scan business rejections use the scan-result contract rather than implying an HTTP transport failure.
 
-There is no browser send-now endpoint. Preview access leaves the queue unsent. With `EMAIL_SEND_ENABLED=true` and `EMAIL_AUTO_SEND_ENABLED=true`, the admin process polls committed queued messages in a background thread and dispatches them through Gmail or SES. The scanner never starts this worker. The guarded `send-email` CLI command remains available for one explicitly selected queue ID with separate database-change and real-email approval flags. Both paths use the same durable claims and never automatically retry failed or uncertain attempts. See [Gmail setup and recovery](gmail-setup.md) and the [deployment guide](deployment.md#private-local-photos-and-email-previews).
+Preview access leaves drafts and pending approvals unsent. The administrator's single Send email action approves and processes only its bound email ID. Bulk approval commits before processing starts. With both sending flags enabled, the optional admin thread processes only already-approved BULK or LEGACY entries; it never selects single drafts. The scanner exposes no email actions and never starts a sender. The guarded `send-email` CLI command also requires a recorded approval and cannot bypass it. Every delivery path uses the same durable claims and never automatically retries failed or uncertain attempts. See [Gmail setup and recovery](gmail-setup.md) and the [deployment guide](deployment.md#private-local-photos-and-email-previews).

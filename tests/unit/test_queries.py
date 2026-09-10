@@ -99,10 +99,12 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "QR_NOT_FOUND")
 
     def test_email_status_sanitizes_errors_and_omits_payload(self):
-        self.service.email_status(self.context, employee_id=17)
+        self.tx.all.return_value = [{"id": 9, "status": "FAILED", "last_error": "EMAIL_DELIVERY_CLAIMED_private-marker"}]
+        result = self.service.email_status(self.context, employee_id=17)
         sql, params = self.tx.all.call_args.args
-        self.assertIn("CASE WHEN q.last_error IS NULL", sql)
-        self.assertIn("EMAIL_PROCESSING_FAILED", sql)
+        self.assertEqual(result["items"][0]["status"], "NEEDS_REVIEW")
+        self.assertEqual(result["items"][0]["code"], "EMAIL_DELIVERY_NEEDS_REVIEW")
+        self.assertNotIn("private-marker", repr(result))
         self.assertNotIn("payload_ciphertext", sql)
         self.assertIn("c.employee_id = %s", sql)
         self.assertEqual(params, [0, 17, 51])
