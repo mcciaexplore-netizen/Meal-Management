@@ -59,12 +59,14 @@ class MySQLDevelopmentSeedLifecycleTests(DevelopmentSeedFixture, IsolatedMySQLTe
         registry_before = self.rows("SELECT * FROM development_seed_records ORDER BY fixture_key")
         qr_before = self.rows("SELECT * FROM qr_credentials ORDER BY id")
         emails_before = self.rows("SELECT * FROM email_queue ORDER BY id")
+        allocations_before = self.rows("SELECT * FROM master_qr_allocations ORDER BY qr_id")
         staff_before = self.rows("SELECT id, email, password_hash FROM staff_accounts ORDER BY id")
         repeated = self.seed.seed(self.admin)
         self.assertFalse(repeated.created)
         self.assertEqual(self.rows("SELECT * FROM development_seed_records ORDER BY fixture_key"), registry_before)
         self.assertEqual(self.rows("SELECT * FROM qr_credentials ORDER BY id"), qr_before)
         self.assertEqual(self.rows("SELECT * FROM email_queue ORDER BY id"), emails_before)
+        self.assertEqual(self.rows("SELECT * FROM master_qr_allocations ORDER BY qr_id"), allocations_before)
         self.assertEqual(self.rows("SELECT id, email, password_hash FROM staff_accounts ORDER BY id"), staff_before)
         self.assertEqual(
             self.rows(
@@ -112,18 +114,24 @@ class MySQLDevelopmentSeedLifecycleTests(DevelopmentSeedFixture, IsolatedMySQLTe
         master = self.qr.retrieve(self.admin, master_id)
         request_id = uuid4()
         read = meals.read(waiter, ScanInput(request_id, master.token, meal_type_id, "TEST-SCANNER-A"))
-        self.assertEqual(read, {"kind": "MASTER", "next": "VISITOR_DETAILS", "request_id": str(request_id)})
-        missing_details = meals.record(waiter, ScanInput(request_id, master.token, meal_type_id, "TEST-SCANNER-A"))
-        self.assertFalse(missing_details.approved)
-        self.assertEqual(missing_details.code, "VISITOR_DETAILS_REQUIRED")
-        visitor = meals.record(waiter, ScanInput(
-            request_id, master.token, meal_type_id, "TEST-SCANNER-A", visitor_details={
-                "company_name": "TEST Company", "name": "TEST Visitor",
-                "email": "visitor@example.test", "phone": "+91 90000 00000",
-            },
-        ))
-        self.assertTrue(visitor.approved)
-        self.assertEqual(len(visitor.meal_ids), 1)
+        self.assertTrue(read.approved)
+        self.assertEqual(len(read.meal_ids), 1)
+        retry = meals.record(waiter, ScanInput(request_id, master.token, meal_type_id, "TEST-SCANNER-A"))
+        self.assertTrue(retry.approved)
+        self.assertTrue(retry.duplicate)
+        self.assertEqual(retry.meal_ids, read.meal_ids)
+        serving = self.rows(
+            "SELECT visitor_company_name, visitor_name, visitor_email, visitor_phone FROM servings WHERE id = %s",
+            (read.serving_id,),
+        )[0]
+        self.assertEqual(serving, {
+            "visitor_company_name": "TEST Example Visitors", "visitor_name": "TEST Visitor Lead",
+            "visitor_email": "visitor.lead@example.test", "visitor_phone": "+1 202 555 0199",
+        })
+        used = self.rows("SELECT * FROM master_qr_allocations WHERE qr_id = %s", (master_id,))
+        self.assertEqual((used[0]["meal_limit"], used[0]["meals_used"]), (10, 1))
+        self.assertFalse(self.seed.seed(self.admin).created)
+        self.assertEqual(self.rows("SELECT * FROM master_qr_allocations WHERE qr_id = %s", (master_id,)), used)
 
 
 @unittest.skipUnless(MYSQL_TESTS_ENABLED, "MySQL connection and disposable-schema changes are not enabled")

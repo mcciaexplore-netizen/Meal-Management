@@ -391,7 +391,7 @@ class ServingCreationTests(unittest.TestCase):
         approval = {"request_id": self.identifier.bytes, "qr_id": 12, "meal_type_id": 1, "quantity": 3,
                     "waiter_id": 42, "scanner_id": 3, "location_id": 4, "authorized_by": 7,
                     "revoked_at": None, "expires_at": self.now + timedelta(minutes=5)}
-        self.tx.one.side_effect = [self.scanner, {"id": 1, "is_active": True}, qr, qr,
+        self.tx.one.side_effect = [self.scanner, {"id": 1, "is_active": True}, qr, qr, None,
                                    {"id": 51}, approval, {"is_active": True}, {"role_code": "ADMIN"}]
         self.tx.insert.side_effect = [77, 91, 92, 93]
         result = self.service._create_serving(

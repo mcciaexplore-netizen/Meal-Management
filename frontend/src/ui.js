@@ -61,15 +61,33 @@ export function badge(text, tone = "neutral") {
   return `<span class="badge ${tone}">${escape(text)}</span>`;
 }
 
+function qrState(qr) {
+  if (qr?.credential_status === "EMPLOYEE_INACTIVE") return "EMPLOYEE_INACTIVE";
+  if (qr?.revoked_at || qr?.credential_status === "QR_REVOKED") return "QR_REVOKED";
+  if (qr?.credential_status === "QR_EXPIRED" || qr?.expires_at && new Date(qr.expires_at) <= new Date() || qr?.exhausted_at || qr?.kind === "MASTER" && qr.meals_remaining != null && Number(qr.meals_remaining) === 0) return "QR_EXPIRED";
+  if (qr?.kind === "MASTER" && qr.meal_limit === null) return "MASTER_NEEDS_REPLACEMENT";
+  return "ACTIVE";
+}
+
 export function qrStatus(qr) {
-  if (qr.credential_status === "EMPLOYEE_INACTIVE") return badge("Employee inactive", "warning");
-  if (qr.revoked_at) return badge("Revoked", "danger");
-  if (qr.expires_at && new Date(qr.expires_at) <= new Date()) return badge("Expired", "warning");
-  return badge("Active", "positive");
+  const labels = {
+    EMPLOYEE_INACTIVE: ["Employee inactive", "warning"],
+    QR_REVOKED: ["Revoked", "danger"],
+    QR_EXPIRED: ["Expired", "warning"],
+    MASTER_NEEDS_REPLACEMENT: ["Create visitor QR", "warning"],
+    ACTIVE: ["Active", "positive"]
+  };
+  return badge(...labels[qrState(qr)]);
 }
 
 export function qrCard(qr) {
-  if (!qr?.svg) return `<div class="qr-card">${qr ? qrStatus(qr) : ""}${empty("QR display unavailable", qr?.revoked_at ? "This credential has been revoked. Issue a new QR to restore access." : qr?.expires_at && new Date(qr.expires_at) <= new Date() ? "This credential has expired. Replace it to restore access." : "An active employee and valid credential are required to display a QR.", "qr")}</div>`;
+  const state = qrState(qr);
+  const descriptions = {
+    QR_REVOKED: "This credential has been revoked. Issue a new QR to restore access.",
+    QR_EXPIRED: "This credential has expired. Create a new QR to restore access.",
+    MASTER_NEEDS_REPLACEMENT: "This legacy master QR has no meal allowance. Create a visitor QR with the group details and number of people."
+  };
+  if (!qr?.svg || state !== "ACTIVE") return `<div class="qr-card">${qr ? qrStatus(qr) : ""}${empty("QR display unavailable", descriptions[state] ?? "An active employee and valid credential are required to display a QR.", "qr")}</div>`;
   const data = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.svg)}`;
   return `<div class="qr-card"><img class="qr-image" src="${escape(data)}" alt="Private meal credential QR code"><div>${qrStatus(qr)}<p class="muted small">${qr.expires_at ? `Expires ${escape(timestamp(qr.expires_at))}` : "No scheduled expiry"}</p></div></div>`;
 }

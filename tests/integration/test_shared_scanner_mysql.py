@@ -1,6 +1,7 @@
 import secrets
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -173,6 +174,25 @@ class SharedScannerMySQLTests(MealServicesFixture):
         self.assertEqual(sum(result.approved for result in results), 1)
         self.assertEqual([result.code for result in results if not result.approved], ["QR_EXPIRED"])
         self.assertEqual(self.scalar("SELECT meals_used FROM master_qr_allocations WHERE qr_id = %s", (credential.qr_id,)), 1)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM servings WHERE qr_id = %s", (credential.qr_id,)), 1)
+
+    def test_allocated_master_cannot_bypass_group_details_or_limit_through_staff_scans(self):
+        credential = self.allocated_master(1)
+        details = self.meals.record(
+            self.waiter_context,
+            replace(self.scan(credential.token), visitor_details=self.visitor()),
+        )
+        self.assertFalse(details.approved)
+        self.assertEqual(details.code, "MASTER_ALLOCATION_SCOPE_MISMATCH")
+        quantity = self.meals.record(self.waiter_context, replace(self.scan(credential.token), quantity=2))
+        self.assertFalse(quantity.approved)
+        self.assertEqual(quantity.code, "VISITOR_QUANTITY_MUST_BE_ONE")
+        self.assertEqual(self.scalar("SELECT meals_used FROM master_qr_allocations WHERE qr_id = %s", (credential.qr_id,)), 0)
+        approved = self.meals.record(self.waiter_context, self.scan(credential.token))
+        self.assertTrue(approved.approved)
+        exhausted = self.shared().read(secrets.token_bytes(32), uuid4(), credential.token)
+        self.assertFalse(exhausted.approved)
+        self.assertEqual(exhausted.code, "QR_EXPIRED")
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM servings WHERE qr_id = %s", (credential.qr_id,)), 1)
 
     def test_system_scanner_cannot_login_or_use_employee_admin_reports_or_authorizations(self):

@@ -32,6 +32,10 @@ See [Vercel FastAPI builds](https://vercel.com/docs/frameworks/backend/fastapi),
 
 ## Verify locally, then publish the reviewed commit
 
+Before releasing the employee-contact and master-group changes, review the live migration ledger with approval. The current application requires migrations 001 through 009. Apply only pending migrations during an approved maintenance window: `008_employee_contact_details.sql` preserves existing employee rows while adding company and phone, and `009_master_qr_meal_allowances.sql` creates the visitor-group allowance table. Preserve all existing records and QR keys. A successful frontend build does not apply database migrations.
+
+After migration 009 creates the table, the existing `meal_runtime` account needs `INSERT` and `UPDATE` on `defaultdb.master_qr_allocations`; its existing `SELECT` on `defaultdb.*` covers reads. Grant only those additional privileges through an approved database-administration step. Do not recreate the runtime account, regenerate its password, or rerun initial account provisioning to add these grants. Both deployments need the same migrated database before the new code serves traffic.
+
 With the already installed project dependencies, run from the repository root:
 
 ```sh
@@ -50,4 +54,4 @@ The old CLI bundles under `build/vercel` remain private local build outputs. The
 
 After both builds reach Ready, verify the application startup and health responses, approved database connectivity, administrator login and permissions, scanner-device activation, and absence of administrator API routes on the scanner. Keep real email sending disabled until its separate configuration and verification steps are complete. The four existing local photos still require their approved private-storage transfer.
 
-Verify employee and master QR meals, retry recovery, dashboard visibility, and phone camera behavior using approved test data. Neither local payload checks nor unit/API tests establish that hosted integration is working.
+Verify employee and master QR meals, retry recovery, dashboard visibility, and phone camera behavior using approved test data. Create a master group with five people in the admin application; five deliberate scanner requests must create five meals with the saved contact details, and a sixth must reject as expired. The scanner must collect no visitor form. Retry the fifth request with its original browser and UUID after exhaustion; it must return that same fifth meal without consuming another allowance. Check that completed approval/rejection animations return to the initial scanner screen after two seconds, while connection failures retain their unresolved request. Neither local payload checks nor unit/API tests establish that hosted integration is working.

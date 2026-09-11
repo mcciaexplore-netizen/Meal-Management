@@ -35,7 +35,6 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
 
     def test_scanner_records_before_admin_starts_and_dashboard_reads_same_committed_records(self):
         registration, employee_token = self.employee()
-        master = self.qr.issue_master(self.admin_context)
         runtime = self.runtime()
         visitor = {
             "company_name": "Fictional Example Company",
@@ -43,6 +42,14 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             "email": "visitor@example.test",
             "phone": "+91 90000 00000",
         }
+        master = self.qr.issue_master(
+            self.admin_context,
+            company_name=visitor["company_name"],
+            contact_name=visitor["name"],
+            email=visitor["email"],
+            phone=visitor["phone"],
+            meal_limit=1,
+        )
         first_body = {"request_id": str(uuid4()), "token": employee_token}
         master_body = {"request_id": str(uuid4()), "token": master.token}
         baseline = self.scalar("SELECT COALESCE(MAX(id), 0) FROM meals")
@@ -58,10 +65,8 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             second = scanner.post("/api/scanner/read", json={**first_body, "request_id": str(uuid4())}, headers=headers)
             self.assertTrue(second.json()["approved"])
             self.assertNotEqual(second.json()["meal_ids"], first.json()["meal_ids"])
-            waiting = scanner.post("/api/scanner/read", json=master_body, headers=headers)
-            self.assertEqual(waiting.json()["next"], "VISITOR_DETAILS")
-            master_body["visitor_details"] = visitor
-            recorded = scanner.post("/api/scanner/visitors", json=master_body, headers=headers)
+            recorded = scanner.post("/api/scanner/read", json=master_body, headers=headers)
+            self.assertEqual(recorded.status_code, 200)
             self.assertTrue(recorded.json()["approved"])
             scanner_cookie = scanner.cookies.get("meal_scanner")
             expected_ids = set(first.json()["meal_ids"] + second.json()["meal_ids"] + recorded.json()["meal_ids"])
@@ -74,10 +79,17 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             recovered = restarted_scanner.get("/api/scanner/requests/" + master_body["request_id"] + "/result")
             self.assertTrue(recovered.json()["approved"])
             self.assertEqual(recovered.json()["meal_ids"], recorded.json()["meal_ids"])
-            retried = restarted_scanner.post("/api/scanner/visitors", json=master_body,
+            retried = restarted_scanner.post("/api/scanner/read", json=master_body,
                                               headers=self.scan_headers(restarted_scanner, runtime))
+            self.assertEqual(retried.status_code, 200)
+            self.assertTrue(retried.json()["approved"])
             self.assertTrue(retried.json()["duplicate"])
             self.assertEqual(retried.json()["meal_ids"], recorded.json()["meal_ids"])
+            exhausted = restarted_scanner.post("/api/scanner/read", json={**master_body, "request_id": str(uuid4())},
+                                                headers=self.scan_headers(restarted_scanner, runtime))
+            self.assertEqual(exhausted.status_code, 200)
+            self.assertFalse(exhausted.json()["approved"])
+            self.assertEqual(exhausted.json()["code"], "QR_EXPIRED")
 
         with self.client("admin", runtime) as admin:
             admin.cookies.set(runtime.session_cookie, self.admin_context.session_token)
@@ -105,6 +117,7 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             self.assertGreaterEqual(totals.json()["totals"]["employee_meals"], 2)
             self.assertGreaterEqual(totals.json()["totals"]["visitor_meals"], 1)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM meals WHERE id > %s", (baseline,)), 3)
+        self.assertEqual(self.scalar("SELECT meals_used FROM master_qr_allocations WHERE qr_id = %s", (master.qr_id,)), 1)
 
     def test_scanner_credentials_do_not_grant_administration_or_expose_admin_routes(self):
         runtime = self.runtime()
@@ -122,6 +135,7 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             self.assertEqual(admin.get("/api/scanner/session").status_code, 404)
             scanner.cookies.set(runtime.session_cookie, self.admin_context.session_token)
             self.assertEqual(scanner.get("/api/employees").status_code, 404)
+            self.assertEqual(scanner.post("/api/scanner/visitors", json={}, headers=headers).status_code, 404)
             response = scanner.post("/api/scanner/read", json={"request_id": str(uuid4()), "token": secrets.token_urlsafe(32)},
                                     headers={**headers, "Origin": runtime.app_origin})
             self.assertEqual(response.status_code, 403)

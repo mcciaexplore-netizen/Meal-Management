@@ -102,7 +102,7 @@ class ScanAppMealTests(unittest.TestCase):
     def test_direct_master_records_one_meal_with_four_details_and_no_authorization(self):
         scan = replace(self.scan, visitor_details=self.details)
         self.receipt.update(visitor_details=self.details, visitor_hash=payload_digest(self.details))
-        self.tx.one.side_effect = self.pending_rows()
+        self.tx.one.side_effect = self.pending_rows() + [None]
         result = self.service._process(self.context, scan, self.receipt)
         self.assertTrue(result.approved)
         self.assertEqual(result.meal_ids, (91,))
@@ -202,13 +202,15 @@ class ScanAppMealTests(unittest.TestCase):
 
     def test_direct_master_approval_is_not_returned_when_commit_fails(self):
         self.receipt.update(visitor_details=self.details, visitor_hash=payload_digest(self.details))
-        self.tx.one.side_effect = self.pending_rows()
-        service = MealService(FailingCommitDatabase(self.tx))
+        self.tx.one.side_effect = self.pending_rows() + [None]
+        database = FailingCommitDatabase(self.tx)
+        service = MealService(database)
         with patch.object(service, "_receive", return_value=self.receipt), patch.object(service, "_mark_interrupted"):
             result = service.record(self.context, replace(self.scan, visitor_details=self.details))
         self.assertFalse(result.approved)
         self.assertIsNone(result.serving_id)
         self.assertEqual(result.code, "PROCESSING_UNCONFIRMED")
+        self.assertTrue(database.commit_attempted)
 
     def test_allocated_master_records_one_meal_and_exhausts_on_final_allowance(self):
         allocation = {
@@ -239,6 +241,63 @@ class ScanAppMealTests(unittest.TestCase):
         self.assertFalse(result.approved)
         self.assertEqual(result.code, "QR_EXPIRED")
         self.tx.insert.assert_not_called()
+
+    def test_submitted_visitor_details_or_authorization_cannot_bypass_master_allowance(self):
+        for scan in (
+            replace(self.scan, visitor_details=self.details),
+            replace(self.scan, authorization_id=51),
+        ):
+            with self.subTest(authorization_id=scan.authorization_id):
+                self.tx.reset_mock()
+                receipt = dict(self.receipt)
+                if scan.visitor_details is not None:
+                    receipt.update(visitor_details=self.details, visitor_hash=payload_digest(self.details))
+                self.tx.one.side_effect = self.pending_rows() + [{"qr_id": 12}, {"id": 12}]
+                result = self.service._process(self.context, scan, receipt)
+                self.assertEqual(result.code, "MASTER_ALLOCATION_SCOPE_MISMATCH")
+                self.tx.insert.assert_not_called()
+                self.assertFalse(any(
+                    call.args[0].startswith("UPDATE master_qr_allocations")
+                    for call in self.tx.execute.call_args_list
+                ))
+
+    def test_legacy_master_on_public_scanner_finalizes_rejection_for_recovery(self):
+        self.receipt["public_scanner"] = True
+        self.tx.one.side_effect = self.pending_rows() + [None, {"id": 12}]
+        result = self.service._process(self.context, self.scan, self.receipt)
+        self.assertEqual(result.code, "QR_EXPIRED")
+        self.tx.insert.assert_not_called()
+        self.assertTrue(any("status = 'REJECTED'" in call.args[0] for call in self.tx.execute.call_args_list))
+        self.assertTrue(any("SET scan_authorization_id" in call.args[0] for call in self.tx.execute.call_args_list))
+
+    def test_allocated_master_retry_recovers_commit_without_consuming_allowance(self):
+        self.receipt["public_scanner"] = True
+        self.terminal(None)
+        result = self.service._process(self.context, self.scan, self.receipt)
+        self.assertTrue(result.approved)
+        self.assertTrue(result.duplicate)
+        self.assertEqual(result.meal_ids, (91,))
+        self.tx.insert.assert_not_called()
+        self.assertFalse(any(
+            "master_qr_allocations" in call.args[0]
+            for call in self.tx.one.call_args_list + self.tx.execute.call_args_list
+        ))
+
+    def test_allocated_master_never_approves_before_commit(self):
+        allocation = {
+            "qr_id": 12, "company_name": "Example Ltd", "contact_name": "Ravi Patel",
+            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 1,
+            "meals_used": 0, "exhausted_at": None,
+        }
+        self.tx.one.side_effect = self.pending_rows() + [allocation]
+        database = FailingCommitDatabase(self.tx)
+        service = MealService(database)
+        with patch.object(service, "_receive", return_value=self.receipt), patch.object(service, "_mark_interrupted"):
+            result = service.record(self.context, self.scan)
+        self.assertTrue(database.commit_attempted)
+        self.assertFalse(result.approved)
+        self.assertIsNone(result.serving_id)
+        self.assertEqual(result.code, "PROCESSING_UNCONFIRMED")
 
     def test_invalid_details_are_logged_without_reserving_or_poisoning_request(self):
         self.tx.one.side_effect = [{"id": 3, "location_id": 4}, None]

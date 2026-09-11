@@ -181,11 +181,6 @@ function masterRequestDialog(title, values, callback) {
   }));
 }
 
-function masterQrStatus(row) {
-  if (row.exhausted_at || Number(row.meals_remaining) === 0) return badge("Expired", "danger");
-  return qrStatus(row);
-}
-
 export async function masters(target, context) {
   target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Visitor master QRs", "Create one limited QR for each visitor group.", '<button class="button primary" id="new-master">' + icon("plus") + ' Create visitor QR</button>')}<div class="info-banner">${icon("qr")}<span>Enter the visitor group details and number of people here. The scanner records one meal per scan and expires the QR after the final allowed meal.</span></div><section class="panel"><div id="master-list">${loading()}</div><div class="pagination" id="master-pagination"></div></section>`;
   let rows = [];
@@ -195,7 +190,7 @@ export async function masters(target, context) {
     if (!context.isCurrent()) return;
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
-    target.querySelector("#master-list").innerHTML = rows.length ? table(["Visitor group", "POC", "Meals", "Status", "Issued", ""], rows.map(row => `<tr><td><strong>${escape(row.company_name ?? `Legacy master QR ${rowId(row)}`)}</strong><span class="cell-subtitle">QR ${escape(rowId(row))}</span></td><td>${escape(row.contact_name ?? "—")}<span class="cell-subtitle">${escape(row.email ?? "")}</span></td><td>${escape(row.meals_used ?? 0)} / ${escape(row.meal_limit ?? "—")}<span class="cell-subtitle">${escape(row.meals_remaining ?? "—")} remaining</span></td><td>${masterQrStatus(row)}</td><td>${escape(timestamp(row.issued_at))}</td><td>${action("open-master", rowId(row), "Manage")}</td></tr>`), "Visitor master credentials") : empty("No visitor QR created", "Create a limited master QR for the next visitor group.", "qr");
+    target.querySelector("#master-list").innerHTML = rows.length ? table(["Visitor group", "POC", "Meals", "Status", "Issued", ""], rows.map(row => `<tr><td><strong>${escape(row.company_name ?? `Legacy master QR ${rowId(row)}`)}</strong><span class="cell-subtitle">QR ${escape(rowId(row))}</span></td><td>${escape(row.contact_name ?? "—")}<span class="cell-subtitle">${escape(row.email ?? "")}</span></td><td>${escape(row.meals_used ?? 0)} / ${escape(row.meal_limit ?? "—")}<span class="cell-subtitle">${escape(row.meals_remaining ?? "—")} remaining</span></td><td>${qrStatus(row)}</td><td>${escape(timestamp(row.issued_at))}</td><td>${action("open-master", rowId(row), "Manage")}</td></tr>`), "Visitor master credentials") : empty("No visitor QR created", "Create a limited master QR for the next visitor group.", "qr");
     target.querySelectorAll('[data-action="open-master"]').forEach(button => button.onclick = () => detail(Number(button.dataset.id)));
     target.querySelector("#master-pagination").innerHTML = `<span>${rows.length} credentials shown</span>${cursor ? '<button class="button" id="more-master">Load more</button>' : ""}`;
     target.querySelector("#more-master")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));

@@ -87,3 +87,32 @@ test("inactive and revoked QR views do not render a credential image", () => {
   assert.match(markup, /Revoked/);
   assert.doesNotMatch(markup, /<img/);
 });
+
+test("exhausted master QR cards show expiry and hide credential images", () => {
+  for (const details of [{ exhausted_at: "2026-09-11T12:00:00Z" }, { meals_remaining: 0 }, { credential_status: "QR_EXPIRED" }]) {
+    const qr = { kind: "MASTER", meal_limit: 5, svg: "<svg></svg>", ...details };
+    assert.match(qrStatus(qr), /Expired/);
+    assert.match(qrCard(qr), /This credential has expired/);
+    assert.doesNotMatch(qrCard(qr), /<img|>Active</);
+  }
+});
+
+test("legacy master QR with no allowance is distinguished from an exhausted group QR", () => {
+  const qr = { kind: "MASTER", meal_limit: null, meals_remaining: null, svg: "<svg></svg>" };
+  assert.match(qrStatus(qr), /Create visitor QR/);
+  assert.doesNotMatch(qrStatus(qr), /Expired|Active/);
+  assert.match(qrCard(qr), /no meal allowance/);
+  assert.doesNotMatch(qrCard(qr), /<img/);
+});
+
+test("employee QRs remain active when master allowance fields are null", () => {
+  const qr = { kind: "EMPLOYEE", meal_limit: null, meals_remaining: null, svg: "<svg></svg>" };
+  assert.match(qrStatus(qr), /Active/);
+  assert.match(qrCard(qr), /<img/);
+});
+
+test("master QR with meals left remains active", () => {
+  const qr = { kind: "MASTER", meal_limit: 5, meals_remaining: 2, svg: "<svg></svg>" };
+  assert.match(qrStatus(qr), /Active/);
+  assert.match(qrCard(qr), /<img/);
+});

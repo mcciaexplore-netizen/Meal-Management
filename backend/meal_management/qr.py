@@ -115,6 +115,17 @@ class QrService:
         if credential["kind"] == "EMPLOYEE":
             if employee is None or not employee["is_active"]:
                 raise DomainError("EMPLOYEE_INACTIVE")
+        elif credential["kind"] == "MASTER":
+            allocation = tx.one(
+                "SELECT meal_limit, meals_used, exhausted_at "
+                "FROM master_qr_allocations WHERE qr_id = %s FOR UPDATE",
+                (credential["id"],),
+            )
+            if allocation is not None and (
+                allocation["exhausted_at"] is not None
+                or allocation["meals_used"] >= allocation["meal_limit"]
+            ):
+                raise DomainError("QR_EXPIRED")
 
     def _decrypt_token(self, credential):
         if credential["token_ciphertext"] is None:

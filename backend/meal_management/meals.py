@@ -436,13 +436,11 @@ class MealService:
                 raise DomainError("VISITOR_DETAILS_NOT_APPLICABLE")
             self._bind_scan(tx, scan, receipt)
         elif qr["kind"] == "MASTER":
-            allocation = None
-            if scan.authorization_id is None and receipt.get("visitor_details") is None:
-                allocation = tx.one(
-                    "SELECT qr_id, company_name, contact_name, email, phone, meal_limit, meals_used, exhausted_at "
-                    "FROM master_qr_allocations WHERE qr_id = %s FOR UPDATE",
-                    (qr["id"],),
-                )
+            allocation = tx.one(
+                "SELECT qr_id, company_name, contact_name, email, phone, meal_limit, meals_used, exhausted_at "
+                "FROM master_qr_allocations WHERE qr_id = %s FOR UPDATE",
+                (qr["id"],),
+            )
             if allocation is not None:
                 if scan.quantity != 1:
                     raise DomainError("VISITOR_QUANTITY_MUST_BE_ONE")
@@ -482,7 +480,9 @@ class MealService:
                     raise DomainError("VISITOR_DETAILS_AUTHORIZATION_CONFLICT")
             else:
                 if scan.authorization_id is None:
-                    raise AttemptRejection("QR_EXPIRED" if receipt.get("public_scanner") else "VISITOR_DETAILS_REQUIRED")
+                    if receipt.get("public_scanner"):
+                        raise DomainError("QR_EXPIRED")
+                    raise AttemptRejection("VISITOR_DETAILS_REQUIRED")
                 now = self._validate_authorization(tx, actor, scan, receipt, qr, scanner)
                 check_qr(qr, now)
         else:

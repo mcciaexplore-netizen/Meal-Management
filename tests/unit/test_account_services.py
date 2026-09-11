@@ -393,6 +393,32 @@ class EmployeeQrServiceTests(unittest.TestCase):
         self.assertEqual(allocation.args[1], (72, "Example Company", "Ravi Patel", "ravi@example.test", "+91 98765 43210", 5, 7))
         self.assertTrue(self.db.committed)
 
+    def test_exhausted_master_cannot_be_retrieved_or_exported(self):
+        credential = {**self.credential, "kind": "MASTER", "employee_id": None}
+        for method in (self.qr.retrieve, self.qr.export_svg):
+            with self.subTest(method=method.__name__):
+                self.tx.one.side_effect = [
+                    {"employee_id": None}, credential,
+                    {"meal_limit": 5, "meals_used": 5, "exhausted_at": self.now},
+                ]
+                with self._patch_actor("qr"), self.assertRaises(DomainError) as caught:
+                    method(self.context, 72)
+                self.assertEqual(caught.exception.code, "QR_EXPIRED")
+        self.vault.decrypt.assert_not_called()
+        self.renderer.render.assert_not_called()
+
+    def test_master_allocation_failure_rolls_back_qr_creation(self):
+        self.tx.insert.return_value = 72
+        self.tx.execute.side_effect = RuntimeError("ALLOCATION_INSERT_FAILED")
+        with self._patch_actor("qr"), patch("meal_management.qr.audit"):
+            with self.assertRaisesRegex(RuntimeError, "ALLOCATION_INSERT_FAILED"):
+                self.qr.issue_master(
+                    self.context, company_name="Example Company", contact_name="Ravi Patel",
+                    email="ravi@example.test", phone="+919876543210", meal_limit=5,
+                )
+        self.assertTrue(self.db.rolled_back)
+        self.assertFalse(self.db.committed)
+
     def test_master_request_rejects_incomplete_details_or_invalid_allowance_before_writing(self):
         for values in (
             {"company_name": "", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5},

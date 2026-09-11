@@ -23,7 +23,8 @@ test("scanner animates final decisions and automatically resets after two second
   assert.match(source, /Accepted · 1 meal/);
   assert.match(source, /Meal rejected/);
   assert.match(source, /QR has expired\. Please contact the administrator\./);
-  assert.match(source, /setTimeout\([\s\S]*?2000\)/);
+  assert.match(source, /scheduleScanResultReset\(/);
+  assert.match(source, /clearMarker: \(\) => !markerSaved \|\| clearScannerMarker\(storage, servingScope\)/);
   assert.doesNotMatch(source, /visitor-meal-form|Scan next meal|\/visitors/);
   assert.match(styles, /@keyframes scan-result-arrive/);
   assert.match(styles, /@keyframes scan-result-icon/);

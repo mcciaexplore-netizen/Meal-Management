@@ -6,6 +6,7 @@ import { clearScannerMarker, loadActiveScannerMarker, loadScannerMarker, saveSca
 import { ScannerTransport } from "./scanner_api.js";
 import { ScanAppOperation } from "./scan_app_operation.js";
 import { chooseScannerRecovery } from "./scanner_recovery.js";
+import { scheduleScanResultReset } from "./scan_result_reset.js";
 
 const root = document.getElementById("scan-app");
 const transport = new ScannerTransport();
@@ -107,7 +108,7 @@ function renderScanner() {
   let busy = false;
   let decoding = false;
   let timer = null;
-  let resultTimer = null;
+  let cancelResultReset = () => {};
   let epoch = 0;
   let detector = null;
   let camera;
@@ -148,15 +149,22 @@ function renderScanner() {
     capture.hidden = true;
     checkServing.hidden = true;
     clearMessage();
-    outcome.innerHTML = result.approved ? `<div class="scan-final accepted">${icon("check")}<h1>Accepted · 1 meal</h1>${result.duplicate || recovered ? '<p>Already recorded. Do not serve again.</p>' : ""}<span>Ready for the next scan in 2 seconds</span></div>` : `<div class="scan-final rejected">${icon("close")}<h1>Meal rejected</h1><p>${escape(scanOutcomeMessage(result.code))}</p><span>Ready for the next scan in 2 seconds</span></div>`;
+    outcome.innerHTML = result.approved ? `<div class="scan-final accepted">${icon("check")}<h1>Accepted · 1 meal</h1>${result.duplicate || recovered ? '<p>Already recorded. Do not serve again.</p>' : ""}<span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>` : `<div class="scan-final rejected">${icon("close")}<h1>Meal rejected</h1><p>${escape(scanOutcomeMessage(result.code))}</p><span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>`;
     controls();
-    resultTimer = setTimeout(() => {
-      if (!active() || !flow.result) return;
-      clearScannerMarker(storage, servingScope);
-      flow.reset();
-      markerSaved = false;
-      renderScanner();
-    }, 2000);
+    cancelResultReset();
+    cancelResultReset = scheduleScanResultReset({
+      flow,
+      active,
+      clearMarker: () => !markerSaved || clearScannerMarker(storage, servingScope),
+      onReset: () => { markerSaved = false; renderScanner(); },
+      onBlocked: () => {
+        outcome.querySelector(".scan-final span").textContent = "Scanner reset paused";
+        showMessage("This browser could not clear the completed serving. Try returning to the scanner again before serving another meal.");
+        checkServing.textContent = "Return to scanner";
+        checkServing.hidden = false;
+        controls();
+      }
+    });
   }
 
   function unconfirmed(text = "The previous serving result is not confirmed.") {
@@ -288,7 +296,7 @@ function renderScanner() {
   document.addEventListener("visibilitychange", hide);
   dispose = () => {
     stop();
-    clearTimeout(resultTimer);
+    cancelResultReset();
     camera.dispose();
     upload.value = "";
     window.removeEventListener("pagehide", stop);
