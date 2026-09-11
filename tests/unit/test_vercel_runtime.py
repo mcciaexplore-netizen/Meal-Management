@@ -1,4 +1,5 @@
 import base64
+import secrets
 import stat
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from meal_management.errors import ConfigurationError
+from meal_management.scanner_access import ScannerBrowser
 from meal_management.vercel_runtime import VercelRequestMiddleware, create_vercel_app, scanner_networks, vercel_configuration
 
 
@@ -73,6 +75,21 @@ class VercelConfigurationTests(unittest.TestCase):
         _, runtime, networks = self.configure("scanner", SCAN_APP_ENABLED="true", SCANNER_ACTIVATION_SECRET="s" * 32)
         self.assertTrue(runtime.scan_app_enabled)
         self.assertEqual(networks, ())
+
+    def test_short_activation_code_can_activate_with_production_configuration(self):
+        for length in (12, 16, 32):
+            code = secrets.token_urlsafe(32)[:length]
+            with self.subTest(length=length):
+                _, runtime, _ = self.configure("scanner", SCAN_APP_ENABLED="true", SCANNER_ACTIVATION_SECRET=code)
+                browser = ScannerBrowser(runtime.csrf_secret, runtime.scanner_activation_secret)
+                browser.verify_activation(code)
+                cookie = browser.issue()
+                self.assertTrue(browser.valid(cookie))
+
+    def test_activation_minimum_does_not_relax_signing_secret_requirements(self):
+        for key, length in (("SCANNER_ACTIVATION_SECRET", 11), ("APP_CSRF_SECRET", 31), ("LOGIN_RATE_SECRET", 31)):
+            with self.subTest(key=key), self.assertRaisesRegex(ConfigurationError, "INVALID_SETTING_" + key):
+                self.configure("scanner", **{key: secrets.token_urlsafe(32)[:length]})
 
     def test_network_configuration_rejects_missing_malformed_and_unrestricted_ranges(self):
         for value in (None, "", "0.0.0.0/0", "::/0", "127.0.0.1/32", "203.0.113.7/24", "secret-password", "203.0.113.1/32,", ",".join(["203.0.113.9/32"] * 17)):
