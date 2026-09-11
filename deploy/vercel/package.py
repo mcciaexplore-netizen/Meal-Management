@@ -104,6 +104,7 @@ def _configuration():
     return {
         "$schema": "https://openapi.vercel.sh/vercel.json",
         "framework": "fastapi",
+        "regions": ["bom1"],
         "buildCommand": "python verify_bundle.py",
         "functions": {"app.py": {"maxDuration": 300, "excludeFiles": "public/**"}},
         "headers": [{"source": "/assets/(.*)", "headers": [{"key": key, "value": value} for key, value in headers.items()]}],

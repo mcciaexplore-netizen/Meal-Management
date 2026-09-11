@@ -188,6 +188,7 @@ process.stdout.write(JSON.stringify(result.fileList.map(path => relative(root, p
         config = json.loads((directory / "vercel.json").read_text())
         self.assertEqual(config["framework"], "fastapi")
         self.assertEqual(config["buildCommand"], "python verify_bundle.py")
+        self.assertEqual(config["regions"], ["bom1"])
         self.assertEqual(config["functions"], {"app.py": {"maxDuration": 300, "excludeFiles": "public/**"}})
         self.assertNotIn("builds", config)
         self.assertNotIn("rewrites", config)
