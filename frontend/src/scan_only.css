@@ -4,6 +4,13 @@
 .scan-app-brand { display: flex; align-items: center; gap: 12px; }
 .scan-app-brand > .icon { color: #9cdbcb; width: 26px; height: 26px; }
 .scan-app-brand strong { font-size: 19px; font-weight: 600; }
+.scanner-activation { max-width: 510px; margin: 8vh auto 0; align-items: stretch; text-align: left; background: #fff; border: 1px solid #d7e4df; border-radius: 12px; padding: 30px; }
+.scanner-activation > .scan-app-brand { color: #176947; margin-bottom: 22px; }
+.scanner-activation > h1 { font-size: 30px; }
+.scanner-activation > p { color: #60776f; line-height: 1.6; margin: 12px 0 24px; }
+.scanner-activation form label { text-align: left; }
+.scanner-activation form input { min-height: 49px; font-size: 16px; }
+.scanner-activation form .button { min-height: 51px; margin-top: 12px; }
 .scan-only-main { flex: 1; width: 100%; max-width: 820px; margin: 0 auto; padding: 23px 23px max(25px, env(safe-area-inset-bottom)); }
 .scan-view { background: #fff; border: 1px solid #d7e2df; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px #16362c06; }
 .scan-only-camera { aspect-ratio: 1.7; max-height: 60dvh; min-height: 280px; background: #102b37; color: #fff; position: relative; overflow: hidden; }
@@ -49,6 +56,7 @@
   .scan-app-header { padding: 13px 15px; }
   .scan-app-brand { gap: 9px; }
   .scan-app-brand strong { font-size: 17px; }
+  .scanner-activation { margin: 4vh 12px 0; padding: 24px 20px; }
   .scan-only-main { padding: 14px 12px max(22px, env(safe-area-inset-bottom)); }
   .scan-only-camera { min-height: 310px; aspect-ratio: 1.05; max-height: 53dvh; }
   .scan-camera-placeholder h1 { font-size: 27px; }

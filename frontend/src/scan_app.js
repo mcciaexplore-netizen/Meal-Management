@@ -42,9 +42,40 @@ async function openScanner() {
     renderScanner();
   } catch (error) {
     if (current !== version) return;
+    if (error.code === "SCANNER_ACTIVATION_REQUIRED") {
+      renderActivation();
+      return;
+    }
     root.innerHTML = `<main id="main" class="startup"><h1>Scanner unavailable</h1>${errorMessage(error)}<button class="button primary" id="retry-startup">Try again</button></main>`;
     root.querySelector("#retry-startup").onclick = openScanner;
   }
+}
+
+function renderActivation() {
+  const current = ++version;
+  dispose();
+  root.innerHTML = `<main id="main" class="startup scanner-activation"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div><h1>Activate this scanner</h1><p>Enter the office scanner activation code once. This device can then scan securely from any internet connection.</p><form id="scanner-activation-form">${field("Activation code", "activation_code", "", "password", 'required minlength="12" maxlength="256" autocomplete="one-time-code" spellcheck="false"')}<div data-form-error></div><button class="button primary full" type="submit">Activate scanner</button></form></main>`;
+  const form = root.querySelector("#scanner-activation-form");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector("button");
+    const target = form.querySelector("[data-form-error]");
+    target.innerHTML = "";
+    button.disabled = true;
+    button.textContent = "Activating…";
+    try {
+      await transport.activate(new FormData(form).get("activation_code"));
+      if (current === version) await openScanner();
+    } catch (error) {
+      if (current === version) target.innerHTML = errorMessage(error);
+    } finally {
+      if (current === version) {
+        button.disabled = false;
+        button.textContent = "Activate scanner";
+      }
+    }
+  });
 }
 
 function renderScanner() {

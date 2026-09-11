@@ -66,8 +66,8 @@ def vercel_configuration(application, environment):
     if runtime.photo_backend != "vercel_blob" or runtime.email_backend != "gmail":
         raise ConfigurationError("VERCEL_REQUIRES_PRIVATE_BLOB_AND_GMAIL")
     networks = ()
-    if application == "scanner" and runtime.scan_app_enabled:
-        networks = scanner_networks(values.get("SCANNER_ALLOWED_CIDRS"))
+    if application == "scanner" and runtime.scan_app_enabled and runtime.scanner_activation_secret is None:
+        raise ConfigurationError("MISSING_SETTING_SCANNER_ACTIVATION_SECRET")
     certificate = _required(values, "DB_SSL_CA_PEM")
     if len(certificate) > 65536 or not certificate.startswith("-----BEGIN CERTIFICATE-----"):
         raise ConfigurationError("INVALID_SETTING_DB_SSL_CA_PEM")
@@ -130,10 +130,6 @@ class VercelRequestMiddleware:
             return
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
             address = address.ipv4_mapped
-        if self.application == "scanner" and scope["path"].startswith("/api/scanner/"):
-            if not any(address in network for network in self.networks):
-                await self._reject(send, "SCANNER_NETWORK_NOT_ALLOWED", 403)
-                return
         forwarded = dict(scope, scheme="https", client=(str(address), 0))
         await self.app(forwarded, receive, send)
 

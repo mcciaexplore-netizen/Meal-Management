@@ -162,6 +162,17 @@ class ScannerVisitorBody(ScannerReadBody):
     visitor_details: VisitorDetailsInput
 
 
+class ScannerActivationBody(InputModel):
+    activation_code: SecretStr
+
+    @field_validator("activation_code")
+    @classmethod
+    def activation_code_size(cls, value):
+        if not 12 <= len(value.get_secret_value()) <= 256:
+            raise ValueError("Invalid activation code length")
+        return value
+
+
 class DepartmentInput(InputModel):
     name: Annotated[str, Field(min_length=1, max_length=100)]
 

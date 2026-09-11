@@ -58,6 +58,63 @@ class PublicScannerApiTests(ApiTestCase):
         self.assertNotIn("meal_session=", cookie)
         self.assertEqual(response.headers["cache-control"], "no-store")
 
+    def test_production_new_device_requires_activation_then_keeps_private_cookie(self):
+        activation = secrets.token_urlsafe(32)
+        runtime = replace(
+            self.harness.runtime,
+            environment="production",
+            app_origin="https://admin.example.test",
+            admin_origin="https://admin.example.test",
+            scanner_origin="https://scanner.example.test",
+            allowed_hosts=("admin.example.test", "scanner.example.test"),
+            cookie_secure=True,
+            scanner_enabled=True,
+            scanner_activation_secret=activation.encode(),
+        )
+        harness = ApiHarness(runtime, application="scanner")
+        try:
+            response = harness.client.get("/api/scanner/session")
+            self.assert_error(response, 401, "SCANNER_ACTIVATION_REQUIRED")
+            self.assertNotIn("set-cookie", response.headers)
+            response = harness.client.post(
+                "/api/scanner/activate",
+                json={"activation_code": activation},
+                headers={"Origin": runtime.scanner_origin},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertRegex(response.json()["scope"], r"^[0-9a-f]{64}$")
+            self.assertIn("__Host-meal_scanner=", response.headers["set-cookie"])
+            self.assertIn("HttpOnly", response.headers["set-cookie"])
+            harness.limiter.consume_activation.assert_called_once()
+            self.assertEqual(harness.client.get("/api/scanner/session").status_code, 200)
+        finally:
+            harness.client.close()
+
+    def test_production_rejects_wrong_activation_without_issuing_cookie(self):
+        runtime = replace(
+            self.harness.runtime,
+            environment="production",
+            app_origin="https://admin.example.test",
+            admin_origin="https://admin.example.test",
+            scanner_origin="https://scanner.example.test",
+            allowed_hosts=("admin.example.test", "scanner.example.test"),
+            cookie_secure=True,
+            scanner_enabled=True,
+            scanner_activation_secret=secrets.token_urlsafe(32).encode(),
+        )
+        harness = ApiHarness(runtime, application="scanner")
+        try:
+            response = harness.client.post(
+                "/api/scanner/activate",
+                json={"activation_code": secrets.token_urlsafe(32)},
+                headers={"Origin": runtime.scanner_origin},
+            )
+            self.assert_error(response, 401, "SCANNER_ACTIVATION_INVALID")
+            self.assertNotIn("set-cookie", response.headers)
+            harness.limiter.consume_activation.assert_called_once()
+        finally:
+            harness.client.close()
+
     def test_bootstrap_keeps_the_same_browser_scope(self):
         first = self.session().json()
         self.assertEqual(self.session().json(), first)
@@ -363,6 +420,7 @@ class SeparateApplicationTests(ApiTestCase):
         paths = {route.path for route in self.scanner.app.routes}
         self.assertTrue(paths.issubset({
             "/", "/assets", "/health/live", "/health/ready", "/api/scanner/session",
+            "/api/scanner/activate",
             "/api/scanner/read", "/api/scanner/visitors", "/api/scanner/requests/{request_id}/result",
             "/api/scanner/recovery",
         }))

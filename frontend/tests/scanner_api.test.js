@@ -21,6 +21,20 @@ test("public scanner boot establishes only its own private browser session", asy
   assert.equal(calls[0].options.headers["X-CSRF-Token"], undefined);
 });
 
+test("a new scanner device activates without storing the activation code", async () => {
+  const calls = [];
+  const transport = new ScannerTransport(async (path, options) => {
+    calls.push({ path, options });
+    return session();
+  });
+  assert.deepEqual(await transport.activate("fictional-device-activation-code"), { scope });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, "/api/scanner/activate");
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { activation_code: "fictional-device-activation-code" });
+  assert.equal(transport.session.activation_code, undefined);
+});
+
 test("public scanning uses scanner CSRF and sends the projected original payload", async () => {
   const calls = [];
   const transport = new ScannerTransport(async (path, options) => {

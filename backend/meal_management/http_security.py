@@ -29,6 +29,8 @@ def error_body(code, request_id=None):
         "REQUEST_TOO_LARGE": "The uploaded content is too large.",
         "NOT_FOUND": "The requested item was not found.",
         "SCANNER_BROWSER_REQUIRED": "Refresh the scanner to continue. Keep any pending serving unchanged.",
+        "SCANNER_ACTIVATION_REQUIRED": "Activate this scanner device to continue.",
+        "SCANNER_ACTIVATION_INVALID": "The scanner activation code is incorrect.",
         "SCANNER_NOT_CONFIGURED": "The scanner setup is incomplete. Ask the office administrator to finish setup.",
         "SCANNER_DISABLED": "The meal scanner is currently unavailable.",
         "SCANNER_RATE_LIMITED": "Too many scanner requests. Wait briefly, then retry the same serving.",
@@ -41,7 +43,7 @@ def error_body(code, request_id=None):
 
 
 def status_for(code):
-    if code in {"AUTHENTICATION_REQUIRED", "INVALID_CREDENTIALS", "STAFF_INACTIVE", "SESSION_IDLE_EXPIRED", "SCANNER_BROWSER_REQUIRED"}:
+    if code in {"AUTHENTICATION_REQUIRED", "INVALID_CREDENTIALS", "STAFF_INACTIVE", "SESSION_IDLE_EXPIRED", "SCANNER_BROWSER_REQUIRED", "SCANNER_ACTIVATION_REQUIRED", "SCANNER_ACTIVATION_INVALID"}:
         return 401
     if code in {"ROLE_REQUIRED", "FORBIDDEN", "CSRF_REJECTED", "ORIGIN_REJECTED"}:
         return 403

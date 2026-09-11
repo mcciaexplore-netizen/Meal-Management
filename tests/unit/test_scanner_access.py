@@ -12,7 +12,8 @@ from test_runtime_storage import environment
 
 class ScannerBrowserTests(unittest.TestCase):
     def setUp(self):
-        self.browser = ScannerBrowser(secrets.token_bytes(32))
+        self.activation = secrets.token_urlsafe(32)
+        self.browser = ScannerBrowser(secrets.token_bytes(32), self.activation.encode())
 
     def test_private_cookie_produces_distinct_scope_and_csrf(self):
         cookie = self.browser.issue()
@@ -48,6 +49,16 @@ class ScannerBrowserTests(unittest.TestCase):
         cookie = self.browser.issue()
         rotated = ScannerBrowser(secrets.token_bytes(32))
         self.assertFalse(rotated.valid(cookie))
+
+    def test_activation_code_is_checked_without_becoming_browser_identity(self):
+        self.browser.verify_activation(self.activation)
+        for value in (None, "", "short", self.activation + "x", "x" * 257):
+            with self.subTest(value_type=type(value).__name__), self.assertRaisesRegex(DomainError, "SCANNER_ACTIVATION_INVALID"):
+                self.browser.verify_activation(value)
+
+    def test_missing_activation_configuration_cannot_enroll(self):
+        with self.assertRaisesRegex(DomainError, "SCANNER_ACTIVATION_REQUIRED"):
+            ScannerBrowser(secrets.token_bytes(32)).verify_activation(self.activation)
 
 
 class ScannerRuntimeTests(unittest.TestCase):
@@ -125,3 +136,10 @@ class ScannerLimiterTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=6) as pool:
             result = list(pool.map(consume, range(6)))
         self.assertEqual(sum(result), 2)
+
+    def test_activation_attempts_have_a_small_per_address_limit(self):
+        for _ in range(5):
+            self.limiter.consume_activation("192.0.2.10")
+        with self.assertRaisesRegex(DomainError, "SCANNER_RATE_LIMITED"):
+            self.limiter.consume_activation("192.0.2.10")
+        self.limiter.consume_activation("192.0.2.11")

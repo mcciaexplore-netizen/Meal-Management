@@ -102,6 +102,7 @@ class RuntimeSettings:
     login_ip_limit: int = 30
     login_window_seconds: int = 900
     scanner_enabled: bool | None = None
+    scanner_activation_secret: bytes | None = field(default=None, repr=False)
     scanner_request_limit: int = 120
     scanner_ip_limit: int = 600
     scanner_window_seconds: int = 60
@@ -222,6 +223,7 @@ class RuntimeSettings:
             login_ip_limit=_integer(env, "LOGIN_IP_ATTEMPT_LIMIT", 30, 1, 1000),
             login_window_seconds=_integer(env, "LOGIN_WINDOW_SECONDS", 900, 60, 86400),
             scanner_enabled=_boolean(env, "SCAN_APP_ENABLED", environment == "development"),
+            scanner_activation_secret=_secret(env, "SCANNER_ACTIVATION_SECRET") if env.get("SCANNER_ACTIVATION_SECRET", "").strip() else None,
             scanner_request_limit=_integer(env, "SCAN_REQUEST_LIMIT", 120, 1, 10000),
             scanner_ip_limit=_integer(env, "SCAN_IP_LIMIT", 600, 1, 10000),
             scanner_window_seconds=_integer(env, "SCAN_WINDOW_SECONDS", 60, 1, 3600),

@@ -23,13 +23,13 @@ SCOPE = "mccias-projects"
 PROJECTS = {"admin": "mccia-meal-admin", "scanner": "mccia-meal-scanner"}
 CONFIRMATION = "CONFIGURE mccias-projects/mccia-meal-admin AND mccias-projects/mccia-meal-scanner PRODUCTION"
 VERCEL_CLI = PROJECT_ROOT / "build/vercel-tools/node_modules/.bin/vercel"
-SENSITIVE_KEYS = frozenset({"DB_PASSWORD", "QR_ENCRYPTION_KEYS", "APP_CSRF_SECRET", "LOGIN_RATE_SECRET", "GMAIL_APP_PASSWORD"})
+SENSITIVE_KEYS = frozenset({"DB_PASSWORD", "QR_ENCRYPTION_KEYS", "APP_CSRF_SECRET", "LOGIN_RATE_SECRET", "GMAIL_APP_PASSWORD", "SCANNER_ACTIVATION_SECRET"})
 BLOB_TYPES = {"BLOB_READ_WRITE_TOKEN": "sensitive", "BLOB_STORE_ID": "plain", "BLOB_WEBHOOK_PUBLIC_KEY": "plain"}
 FORCED_VALUES = {
     "APP_ENV": "production", "COOKIE_SECURE": "true", "DB_NAME": "defaultdb", "DB_USER": "meal_runtime",
     "PHOTO_BACKEND": "vercel_blob", "MAX_PHOTO_BYTES": "4000000", "EMAIL_BACKEND": "gmail",
     "EMAIL_SEND_ENABLED": "false", "EMAIL_AUTO_SEND_ENABLED": "false", "EMAIL_PROCESS_LIMIT": "1",
-    "SCAN_APP_ENABLED": "false", "SCANNER_ALLOWED_CIDRS": "",
+    "SCAN_APP_ENABLED": "false", "SCANNER_ACTIVATION_SECRET": "", "SCANNER_ALLOWED_CIDRS": "",
 }
 
 
@@ -105,7 +105,7 @@ def _payload(rows, role, review):
             _fail("VERCEL_SETTINGS_PAYLOAD_KEYS_MISMATCH")
         if not isinstance(row["value"], str) or len(row["value"]) > 65536 or "\x00" in row["value"]:
             _fail("VERCEL_SETTINGS_INVALID_VALUE")
-        if not row["value"] and key != "SCANNER_ALLOWED_CIDRS":
+        if not row["value"] and key not in {"SCANNER_ALLOWED_CIDRS", "SCANNER_ACTIVATION_SECRET"}:
             _fail("VERCEL_SETTINGS_EMPTY_VALUE")
         if row["type"] != ("sensitive" if key in SENSITIVE_KEYS else "encrypted") or row["target"] != ["production"]:
             _fail("VERCEL_SETTINGS_INVALID_TYPE_OR_TARGET")

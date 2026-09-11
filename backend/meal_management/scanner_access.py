@@ -9,8 +9,9 @@ from .errors import DomainError
 
 
 class ScannerBrowser:
-    def __init__(self, secret):
+    def __init__(self, secret, activation_secret=None):
         self.secret = secret
+        self.activation_secret = activation_secret
 
     def _signature(self, purpose, value):
         return hmac.new(self.secret, (purpose + ":" + value).encode(), hashlib.sha256).hexdigest()
@@ -40,6 +41,16 @@ class ScannerBrowser:
         if not isinstance(supplied, str) or not re.fullmatch(r"[0-9a-f]{64}", supplied) or not hmac.compare_digest(expected, supplied):
             raise DomainError("CSRF_REJECTED")
 
+    def verify_activation(self, supplied):
+        if self.activation_secret is None:
+            raise DomainError("SCANNER_ACTIVATION_REQUIRED")
+        if not isinstance(supplied, str) or not 12 <= len(supplied) <= 256:
+            raise DomainError("SCANNER_ACTIVATION_INVALID")
+        expected = hmac.new(self.secret, self.activation_secret, hashlib.sha256).digest()
+        actual = hmac.new(self.secret, supplied.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, actual):
+            raise DomainError("SCANNER_ACTIVATION_INVALID")
+
 
 class ScannerLimiter:
     def __init__(self, database, settings):
@@ -47,13 +58,7 @@ class ScannerLimiter:
         self.settings = settings
 
     @retry_transaction
-    def consume(self, browser_hash, address):
-        if not isinstance(browser_hash, bytes) or len(browser_hash) != 32:
-            raise DomainError("SCANNER_BROWSER_REQUIRED")
-        targets = [
-            (b"scanner-browser:" + browser_hash, self.settings.scanner_request_limit),
-            (b"scanner-ip:" + str(address).encode(), self.settings.scanner_ip_limit),
-        ]
+    def _consume(self, targets):
         buckets = [
             (hmac.new(self.settings.login_rate_secret, key, hashlib.sha256).digest(), limit)
             for key, limit in targets
@@ -81,3 +86,14 @@ class ScannerLimiter:
                 )
         if denied:
             raise DomainError("SCANNER_RATE_LIMITED")
+
+    def consume(self, browser_hash, address):
+        if not isinstance(browser_hash, bytes) or len(browser_hash) != 32:
+            raise DomainError("SCANNER_BROWSER_REQUIRED")
+        self._consume([
+            (b"scanner-browser:" + browser_hash, self.settings.scanner_request_limit),
+            (b"scanner-ip:" + str(address).encode(), self.settings.scanner_ip_limit),
+        ])
+
+    def consume_activation(self, address):
+        self._consume([(b"scanner-activation:" + str(address).encode(), 5)])

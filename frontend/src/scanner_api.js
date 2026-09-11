@@ -14,6 +14,13 @@ export class ScannerTransport {
 
   get scope() { return this.session?.scope ?? null; }
 
+  acceptSession(session) {
+    if (!/^[0-9a-f]{64}$/.test(session?.scope ?? "") || !/^[0-9a-f]{64}$/.test(session?.csrf_token ?? "")) throw new Error("The scanner could not establish a secure browser session. Please try again.");
+    this.session = { scope: session.scope, csrf_token: session.csrf_token };
+    this.refreshNeeded = false;
+    return { scope: session.scope };
+  }
+
   async response(path, options) {
     let response;
     try { response = await this.fetcher(`/api/scanner${path}`, { credentials: "same-origin", cache: "no-store", ...options }); }
@@ -38,13 +45,19 @@ export class ScannerTransport {
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
       const session = await this.response("/session", { method: "GET", headers: { Accept: "application/json" } });
-      if (!/^[0-9a-f]{64}$/.test(session?.scope ?? "") || !/^[0-9a-f]{64}$/.test(session?.csrf_token ?? "")) throw new Error("The scanner could not establish a secure browser session. Please try again.");
-      this.session = { scope: session.scope, csrf_token: session.csrf_token };
-      this.refreshNeeded = false;
-      return { scope: session.scope };
+      return this.acceptSession(session);
     })();
     try { return await this.connecting; }
     finally { this.connecting = null; }
+  }
+
+  async activate(activationCode) {
+    const session = await this.response("/activate", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ activation_code: activationCode })
+    });
+    return this.acceptSession(session);
   }
 
   async request(path, { method = "GET", body } = {}, expectedScope = this.scope) {

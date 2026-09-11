@@ -27,6 +27,7 @@ from meal_management.runtime import RuntimeSettings
 
 SENSITIVE_KEYS = frozenset({
     "DB_PASSWORD", "QR_ENCRYPTION_KEYS", "APP_CSRF_SECRET", "LOGIN_RATE_SECRET", "GMAIL_APP_PASSWORD",
+    "SCANNER_ACTIVATION_SECRET",
 })
 OMITTED_KEYS = frozenset({"BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID", "BLOB_WEBHOOK_PUBLIC_KEY", "WEBHOOK_SECRET"})
 PROJECTS = {"admin": "mccia-meal-admin", "scanner": "mccia-meal-scanner"}
@@ -156,7 +157,7 @@ def _shared_values(aiven, candidate, local_runtime, aiven_values, certificate, *
         "MAX_PHOTO_BYTES": "4000000", "EMAIL_BACKEND": "gmail",
         "EMAIL_SENDER": local_runtime.email_sender, "GMAIL_APP_PASSWORD": local_runtime.gmail_app_password,
         "EMAIL_SEND_ENABLED": "false", "EMAIL_AUTO_SEND_ENABLED": "false", "EMAIL_PROCESS_LIMIT": "1",
-        "SCAN_APP_ENABLED": "false", "SCANNER_ALLOWED_CIDRS": "", "SCAN_REQUEST_LIMIT": "120",
+        "SCAN_APP_ENABLED": "false", "SCANNER_ACTIVATION_SECRET": "", "SCANNER_ALLOWED_CIDRS": "", "SCAN_REQUEST_LIMIT": "120",
         "SCAN_IP_LIMIT": "600", "SCAN_WINDOW_SECONDS": "60",
     }
     validation = dict(values, BLOB_READ_WRITE_TOKEN="validation-only-not-a-real-blob-credential-00000000")

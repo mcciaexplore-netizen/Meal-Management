@@ -20,6 +20,8 @@ Before pushing the deployment changes, open each project's Settings, then Build 
 
 Preserve the existing Production environment variables and private Blob connections. The administrator must retain `MEAL_APPLICATION=admin`; the scanner must retain `MEAL_APPLICATION=scanner`. Do not copy the local `.env` or `.env.aiven` files into either project folder or Git. Keep real credentials limited to reviewed Production deployments.
 
+The scanner Production project requires a secret `SCANNER_ACTIVATION_SECRET`. A new browser enters the activation code once and receives a secure HttpOnly scanner cookie. The code is never embedded in frontend files or stored in browser storage. An activated browser can move between Wi-Fi and mobile-data networks. `SCANNER_ALLOWED_CIDRS` is retained only for configuration compatibility and no longer controls scanner API access.
+
 The shared-source option allows the build to read `backend`, `frontend`, and `deploy/vercel` from the same checkout. The build command installs the frontend's locked dependencies with npm, then invokes `build_git.py` for the fixed application role. Vercel installs Python dependencies from that application's `pyproject.toml`. These are installation steps inside an explicitly initiated cloud build; the local verification commands below do not install dependencies.
 
 The tracked `app.py` in each root fixes the application role and rejects a conflicting setting. The generated `backend`, `frontend`, `public`, manifest, and build lock stay ignored by Git. Changes to runtime dependencies must also update both application dependency declarations; the build refuses dependency drift.
@@ -46,6 +48,6 @@ The old CLI bundles under `build/vercel` remain private local build outputs. The
 
 ## Hosted verification still required
 
-After both builds reach Ready, verify the application startup and health responses, approved database connectivity, administrator login and permissions, and absence of administrator API routes on the scanner. Keep scanner access and real email sending disabled until their separate configuration and verification steps are complete. The four existing local photos still require their approved private-storage transfer.
+After both builds reach Ready, verify the application startup and health responses, approved database connectivity, administrator login and permissions, scanner-device activation, and absence of administrator API routes on the scanner. Keep real email sending disabled until its separate configuration and verification steps are complete. The four existing local photos still require their approved private-storage transfer.
 
 Verify employee and master QR meals, retry recovery, dashboard visibility, and phone camera behavior using approved test data. Neither local payload checks nor unit/API tests establish that hosted integration is working.

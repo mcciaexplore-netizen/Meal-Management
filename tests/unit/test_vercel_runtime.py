@@ -64,15 +64,15 @@ class VercelConfigurationTests(unittest.TestCase):
             with self.subTest(values=values), self.assertRaisesRegex(ConfigurationError, code):
                 self.configure(**values)
 
-    def test_scanner_requires_explicit_networks_only_when_enabled(self):
+    def test_scanner_requires_device_activation_secret_only_when_enabled(self):
         _, runtime, networks = self.configure("scanner")
         self.assertFalse(runtime.scan_app_enabled)
         self.assertEqual(networks, ())
-        with self.assertRaisesRegex(ConfigurationError, "MISSING_SETTING_SCANNER_ALLOWED_CIDRS"):
+        with self.assertRaisesRegex(ConfigurationError, "MISSING_SETTING_SCANNER_ACTIVATION_SECRET"):
             self.configure("scanner", SCAN_APP_ENABLED="true")
-        _, runtime, networks = self.configure("scanner", SCAN_APP_ENABLED="true", SCANNER_ALLOWED_CIDRS="203.0.113.9/32")
+        _, runtime, networks = self.configure("scanner", SCAN_APP_ENABLED="true", SCANNER_ACTIVATION_SECRET="s" * 32)
         self.assertTrue(runtime.scan_app_enabled)
-        self.assertEqual(str(networks[0]), "203.0.113.9/32")
+        self.assertEqual(networks, ())
 
     def test_network_configuration_rejects_missing_malformed_and_unrestricted_ranges(self):
         for value in (None, "", "0.0.0.0/0", "::/0", "127.0.0.1/32", "203.0.113.7/24", "secret-password", "203.0.113.1/32,", ",".join(["203.0.113.9/32"] * 17)):
@@ -102,13 +102,13 @@ class VercelConfigurationTests(unittest.TestCase):
         with patch("meal_management.vercel_runtime.ssl.create_default_context"), patch("meal_management.database.Database._connect", side_effect=AssertionError("Unexpected connection")):
             for application in ("admin", "scanner"):
                 with self.subTest(application=application):
-                    app = create_vercel_app(application, environment(SCAN_APP_ENABLED="true", SCANNER_ALLOWED_CIDRS="203.0.113.9/32"))
+                    app = create_vercel_app(application, environment(SCAN_APP_ENABLED="true", SCANNER_ACTIVATION_SECRET="s" * 32))
                     self.addCleanup(Path(app.state.services.database.settings.db_ssl_ca).unlink, missing_ok=True)
                     with TestClient(app, base_url="https://" + application + ".example.test", headers=headers) as client:
                         self.assertEqual(client.get("/health/live").status_code, 200)
                         expected = 401 if application == "admin" else 404
                         self.assertEqual(client.get("/api/employees").status_code, expected)
-                        expected = 404 if application == "admin" else 200
+                        expected = 404 if application == "admin" else 401
                         self.assertEqual(client.get("/api/scanner/session").status_code, expected)
 
 
@@ -131,12 +131,11 @@ class VercelRequestTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"address": "203.0.113.9", "scheme": "https"})
 
-    def test_blocks_other_networks_before_application_runs(self):
+    def test_scanner_requests_can_move_between_networks(self):
         with self.client() as client:
             response = client.get("/api/scanner/session", headers={"x-forwarded-proto": "https", "x-vercel-forwarded-for": "198.51.100.1"})
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"]["code"], "SCANNER_NETWORK_NOT_ALLOWED")
-        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["address"], "198.51.100.1")
 
     def test_admin_remains_reachable_outside_scanner_network(self):
         with self.client("admin") as client:
