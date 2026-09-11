@@ -56,6 +56,7 @@ class ReportService:
                 "JOIN scanner_devices d ON d.id = s.scanner_id "
                 "WHERE s.employee_id = %s AND s.kind = 'EMPLOYEE' "
                 "AND m.served_at >= %s AND m.served_at < %s AND m.id > %s "
+                "AND NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id) "
                 "ORDER BY m.id ASC LIMIT %s",
                 (employee_id, start_utc, end_utc, after_id, limit),
             )
@@ -91,7 +92,8 @@ class ReportService:
                 "JOIN staff_accounts w ON w.id = s.waiter_id "
                 "LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id "
                 "LEFT JOIN staff_accounts admin ON admin.id = a.authorized_by "
-                "WHERE m.served_at >= %s AND m.served_at < %s"
+                "WHERE m.served_at >= %s AND m.served_at < %s "
+                "AND NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id)"
                 ") "
                 "SELECT 'TOTAL' AS section, NULL AS group_id, "
                 "NULL AS code, NULL AS name, COUNT(*) AS meal_count, "

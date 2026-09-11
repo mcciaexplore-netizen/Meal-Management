@@ -216,6 +216,11 @@ class EmployeeService:
             )
             if employee is None:
                 raise DomainError("EMPLOYEE_NOT_FOUND")
+            if tx.one(
+                "SELECT employee_id FROM employee_archives WHERE employee_id = %s FOR SHARE",
+                (employee_id,),
+            ) is not None:
+                raise DomainError("EMPLOYEE_REMOVED")
             if not supplied:
                 return
             updated = dict(employee)
@@ -274,6 +279,11 @@ class EmployeeService:
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
             employee = self.qr_service._lock_employee(tx, employee_id)
+            if tx.one(
+                "SELECT employee_id FROM employee_archives WHERE employee_id = %s FOR SHARE",
+                (employee_id,),
+            ) is not None:
+                raise DomainError("EMPLOYEE_REMOVED")
             tx.execute(
                 "UPDATE employees SET is_active = %s, updated_at = %s WHERE id = %s",
                 (is_active, tx.now(), employee_id),
@@ -295,3 +305,53 @@ class EmployeeService:
                 before={"is_active": bool(employee["is_active"])},
                 after={"is_active": is_active},
             )
+
+    def archive(self, context, employee_id, reason):
+        _positive_id(employee_id, "employee_id")
+        reason = required_text(reason, "removal_reason", 255)
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            employee = tx.one(
+                "SELECT id, employee_code, full_name, email, is_active "
+                "FROM employees WHERE id = %s FOR UPDATE",
+                (employee_id,),
+            )
+            if employee is None:
+                raise DomainError("EMPLOYEE_NOT_FOUND")
+            if tx.one(
+                "SELECT employee_id FROM employee_archives WHERE employee_id = %s FOR SHARE",
+                (employee_id,),
+            ) is not None:
+                raise DomainError("EMPLOYEE_ALREADY_REMOVED")
+            archived_at = tx.now()
+            tx.insert(
+                "INSERT INTO employee_archives "
+                "(employee_id, archived_by_staff_id, reason, archived_at) VALUES (%s, %s, %s, %s)",
+                (employee_id, actor.staff_id, reason, archived_at),
+            )
+            tx.execute(
+                "UPDATE employees SET is_active = %s, updated_at = %s WHERE id = %s",
+                (False, archived_at, employee_id),
+            )
+            credential = tx.one(
+                "SELECT id, revoked_at FROM qr_credentials "
+                "WHERE employee_id = %s AND revoked_at IS NULL FOR UPDATE",
+                (employee_id,),
+            )
+            if credential is not None:
+                self.qr_service._revoke(tx, actor.staff_id, credential, reason)
+            audit(
+                tx,
+                actor.staff_id,
+                "EMPLOYEE_REMOVED",
+                "employees",
+                employee_id,
+                before={
+                    "employee_code": employee["employee_code"],
+                    "full_name": employee["full_name"],
+                    "email": employee["email"],
+                    "is_active": bool(employee["is_active"]),
+                },
+                after={"archived_at": archived_at, "reason": reason},
+            )
+        return archived_at

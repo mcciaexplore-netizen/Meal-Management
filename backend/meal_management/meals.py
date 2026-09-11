@@ -532,3 +532,43 @@ class MealService:
                           after={"outcome": "REJECTED", "rejection_code": "PROCESSING_INTERRUPTED"})
                 changed += updated
         return changed
+
+    def void(self, context, meal_id, reason):
+        positive_integer(meal_id, "MEAL_ID")
+        reason = required_text(reason, "removal_reason", 255)
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            meal = tx.one(
+                "SELECT m.id, m.serving_id, m.unit_number, m.served_at, s.kind "
+                "FROM meals m JOIN servings s ON s.id = m.serving_id "
+                "WHERE m.id = %s FOR UPDATE",
+                (meal_id,),
+            )
+            if meal is None:
+                raise DomainError("MEAL_NOT_FOUND")
+            if tx.one(
+                "SELECT meal_id FROM meal_voids WHERE meal_id = %s FOR SHARE",
+                (meal_id,),
+            ) is not None:
+                raise DomainError("MEAL_ALREADY_REMOVED")
+            voided_at = tx.now()
+            tx.insert(
+                "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) "
+                "VALUES (%s, %s, %s, %s)",
+                (meal_id, actor.staff_id, reason, voided_at),
+            )
+            audit(
+                tx,
+                actor.staff_id,
+                "MEAL_REMOVED",
+                "meals",
+                meal_id,
+                before={
+                    "serving_id": meal["serving_id"],
+                    "unit_number": meal["unit_number"],
+                    "served_at": meal["served_at"],
+                    "kind": meal["kind"],
+                },
+                after={"voided_at": voided_at, "reason": reason},
+            )
+        return voided_at

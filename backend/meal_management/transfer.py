@@ -109,7 +109,8 @@ def _backup_plan(manifest, directory):
     try:
         snapshot = manifest["snapshot"]
         ledger = snapshot["migrations"]
-        pending = validate_ledger(load_migrations(directory), ledger)
+        migrations = tuple(item for item in load_migrations(directory) if item.version <= 6)
+        pending = validate_ledger(migrations, ledger)
         versions = [row["version"] for row in ledger]
         if versions not in ([1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6]):
             raise DomainError("TRANSFER_BACKUP_REQUIRES_MIGRATION_FIVE_OR_SIX")
@@ -268,7 +269,8 @@ def _email_before_migration(database, snapshot):
 
 
 def _verify_migration(database, original, upgraded, before, directory, owner):
-    if validate_ledger(load_migrations(directory), upgraded["migrations"]):
+    migrations = tuple(item for item in load_migrations(directory) if item.version <= 6)
+    if validate_ledger(migrations, upgraded["migrations"]):
         raise DomainError("TRANSFER_MIGRATION_VERIFICATION_FAILED")
     if set(upgraded["table_counts"]) != set(original["table_counts"]) | {"employee_email_batches"}:
         raise DomainError("TRANSFER_MIGRATION_VERIFICATION_FAILED")
@@ -396,7 +398,7 @@ def restore_aiven_backup(settings, runtime, backup_path, migration_directory, *,
             before = _email_before_migration(database, original)
             migration_lock = locks.pop()
             tx.one("SELECT RELEASE_LOCK(%s) AS released", (migration_lock,))
-            applied = MigrationRunner(database, migration_directory).apply()
+            applied = MigrationRunner(database, migration_directory, through=6).apply()
             if applied != (6,):
                 raise DomainError("TRANSFER_UNEXPECTED_MIGRATION_RESULT")
             restored = snapshot_database(database, migration_directory)

@@ -30,10 +30,22 @@ class MigrationParserTests(unittest.TestCase):
     def test_repository_migrations_have_stable_sequence(self):
         directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
         migrations = load_migrations(directory)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7])
         self.assertGreater(len(migrations[0].statements), 20)
         self.assertIn("scan_bound_at", "\n".join(migrations[1].statements))
         self.assertIn("last_seen_at", "\n".join(migrations[1].statements))
+
+    def test_record_removal_is_append_only_and_matches_fresh_schema(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[6]
+        source = "\n".join(migration.statements)
+        snapshot = tuple(sql_statements((directory.parent / "schema.sql").read_text()))
+        self.assertEqual(migration.name, "admin_record_removal")
+        self.assertIn("CREATE TABLE employee_archives", source)
+        self.assertIn("CREATE TABLE meal_voids", source)
+        self.assertNotIn("DELETE FROM", source)
+        for statement in migration.statements[1:]:
+            self.assertIn(statement, snapshot)
 
     def test_rejects_migration_gap(self):
         with tempfile.TemporaryDirectory() as root:

@@ -152,6 +152,13 @@ test("dashboard meal reports show the four visitor fields with HTML escaping", (
   assert.doesNotMatch(html, /Visitor <Name>/);
 });
 
+test("administrator meal history can render a removal control", () => {
+  const html = mealTable([{ id: 19, kind: "EMPLOYEE", employee_name: "Asha", meal_type_name: "Lunch", waiter_name: "Scanner", location_name: "Office", served_at: "2026-09-09T12:00:00Z" }], true);
+  assert.match(html, /data-action="meal-remove"/);
+  assert.match(html, /data-id="19"/);
+  assert.match(html, />Remove</);
+});
+
 test("missing master details remain unconfirmed instead of permitting a new serving", async () => {
   const flow = new ScanAppOperation(() => requestId);
   await flow.read("master-token", async () => ({ approved: false, code: "VISITOR_DETAILS_REQUIRED", request_id: requestId }));

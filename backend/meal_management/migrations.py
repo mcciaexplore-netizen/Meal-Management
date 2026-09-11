@@ -112,9 +112,10 @@ def schema_fingerprint(tx):
 
 
 class MigrationRunner:
-    def __init__(self, database, directory):
+    def __init__(self, database, directory, through=None):
         self.database = database
-        self.migrations = load_migrations(directory)
+        migrations = load_migrations(directory)
+        self.migrations = migrations if through is None else tuple(item for item in migrations if item.version <= through)
 
     def _ledger(self, tx):
         return tx.all(

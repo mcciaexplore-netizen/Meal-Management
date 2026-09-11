@@ -16,7 +16,7 @@ def database_readiness(database):
         with database.transaction() as tx:
             version = tx.one("SELECT VERSION() AS version")["version"]
             applied = tx.all("SELECT version FROM schema_migrations WHERE status = 'APPLIED'")
-        if not version.startswith("8.4.") or not {1, 2, 3, 4, 5, 6}.issubset({row["version"] for row in applied}):
+        if not version.startswith("8.4.") or not {1, 2, 3, 4, 5, 6, 7}.issubset({row["version"] for row in applied}):
             raise DomainError("DATABASE_NOT_READY")
     except Exception:
         raise DomainError("DATABASE_NOT_READY") from None

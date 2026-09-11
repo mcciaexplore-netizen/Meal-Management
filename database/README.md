@@ -2,6 +2,8 @@
 
 Migration `006_employee_email_approval.sql` adds atomic bulk-import request identity and immutable administrator email approvals. It preserves historical messages and holds existing queued messages as legacy pending approvals. Single registration creates DRAFT emails; bulk import creates PENDING_APPROVAL emails. Read [the email workflow](../docs/email-delivery-workflow.md) and approve the target before applying it.
 
+Migration `007_admin_record_removal.sql` adds append-only employee archives and meal voids. Administrator removal requires a reason and actor attribution. Removed employees are hidden and cannot be reactivated; their QR is revoked. Voided employee and visitor meals are excluded from normal history and totals while serving, scan, and audit evidence remains intact. Apply this migration before deploying code that uses removal controls.
+
 `schema.sql` defines a fresh MySQL 8.4 schema in the database selected by the operator. It does not create, select, reset, or migrate a database. Applying it requires separate authorization. Do not apply it to an existing populated database. No existing data is deleted or transformed by the application on startup.
 
 The schema uses InnoDB, `utf8mb4`, foreign keys with restrictive deletion, and UTC `DATETIME(6)` values. Every application database connection sets its session time zone to `+00:00`. External datetime inputs must include a UTC offset and are converted to UTC before storage.

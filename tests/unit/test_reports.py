@@ -37,6 +37,7 @@ class ReportTests(unittest.TestCase):
             (12, datetime(2026, 9, 9), datetime(2026, 9, 10), 0, 100),
         )
         self.assertIn("m.served_at >= %s AND m.served_at < %s", sql)
+        self.assertIn("NOT EXISTS (SELECT 1 FROM meal_voids", sql)
         self.assertNotIn("2026-09-09", sql)
         self.require_actor.assert_called_once_with(
             self.tx, self.context, {"ADMIN", "AUDITOR"}
@@ -211,6 +212,7 @@ class ReportTests(unittest.TestCase):
         sql, params = self.tx.all.call_args.args
         self.assertIn("WITH filtered_meals AS", sql)
         self.assertIn("COUNT(DISTINCT serving_id)", sql)
+        self.assertIn("NOT EXISTS (SELECT 1 FROM meal_voids", sql)
         self.assertEqual(params, (datetime(2026, 9, 9), datetime(2026, 9, 10)))
 
 

@@ -155,6 +155,7 @@ class ApiHarness:
         )
         self.staff = FakeStaff()
         self.meals = FakeMealStore(self.staff)
+        self.meals.void = Mock()
         self.queries = Mock()
         self.queries.list_employees.return_value = {"items": [], "next_cursor": None}
         self.queries.employee.return_value = {
@@ -238,6 +239,12 @@ class ApiHarness:
 
     def post(self, path, **kwargs):
         return self.client.post(path, headers=self.headers(), **kwargs)
+
+    def patch(self, path, **kwargs):
+        return self.client.patch(path, headers=self.headers(), **kwargs)
+
+    def delete(self, path, **kwargs):
+        return self.client.request("DELETE", path, headers=self.headers(), **kwargs)
 
     def scan_body(self, **changes):
         body = {
@@ -457,11 +464,37 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.harness.services.employees.update.call_args.kwargs, {"full_name": "Updated name"})
 
-    def test_employee_deactivation_uses_soft_status_change(self):
-        response = self.client.delete("/api/employees/7", headers=self.harness.headers())
+    def test_employee_deactivation_uses_status_endpoint(self):
+        response = self.harness.patch("/api/employees/7/active", json={"is_active": False})
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["is_active"])
         self.assertEqual(self.harness.services.employees.set_active.call_args.args[1:], (7, False))
+
+    def test_employee_removal_requires_reason_and_uses_authenticated_service(self):
+        self.assert_error(self.harness.delete("/api/employees/7", json={"reason": ""}), 422, "INVALID_INPUT")
+        response = self.harness.delete("/api/employees/7", json={"reason": "Duplicate employee record"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"employee_id": 7, "removed": True})
+        context, employee_id, reason = self.harness.services.employees.archive.call_args.args
+        self.assertEqual(self.harness.staff.current(context)["staff_id"], 1)
+        self.assertEqual((employee_id, reason), (7, "Duplicate employee record"))
+
+    def test_meal_removal_requires_admin_and_reason(self):
+        self.assert_error(self.harness.delete("/api/meals/12", json={"reason": ""}), 422, "INVALID_INPUT")
+        response = self.harness.delete("/api/meals/12", json={"reason": "Recorded by mistake"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"meal_id": 12, "removed": True})
+        context, meal_id, reason = self.harness.services.meals.void.call_args.args
+        self.assertEqual(self.harness.staff.current(context)["staff_id"], 1)
+        self.assertEqual((meal_id, reason), (12, "Recorded by mistake"))
+
+    def test_waiter_cannot_remove_employees_or_meals(self):
+        self.harness.login("waiter")
+        for path in ("/api/employees/7", "/api/meals/12"):
+            with self.subTest(path=path):
+                self.assert_error(self.harness.delete(path, json={"reason": "Unauthorized change"}), 403, "ROLE_REQUIRED")
+        self.harness.services.employees.archive.assert_not_called()
+        self.harness.services.meals.void.assert_not_called()
 
     def test_employee_qr_is_private_and_scoped_to_employee_lookup(self):
         response = self.client.get("/api/employees/7/qr")
@@ -896,7 +929,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_email_approval_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

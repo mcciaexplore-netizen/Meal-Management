@@ -90,6 +90,10 @@ class RevokeInput(InputModel):
     reason: Annotated[str, Field(min_length=1, max_length=255)]
 
 
+class RemovalInput(InputModel):
+    reason: Annotated[str, Field(min_length=1, max_length=255)]
+
+
 class AuthorizationInput(InputModel):
     request_id: UUID
     master_qr_id: Identifier

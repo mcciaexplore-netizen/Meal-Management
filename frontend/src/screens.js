@@ -98,7 +98,7 @@ export async function employeeDetail(id, context, onChange) {
     const emailSettings = emailDeliverySettings(deliverySettings);
     const qr = qrResponse.qr;
     const noQr = qrResponse.error?.status === 404 || ["QR_NOT_FOUND", "ACTIVE_QR_NOT_FOUND"].includes(qrResponse.error?.code);
-    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
+    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div><div class="detail-section danger-zone"><h3>Remove employee</h3><p class="muted small">Removes the employee from administration, revokes their QR, and preserves historical audit records.</p><button class="button danger-outline" id="employee-remove">Remove employee</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
     formAction(dialog.querySelector("#employee-edit"), async data => {
       const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
       await api(`/employees/${id}`, { method: "PATCH", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), department_id: departmentId } });
@@ -113,10 +113,16 @@ export async function employeeDetail(id, context, onChange) {
       await employeeDetail(id, context, onChange);
     });
     dialog.querySelector("#employee-status").onclick = () => confirmAction(employee.is_active ? "Deactivate employee" : "Reactivate employee", employee.is_active ? `Deactivate ${employee.full_name}? They will no longer be eligible for employee meals.` : `Reactivate ${employee.full_name}?`, async () => {
-      await api(`/employees/${id}${employee.is_active ? "" : "/activate"}`, { method: employee.is_active ? "DELETE" : "POST" });
+      await api(`/employees/${id}/active`, { method: "PATCH", body: { is_active: !employee.is_active } });
       notify(employee.is_active ? "Employee deactivated." : "Employee reactivated.");
       await onChange();
       await employeeDetail(id, context, onChange);
+    });
+    dialog.querySelector("#employee-remove").onclick = () => removalDialog("Remove employee", `Remove ${employee.full_name}? Their QR will be revoked and they will disappear from the employee list.`, "Remove employee", async reason => {
+      await api(`/employees/${id}`, { method: "DELETE", body: { reason } });
+      closeModal();
+      notify("Employee removed.");
+      await onChange();
     });
     dialog.querySelector("#resend-qr")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;
@@ -154,6 +160,11 @@ function expiryDialog(title, callback) {
 
 function revokeDialog(callback) {
   const dialog = modal("Revoke QR", `<p class="muted">This credential will no longer approve meals. Revocation cannot be undone.</p><form>${field("Reason", "reason", "", "text", 'required maxlength="255"')}${formEnd("Revoke QR")}</form>`);
+  formAction(dialog.querySelector("form"), async data => callback(data.get("reason")));
+}
+
+function removalDialog(title, description, label, callback) {
+  const dialog = modal(title, `<p class="muted">${escape(description)}</p><form>${field("Reason", "reason", "", "text", 'required maxlength="255"')}${formEnd(label)}</form>`);
   formAction(dialog.querySelector("form"), async data => callback(data.get("reason")));
 }
 
@@ -221,9 +232,11 @@ function approvalTable(rows) {
   return table(["Visitor", "Meals", "Waiter", "Expires"], rows.map(row => `<tr><td><strong>${escape(row.visitor_name)}</strong><span class="cell-subtitle">${escape(row.visitor_organization ?? "")}</span></td><td>${escape(row.quantity)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(timestamp(row.expires_at))}</td></tr>`), "Visitor authorizations");
 }
 
-export function mealTable(rows) {
+export function mealTable(rows, removable = false) {
   if (!rows.length) return empty("No meals in this period", "Try a different date range or record a serving.", "plate");
-  return table(["Meal", "Employee / visitor", "Company", "Email", "Phone", "Category", "Service", "Waiter", "Location", "Date & time"], rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.visitor_email ?? "—")}</td><td>${escape(row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${escape(row.meal_type_name ?? row.meal_type_code ?? row.meal_type_id)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td></tr>`), "Meal records");
+  const headers = ["Meal", "Employee / visitor", "Company", "Email", "Phone", "Category", "Service", "Waiter", "Location", "Date & time"];
+  if (removable) headers.push("");
+  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.visitor_email ?? "—")}</td><td>${escape(row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${escape(row.meal_type_name ?? row.meal_type_code ?? row.meal_type_id)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td>${removable ? `<td>${action("meal-remove", row.meal_id ?? row.id, "Remove", "small-button danger-outline")}</td>` : ""}</tr>`), "Meal records");
 }
 
 function scanTable(rows) {
@@ -252,7 +265,13 @@ export async function reports(target, context) {
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
     if (totals) target.querySelector("#report-totals").innerHTML = stats(totals.totals);
-    target.querySelector("#report-results").innerHTML = view === "meals" ? mealTable(rows) : scanTable(rows);
+    target.querySelector("#report-results").innerHTML = view === "meals" ? mealTable(rows, true) : scanTable(rows);
+    target.querySelectorAll('[data-action="meal-remove"]').forEach(button => button.onclick = () => removalDialog("Remove meal record", `Remove meal ${button.dataset.id} from history and totals?`, "Remove meal", async reason => {
+      await api(`/meals/${positive(button.dataset.id, "meal ID")}`, { method: "DELETE", body: { reason } });
+      closeModal();
+      notify("Meal removed from history and totals.");
+      await load();
+    }));
     target.querySelector("#report-pagination").innerHTML = `<span>${rows.length} records shown</span>${cursor ? '<button class="button" id="more-reports">Load more</button>' : ""}`;
     target.querySelector("#more-reports")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
   }

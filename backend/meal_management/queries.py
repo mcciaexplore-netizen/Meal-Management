@@ -57,7 +57,7 @@ class QueryService:
 
     def list_employees(self, context, limit=50, after_id=0, q=None, active=None):
         _pagination(limit, after_id)
-        filters = ["e.id > %s"]
+        filters = ["e.id > %s", "NOT EXISTS (SELECT 1 FROM employee_archives x WHERE x.employee_id = e.id)"]
         params = [after_id]
         if q is not None:
             term = required_text(q, "SEARCH", 150)
@@ -88,7 +88,8 @@ class QueryService:
             row = tx.one(
                 "SELECT e.id, e.employee_code, e.full_name, e.email, e.department_id, "
                 "d.name AS department_name, e.is_active, e.selfie_object_key, e.created_at, e.updated_at "
-                "FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.id = %s",
+                "FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.id = %s "
+                "AND NOT EXISTS (SELECT 1 FROM employee_archives x WHERE x.employee_id = e.id)",
                 (employee_id,),
             )
             if row is None:
@@ -99,7 +100,11 @@ class QueryService:
         positive_integer(employee_id, "EMPLOYEE_ID")
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
-            if tx.one("SELECT id FROM employees WHERE id = %s", (employee_id,)) is None:
+            if tx.one(
+                "SELECT e.id FROM employees e WHERE e.id = %s "
+                "AND NOT EXISTS (SELECT 1 FROM employee_archives x WHERE x.employee_id = e.id)",
+                (employee_id,),
+            ) is None:
                 raise DomainError("EMPLOYEE_NOT_FOUND")
             row = tx.one(
                 "SELECT id, id AS qr_id, kind, employee_id, issued_by, issued_at, expires_at, "
@@ -169,7 +174,10 @@ class QueryService:
     def meal_history(self, context, start, end, limit=50, after_id=0, employee_id=None):
         _pagination(limit, after_id)
         start_utc, end_utc = _date_range(start, end)
-        filters = ["m.served_at >= %s", "m.served_at < %s", "m.id > %s"]
+        filters = [
+            "m.served_at >= %s", "m.served_at < %s", "m.id > %s",
+            "NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id)",
+        ]
         params = [start_utc, end_utc, after_id]
         if employee_id is not None:
             filters.append("s.employee_id = %s")

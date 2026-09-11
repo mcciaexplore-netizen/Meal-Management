@@ -33,6 +33,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIs(result["items"][0]["is_active"], True)
         sql, params = self.tx.all.call_args.args
         self.assertIn("e.id > %s", sql)
+        self.assertIn("NOT EXISTS (SELECT 1 FROM employee_archives", sql)
         self.assertIn("ORDER BY e.id LIMIT %s", sql)
         self.assertEqual(params, [10, 3])
 
@@ -119,6 +120,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("FROM meals m", sql)
         self.assertIn("m.served_at >= %s", sql)
         self.assertIn("m.served_at < %s", sql)
+        self.assertIn("NOT EXISTS (SELECT 1 FROM meal_voids", sql)
         self.assertEqual(params, [self.now, self.now + timedelta(days=1), 0, 17, 51])
 
     def test_reports_normalize_non_utc_offsets(self):

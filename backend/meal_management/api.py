@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeesInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeesInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -264,9 +264,14 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return app.state.queries.employee(ctx, employee_id)
 
     @app.delete("/api/employees/{employee_id}")
-    def employee_deactivate(employee_id: PathIdentifier, ctx=Depends(admin)):
-        services.employees.set_active(ctx, employee_id, False)
-        return {"employee_id": employee_id, "is_active": False}
+    def employee_remove(employee_id: PathIdentifier, body: RemovalInput, ctx=Depends(admin)):
+        services.employees.archive(ctx, employee_id, body.reason)
+        return {"employee_id": employee_id, "removed": True}
+
+    @app.patch("/api/employees/{employee_id}/active")
+    def employee_active(employee_id: PathIdentifier, body: ActiveInput, ctx=Depends(admin)):
+        services.employees.set_active(ctx, employee_id, body.is_active)
+        return {"employee_id": employee_id, "is_active": body.is_active}
 
     @app.post("/api/employees/{employee_id}/activate")
     def employee_activate(employee_id: PathIdentifier, ctx=Depends(admin)):
@@ -424,6 +429,11 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def meal_history(start: datetime, end: datetime, limit: Limit = 50, after_id: Cursor = 0,
                      employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
         return app.state.queries.meal_history(ctx, start, end, limit=limit, after_id=after_id, employee_id=employee_id)
+
+    @app.delete("/api/meals/{meal_id}")
+    def meal_remove(meal_id: PathIdentifier, body: RemovalInput, ctx=Depends(admin)):
+        services.meals.void(ctx, meal_id, body.reason)
+        return {"meal_id": meal_id, "removed": True}
 
     @app.get("/api/reports/totals")
     def totals(start: datetime, end: datetime, ctx=Depends(admin)):
