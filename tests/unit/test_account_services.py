@@ -249,6 +249,41 @@ class EmployeeQrServiceTests(unittest.TestCase):
         self.assertEqual(email_params[2], b"encrypted-value")
         self.assertNotIn(token, repr(self.tx.insert.call_args_list))
 
+    def test_registration_stores_normalized_company_and_phone_contact_details(self):
+        self.tx.one.return_value = {"id": 3, "is_active": True}
+        self.tx.insert.side_effect = [41, 72, 93]
+        with (
+            self._patch_actor("employees"),
+            patch("meal_management.qr.audit"),
+            patch("meal_management.employees.audit"),
+        ):
+            self.employees.register(
+                self.context,
+                "EMP-1",
+                "Asha Rao",
+                "asha@example.com",
+                3,
+                company_name="  Example Company  ",
+                phone="  +1 202 555 0107  ",
+            )
+        sql, params = self.tx.insert.call_args_list[0].args
+        self.assertIn("company_name, phone", sql)
+        self.assertEqual(params[3:5], ("Example Company", "+1 202 555 0107"))
+
+    def test_registration_rejects_invalid_employee_phone_before_database_access(self):
+        with self.assertRaisesRegex(DomainError, "INVALID_EMPLOYEE_PHONE"):
+            self.employees.register(
+                self.context,
+                "EMP-1",
+                "Asha Rao",
+                "asha@example.com",
+                3,
+                company_name="Example Company",
+                phone="invalid phone",
+            )
+        self.tx.one.assert_not_called()
+        self.tx.insert.assert_not_called()
+
     def test_registration_returns_no_result_when_commit_fails(self):
         self.tx.one.return_value = {"id": 3, "is_active": True}
         self.tx.insert.side_effect = [41, 72, 93]
@@ -344,6 +379,29 @@ class EmployeeQrServiceTests(unittest.TestCase):
                     with self.assertRaises(DomainError) as error:
                         self.qr.issue_master(self.context, expires_at=expiry)
                     self.assertEqual(error.exception.code, code)
+        self.tx.insert.assert_not_called()
+
+    def test_master_request_stores_normalized_group_details_and_meal_limit_atomically(self):
+        self.tx.insert.return_value = 72
+        with self._patch_actor("qr"), patch("meal_management.qr.audit"):
+            issued = self.qr.issue_master(
+                self.context, company_name=" Example Company ", contact_name=" Ravi Patel ",
+                email=" RAVI@EXAMPLE.TEST ", phone=" +91 98765 43210 ", meal_limit=5,
+            )
+        self.assertEqual(issued.qr_id, 72)
+        allocation = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("INSERT INTO master_qr_allocations"))
+        self.assertEqual(allocation.args[1], (72, "Example Company", "Ravi Patel", "ravi@example.test", "+91 98765 43210", 5, 7))
+        self.assertTrue(self.db.committed)
+
+    def test_master_request_rejects_incomplete_details_or_invalid_allowance_before_writing(self):
+        for values in (
+            {"company_name": "", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5},
+            {"company_name": "Example", "contact_name": "Ravi", "email": "invalid", "phone": "+919876543210", "meal_limit": 5},
+            {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 0},
+        ):
+            with self.subTest(values=values):
+                with self.assertRaises(DomainError):
+                    self.qr.issue_master(self.context, **values)
         self.tx.insert.assert_not_called()
 
     def test_tampered_encrypted_token_cannot_be_resent(self):

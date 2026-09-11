@@ -1,6 +1,6 @@
 import { randomIdentifier } from "./core.js";
 
-export const employeeCsvHeaders = ["employee_code", "full_name", "email", "department_id"];
+export const employeeCsvHeaders = ["employee_code", "full_name", "email", "company_name", "phone", "department_id"];
 const maximumBytes = 65536;
 const requestPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const imports = new Map();
@@ -10,6 +10,8 @@ const rejectedImports = new Map([
   ["INVALID_EMAIL", "Correct the email addresses in the CSV."],
   ["INVALID_EMPLOYEE_CODE", "Correct the employee codes in the CSV."],
   ["INVALID_FULL_NAME", "Correct the employee names in the CSV."],
+  ["INVALID_COMPANY_NAME", "Correct the company names in the CSV."],
+  ["INVALID_EMPLOYEE_PHONE", "Correct the phone numbers in the CSV."],
   ["INVALID_DEPARTMENT_ID", "Correct the department IDs in the CSV."],
   ["INVALID_EMPLOYEE_BATCH", "Correct the employee batch before importing."],
   ["INVALID_REQUEST_ID", "Preview the CSV again to create a valid import request."],
@@ -62,18 +64,21 @@ export function parseEmployeeCsv(text, departments, { recovering = false } = {})
     const fail = message => { throw new Error(`Row ${index + 2}: ${message}`); };
     if (values.length !== headers.length) fail("the number of columns does not match the headers.");
     const fields = Object.fromEntries(headers.map((name, position) => [name, values[position]]));
-    for (const [name, maximum] of [["employee_code", 32], ["full_name", 150]]) {
+    for (const [name, maximum] of [["employee_code", 32], ["full_name", 150], ["company_name", 150]]) {
       if (!fields[name] || [...fields[name]].length > maximum || /[\u0000-\u001f\u007f]/.test(fields[name])) fail(`provide a valid ${name} of at most ${maximum} characters.`);
     }
     const email = fields.email.toLowerCase();
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || /[\u0000-\u001f\u007f]/.test(email)) fail("provide a valid email address.");
+    const phone = fields.phone;
+    const phoneDigits = Array.from(phone).filter(character => /[0-9]/.test(character)).length;
+    if (phone.length > 32 || !/^\+?[0-9 ()\-.]+$/.test(phone) || phoneDigits < 7 || phoneDigits > 15) fail("provide a valid phone number containing 7 to 15 digits.");
     if (!/^[1-9]\d*$/.test(fields.department_id)) fail("department_id must be an active department ID.");
     const departmentId = Number(fields.department_id);
     if (!Number.isSafeInteger(departmentId) || !recovering && !activeDepartments.has(departmentId)) fail("department_id must match an active department in the reference list.");
     const code = fields.employee_code.normalize("NFKC").toLowerCase();
     if (codes.has(code)) fail("employee_code is repeated in this import.");
     codes.add(code);
-    return { employee_code: fields.employee_code, full_name: fields.full_name, email, department_id: departmentId };
+    return { employee_code: fields.employee_code, full_name: fields.full_name, email, company_name: fields.company_name, phone, department_id: departmentId };
   });
 }
 

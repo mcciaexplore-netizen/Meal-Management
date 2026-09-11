@@ -30,7 +30,7 @@ class MigrationParserTests(unittest.TestCase):
     def test_repository_migrations_have_stable_sequence(self):
         directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
         migrations = load_migrations(directory)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9])
         self.assertGreater(len(migrations[0].statements), 20)
         self.assertIn("scan_bound_at", "\n".join(migrations[1].statements))
         self.assertIn("last_seen_at", "\n".join(migrations[1].statements))
@@ -46,6 +46,33 @@ class MigrationParserTests(unittest.TestCase):
         self.assertNotIn("DELETE FROM", source)
         for statement in migration.statements[1:]:
             self.assertIn(statement, snapshot)
+
+    def test_employee_contact_migration_preserves_existing_employees(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[7]
+        source = "\n".join(migration.statements)
+        schema = (directory.parent / "schema.sql").read_text()
+        self.assertEqual(migration.name, "employee_contact_details")
+        self.assertIn("ADD COLUMN company_name VARCHAR(150) NULL", source)
+        self.assertIn("ADD COLUMN phone VARCHAR(32) NULL", source)
+        self.assertNotIn("UPDATE employees", source)
+        self.assertNotIn("DELETE FROM", source)
+        self.assertIn("company_name VARCHAR(150) NULL", schema)
+        self.assertIn("phone VARCHAR(32) NULL", schema)
+
+    def test_master_allowance_migration_enforces_kind_usage_and_exhaustion(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[8]
+        source = "\n".join(migration.statements)
+        schema = (directory.parent / "schema.sql").read_text()
+        self.assertEqual(migration.name, "master_qr_meal_allowances")
+        self.assertIn("CREATE TABLE master_qr_allocations", source)
+        self.assertIn("FOREIGN KEY (qr_id, kind) REFERENCES qr_credentials (id, kind)", source)
+        self.assertIn("meal_limit > 0 AND meals_used <= meal_limit", source)
+        self.assertIn("meals_used = meal_limit AND exhausted_at IS NOT NULL", source)
+        self.assertNotIn("DELETE FROM", source)
+        for statement in migration.statements[1:]:
+            self.assertIn(statement, tuple(sql_statements(schema)))
 
     def test_rejects_migration_gap(self):
         with tempfile.TemporaryDirectory() as root:

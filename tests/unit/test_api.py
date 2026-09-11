@@ -161,7 +161,8 @@ class ApiHarness:
         self.queries.list_employees.return_value = {"items": [], "next_cursor": None}
         self.queries.employee.return_value = {
             "id": 7, "employee_code": "EMP-007", "full_name": "Asha Rao",
-            "email": "asha@example.com", "department_id": 1,
+            "email": "asha@example.com", "company_name": "Example Company",
+            "phone": "+1 202 555 0107", "department_id": 1,
             "is_active": True, "selfie_object_key": "a" * 64 + ".png",
         }
         self.queries.current_employee_qr.return_value = {"id": 101, "kind": "EMPLOYEE", "employee_id": 7}
@@ -413,7 +414,7 @@ class PermissionApiTests(ApiTestCase):
     def test_waiter_cannot_register_staff_or_employees(self):
         self.harness.login("waiter")
         for path, body in (
-            ("/api/employees", {"employee_code": "EMP-9", "full_name": "New employee", "email": "new@example.com", "department_id": 1}),
+            ("/api/employees", {"employee_code": "EMP-9", "full_name": "New employee", "email": "new@example.com", "company_name": "Example Company", "phone": "+1 202 555 0109", "department_id": 1}),
             ("/api/staff", {"display_name": "New admin", "email": "new@example.com", "password": secrets.token_urlsafe(32), "roles": ["ADMIN"]}),
         ):
             with self.subTest(path=path):
@@ -453,12 +454,14 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.harness.login()
 
     def test_registration_reuses_service_and_returns_identifiers_only(self):
-        body = {"employee_code": "EMP-007", "full_name": "Asha Rao", "email": "asha@example.com", "department_id": 1}
+        body = {"employee_code": "EMP-007", "full_name": "Asha Rao", "email": "asha@example.com", "company_name": "Example Company", "phone": "+1 202 555 0107", "department_id": 1}
         response = self.harness.post("/api/employees", json=body)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json(), {"employee_id": 7, "qr_id": 101, "email_id": 1})
         context = self.harness.services.employees.register.call_args.args[0]
         self.assertEqual(self.harness.staff.current(context)["staff_id"], 1)
+        self.assertEqual(self.harness.services.employees.register.call_args.kwargs["company_name"], "Example Company")
+        self.assertEqual(self.harness.services.employees.register.call_args.kwargs["phone"], "+1 202 555 0107")
         self.assertNotIn("token", response.text)
 
     def test_employee_update_preserves_omitted_fields(self):
@@ -673,10 +676,22 @@ class MasterAuthorizationApiTests(ApiTestCase):
         return {"request_id": str(uuid4()), "master_qr_id": 201, "waiter_id": 2, "scanner_code": "EAST-01", "meal_type_id": 1, "quantity": 3, "visitor_name": "Ravi Patel"}
 
     def test_master_creation_returns_master_category(self):
-        response = self.harness.post("/api/master-qrs", json={})
+        body = {
+            "company_name": "Example Visitors", "contact_name": "Ravi Patel",
+            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5,
+        }
+        response = self.harness.post("/api/master-qrs", json=body)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["kind"], "MASTER")
         self.assertNotIn(self.harness.meals.master_token, response.text)
+        self.harness.services.qr.issue_master.assert_called_once()
+        self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["meal_limit"], 5)
+
+    def test_master_creation_requires_group_details_and_rejects_a_third_category(self):
+        valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5}
+        for body in ({}, {**valid, "meal_limit": 0}, {**valid, "kind": "GUEST"}, {**valid, "phone": "123"}):
+            with self.subTest(body=body):
+                self.assert_error(self.harness.post("/api/master-qrs", json=body), 422, "INVALID_INPUT")
 
     def test_employee_qr_cannot_be_retrieved_through_master_route(self):
         self.assert_error(self.client.get("/api/master-qrs/101"), 400, "MASTER_QR_REQUIRED")
@@ -855,7 +870,7 @@ class ValidationAndReportApiTests(ApiTestCase):
     def test_strict_employee_ids_reject_boolean_string_zero_and_overflow(self):
         for value in (True, "1", 0, -1, 2**64):
             with self.subTest(value=value):
-                body = {"employee_code": "EMP-007", "full_name": "Asha", "email": "asha@example.com", "department_id": value}
+                body = {"employee_code": "EMP-007", "full_name": "Asha", "email": "asha@example.com", "company_name": "Example Company", "phone": "+1 202 555 0107", "department_id": value}
                 self.assert_error(self.harness.post("/api/employees", json=body), 422, "INVALID_INPUT")
         self.harness.services.employees.register.assert_not_called()
 
@@ -863,9 +878,21 @@ class ValidationAndReportApiTests(ApiTestCase):
         self.assert_error(self.harness.post("/api/master-qrs", json={"expires_at": "2027-01-01T12:00:00"}), 422, "INVALID_INPUT")
 
     def test_required_fields_and_unknown_fields_are_rejected(self):
-        for body in ({}, {"full_name": "Asha"}, {"employee_code": "E1", "full_name": "Asha", "email": "a@example.com", "department_id": 1, "is_admin": True}):
+        for body in ({}, {"full_name": "Asha"}, {"employee_code": "E1", "full_name": "Asha", "email": "a@example.com", "company_name": "Example Company", "phone": "+1 202 555 0107", "department_id": 1, "is_admin": True}):
             with self.subTest(body=body):
                 self.assert_error(self.harness.post("/api/employees", json=body), 422, "INVALID_INPUT")
+
+    def test_employee_company_and_phone_are_required_and_phone_is_validated(self):
+        valid = {"employee_code": "E1", "full_name": "Asha", "email": "a@example.com", "company_name": "Example Company", "phone": "+1 202 555 0107", "department_id": 1}
+        for body in (
+            {name: value for name, value in valid.items() if name != "company_name"},
+            {name: value for name, value in valid.items() if name != "phone"},
+            {**valid, "phone": "not-a-phone"},
+            {**valid, "phone": "123"},
+        ):
+            with self.subTest(body=body):
+                self.assert_error(self.harness.post("/api/employees", json=body), 422, "INVALID_INPUT")
+        self.harness.services.employees.register.assert_not_called()
 
     def test_pagination_values_are_validated(self):
         for query in ("limit=0", "limit=1001", "limit=-1", "after_id=-1", "limit=abc"):
@@ -966,8 +993,8 @@ class HealthApiTests(ApiTestCase):
         self.assert_error(response, 503, "DATABASE_NOT_READY")
         self.assertNotIn("hidden", response.text)
 
-    def test_readiness_requires_email_approval_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 200)):
+    def test_readiness_requires_employee_contact_migration(self):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

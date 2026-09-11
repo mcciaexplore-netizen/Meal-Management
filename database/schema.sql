@@ -15,6 +15,8 @@ CREATE TABLE employees (
     employee_code VARCHAR(32) NOT NULL,
     full_name VARCHAR(150) NOT NULL,
     email VARCHAR(254) NOT NULL,
+    company_name VARCHAR(150) NULL,
+    phone VARCHAR(32) NULL,
     department_id BIGINT UNSIGNED NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     selfie_object_key VARCHAR(512) NULL,
@@ -25,6 +27,7 @@ CREATE TABLE employees (
     UNIQUE KEY uq_employees_code (employee_code),
     KEY ix_employees_department_active (department_id, is_active),
     KEY ix_employees_email (email),
+    KEY ix_employees_company_name (company_name, full_name),
     CONSTRAINT fk_employees_department
         FOREIGN KEY (department_id) REFERENCES departments (id)
         ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -36,6 +39,12 @@ CREATE TABLE employees (
     CONSTRAINT chk_employee_active CHECK (is_active IN (0, 1)),
     CONSTRAINT chk_employee_selfie CHECK (
         selfie_object_key IS NULL OR CHAR_LENGTH(TRIM(selfie_object_key)) > 0
+    ),
+    CONSTRAINT chk_employee_company CHECK (
+        company_name IS NULL OR CHAR_LENGTH(TRIM(company_name)) > 0
+    ),
+    CONSTRAINT chk_employee_phone CHECK (
+        phone IS NULL OR CHAR_LENGTH(TRIM(phone)) > 0
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -281,6 +290,43 @@ CREATE TABLE qr_credentials (
             AND revoked_by IS NOT NULL AND revocation_reason IS NOT NULL
             AND CHAR_LENGTH(TRIM(revocation_reason)) > 0
         )
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE master_qr_allocations (
+    qr_id BIGINT UNSIGNED NOT NULL,
+    kind ENUM('EMPLOYEE', 'MASTER') NOT NULL DEFAULT 'MASTER',
+    company_name VARCHAR(150) NOT NULL,
+    contact_name VARCHAR(150) NOT NULL,
+    email VARCHAR(254) NOT NULL,
+    phone VARCHAR(32) NOT NULL,
+    meal_limit SMALLINT UNSIGNED NOT NULL,
+    meals_used SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    created_by_staff_id BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    exhausted_at DATETIME(6) NULL,
+    PRIMARY KEY (qr_id),
+    KEY ix_master_allocations_creator_time (created_by_staff_id, created_at),
+    KEY ix_master_allocations_exhausted (exhausted_at, created_at),
+    CONSTRAINT fk_master_allocation_qr_kind
+        FOREIGN KEY (qr_id, kind) REFERENCES qr_credentials (id, kind)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_master_allocation_creator
+        FOREIGN KEY (created_by_staff_id) REFERENCES staff_accounts (id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT chk_master_allocation_details CHECK (
+        CHAR_LENGTH(TRIM(company_name)) > 0
+        AND CHAR_LENGTH(TRIM(contact_name)) > 0
+        AND CHAR_LENGTH(TRIM(email)) > 0
+        AND CHAR_LENGTH(TRIM(phone)) > 0
+    ),
+    CONSTRAINT chk_master_allocation_usage CHECK (
+        meal_limit > 0 AND meals_used <= meal_limit
+    ),
+    CONSTRAINT chk_master_allocation_kind CHECK (kind = 'MASTER'),
+    CONSTRAINT chk_master_allocation_exhaustion CHECK (
+        (meals_used < meal_limit AND exhausted_at IS NULL)
+        OR (meals_used = meal_limit AND exhausted_at IS NOT NULL)
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

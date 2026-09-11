@@ -10,7 +10,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api_common import database_readiness, scan_response
-from .api_schemas import ScannerActivationBody, ScannerReadBody, ScannerVisitorBody
+from .api_schemas import ScannerActivationBody, ScannerReadBody
 from .application import create_services
 from .errors import ConfigurationError, DomainError
 from .http_security import SecurityMiddleware, error_body, status_for
@@ -70,7 +70,7 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
-        if request.url.path in {"/api/scanner/read", "/api/scanner/visitors"}:
+        if request.url.path == "/api/scanner/read":
             try:
                 browser_hash = await run_in_threadpool(browser_context, request)
                 await run_in_threadpool(app.state.scanner.record_invalid, browser_hash)
@@ -124,12 +124,6 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
     @app.post("/api/scanner/read")
     def read(body: ScannerReadBody, browser_hash=Depends(browser_context)):
         return scan_response(app.state.scanner.read(browser_hash, body.request_id, body.token.get_secret_value()))
-
-    @app.post("/api/scanner/visitors")
-    def visitors(body: ScannerVisitorBody, browser_hash=Depends(browser_context)):
-        return scan_response(app.state.scanner.record(
-            browser_hash, body.request_id, body.token.get_secret_value(), body.visitor_details.model_dump(),
-        ))
 
     @app.get("/api/scanner/requests/{request_id}/result")
     def result(request_id: UUID, browser_hash=Depends(browser_context)):

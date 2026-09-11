@@ -268,8 +268,8 @@ class BulkRegistrationTests(unittest.TestCase):
         self.service._register = Mock(side_effect=[Registration(11, 12, 13), Registration(21, 22, 23)])
         self.identifier = uuid4()
         self.employees = [
-            {"employee_code": "E1", "full_name": "First Employee", "email": "first@example.test", "department_id": 1},
-            {"employee_code": "E2", "full_name": "Second Employee", "email": "second@example.test", "department_id": 2},
+            {"employee_code": "E1", "full_name": "First Employee", "email": "first@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department_id": 1},
+            {"employee_code": "E2", "full_name": "Second Employee", "email": "second@example.test", "company_name": "Example Company", "phone": "+1 202 555 0102", "department_id": 2},
         ]
         self.actor_patch = patch("meal_management.employees.require_actor", return_value=self.actor)
         self.actor_patch.start()

@@ -42,10 +42,10 @@ class SharedScannerTests(unittest.TestCase):
     def test_read_captures_defaults_and_uses_dedicated_actor_without_login(self):
         self.tx.one.side_effect = [None, self.profile]
         expected = ScanResult(True, "APPROVED", str(self.identifier), 77, (91,))
-        self.meals.read.return_value = expected
+        self.meals.record.return_value = expected
         actual = self.service.read(self.browser, self.identifier, self.token)
         self.assertIs(actual, expected)
-        context, scan = self.meals.read.call_args.args
+        context, scan = self.meals.record.call_args.args
         self.assertIsInstance(context, ScanAppContext)
         self.assertEqual(context.staff_id, 42)
         self.assertEqual(scan.request_id, self.identifier)
@@ -61,34 +61,21 @@ class SharedScannerTests(unittest.TestCase):
         self.assertNotIn(self.token, repr(insert))
         self.assertFalse(any("staff_sessions" in call.args[0] for call in self.tx.one.call_args_list))
 
-    def test_visitor_form_result_is_returned_without_fabricating_approval(self):
-        self.tx.one.return_value = self.mapping
-        expected = {"kind": "MASTER", "next": "VISITOR_DETAILS", "request_id": str(self.identifier)}
-        self.meals.read.return_value = expected
-        self.assertIs(self.service.read(self.browser, self.identifier, self.token), expected)
-        self.tx.execute.assert_not_called()
-
-    def test_final_visitor_submission_uses_same_mapping_and_only_one_meal(self):
+    def test_master_scan_records_through_the_same_transactional_service(self):
         self.tx.one.return_value = self.mapping
         expected = ScanResult(True, "APPROVED", str(self.identifier), 77, (91,))
         self.meals.record.return_value = expected
-        self.assertIs(self.service.record(self.browser, self.identifier, self.token, self.details), expected)
-        context, scan = self.meals.record.call_args.args
-        self.assertEqual(context, ScanAppContext(42))
-        self.assertEqual(scan.visitor_details, self.details)
-        self.assertEqual(scan.quantity, 1)
-        self.assertIsNone(scan.authorization_id)
+        self.assertIs(self.service.read(self.browser, self.identifier, self.token), expected)
+        self.assertIsNone(self.meals.record.call_args.args[1].visitor_details)
         self.tx.execute.assert_not_called()
 
-    def test_browser_cannot_use_another_browsers_request_for_read_record_or_result(self):
+    def test_browser_cannot_use_another_browsers_request_for_read_or_result(self):
         self.tx.one.return_value = {**self.mapping, "browser_hash": b"a" * 32}
         for action in (
             lambda: self.service.read(self.browser, self.identifier, self.token),
-            lambda: self.service.record(self.browser, self.identifier, self.token, self.details),
             lambda: self.service.result(self.browser, self.identifier),
         ):
             self.assert_domain("REQUEST_MISMATCH", action)
-        self.meals.read.assert_not_called()
         self.meals.record.assert_not_called()
         self.receipts.result.assert_not_called()
         self.tx.execute.assert_not_called()
@@ -110,8 +97,9 @@ class SharedScannerTests(unittest.TestCase):
     def test_settings_changes_do_not_retarget_an_existing_serving(self):
         self.tx.one.return_value = {**self.mapping, "scanner_code": "ORIGINAL-SCANNER", "meal_type_id": 8}
         self.service.read(self.browser, self.identifier, self.token)
-        self.service.record(self.browser, self.identifier, self.token, self.details)
-        for call in (self.meals.read.call_args, self.meals.record.call_args):
+        first = self.meals.record.call_args
+        self.service.read(self.browser, self.identifier, self.token)
+        for call in (first, self.meals.record.call_args):
             self.assertEqual(call.args[1].scanner_code, "ORIGINAL-SCANNER")
             self.assertEqual(call.args[1].meal_type_id, 8)
             self.assertEqual(call.args[0].staff_id, 42)
@@ -133,7 +121,7 @@ class SharedScannerTests(unittest.TestCase):
                 self.tx.one.side_effect = [None, profile]
                 self.assert_domain("SCANNER_NOT_CONFIGURED", lambda: self.service.read(self.browser, self.identifier, self.token))
         self.tx.execute.assert_not_called()
-        self.meals.read.assert_not_called()
+        self.meals.record.assert_not_called()
 
     def test_missing_migration_uses_clear_error_without_database_details(self):
         for number in (1054, 1146):
@@ -141,14 +129,14 @@ class SharedScannerTests(unittest.TestCase):
             error.errno = number
             self.tx.one.side_effect = error
             self.assert_domain("SCANNER_NOT_CONFIGURED", lambda: self.service.read(self.browser, self.identifier, self.token))
-        self.meals.read.assert_not_called()
+        self.meals.record.assert_not_called()
 
     def test_mapping_commit_failure_prevents_meal_processing(self):
         self.tx.one.side_effect = [None, self.profile]
         self.db.transaction.return_value.__exit__.side_effect = RuntimeError("Intentional mapping commit failure")
         with self.assertRaisesRegex(RuntimeError, "Intentional mapping commit failure"):
             self.service.read(self.browser, self.identifier, self.token)
-        self.meals.read.assert_not_called()
+        self.meals.record.assert_not_called()
 
     def test_mapping_read_commit_failure_prevents_result_release(self):
         self.tx.one.return_value = self.mapping
@@ -163,8 +151,8 @@ class SharedScannerTests(unittest.TestCase):
         self.tx.one.side_effect = [None, self.profile, self.mapping]
         self.tx.execute.side_effect = duplicate
         self.service.read(self.browser, self.identifier, self.token)
-        self.meals.read.assert_called_once()
-        self.assertEqual(self.meals.read.call_args.args[1].request_id, self.identifier)
+        self.meals.record.assert_called_once()
+        self.assertEqual(self.meals.record.call_args.args[1].request_id, self.identifier)
         self.assertEqual(self.tx.execute.call_count, 1)
 
     def test_different_browser_insert_race_cannot_claim_winning_mapping(self):
@@ -173,7 +161,7 @@ class SharedScannerTests(unittest.TestCase):
         self.tx.one.side_effect = [None, self.profile, {**self.mapping, "browser_hash": b"x" * 32}]
         self.tx.execute.side_effect = duplicate
         self.assert_domain("REQUEST_MISMATCH", lambda: self.service.read(self.browser, self.identifier, self.token))
-        self.meals.read.assert_not_called()
+        self.meals.record.assert_not_called()
 
     def test_invalid_input_audit_uses_configured_system_actor_and_scanner(self):
         self.tx.one.return_value = self.profile
@@ -185,7 +173,7 @@ class SharedScannerTests(unittest.TestCase):
     def test_core_transaction_failure_cannot_be_converted_to_approval(self):
         self.tx.one.return_value = self.mapping
         self.meals.record.return_value = ScanResult(False, "PROCESSING_UNCONFIRMED", str(self.identifier))
-        result = self.service.record(self.browser, self.identifier, self.token, self.details)
+        result = self.service.read(self.browser, self.identifier, self.token)
         self.assertFalse(result.approved)
         self.assertEqual(result.code, "PROCESSING_UNCONFIRMED")
 
@@ -199,7 +187,6 @@ class SharedScannerTests(unittest.TestCase):
         self.assertIn("ORDER BY created_at DESC, request_id DESC LIMIT 1", sql)
         self.assertNotIn("FOR UPDATE", sql)
         self.tx.execute.assert_not_called()
-        self.meals.read.assert_not_called()
         self.meals.record.assert_not_called()
         self.receipts.result.assert_not_called()
 

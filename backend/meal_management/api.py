@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -362,8 +362,8 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return app.state.queries.master_qrs(ctx, limit=limit, after_id=after_id)
 
     @app.post("/api/master-qrs", status_code=201)
-    def master_create(body: ExpiryInput, ctx=Depends(admin)):
-        issued = services.qr.issue_master(ctx, body.expires_at)
+    def master_create(body: MasterQrInput, ctx=Depends(admin)):
+        issued = services.qr.issue_master(ctx, expires_at=body.expires_at, **body.model_dump(exclude={"expires_at"}))
         return qr_response(ctx, issued.qr_id)
 
     def master_check(ctx, qr_id):
@@ -378,8 +378,8 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return qr_response(ctx, qr_id)
 
     @app.post("/api/master-qrs/{qr_id}/replace")
-    def master_replace(qr_id: PathIdentifier, body: ExpiryInput, ctx=Depends(admin)):
-        issued = services.qr.replace_master(ctx, qr_id, body.expires_at)
+    def master_replace(qr_id: PathIdentifier, body: MasterQrInput, ctx=Depends(admin)):
+        issued = services.qr.replace_master(ctx, qr_id, expires_at=body.expires_at, **body.model_dump(exclude={"expires_at"}))
         return qr_response(ctx, issued.qr_id)
 
     @app.post("/api/master-qrs/{qr_id}/revoke")

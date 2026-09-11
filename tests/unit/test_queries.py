@@ -50,7 +50,9 @@ class QueryServiceTests(unittest.TestCase):
         sql, params = self.tx.all.call_args.args
         self.assertNotIn(search, sql)
         self.assertEqual(params[1], "%a=%' OR 1==1 =_==%")
-        self.assertEqual(params[4], False)
+        self.assertEqual(params[-2], False)
+        self.assertIn("e.company_name LIKE %s", sql)
+        self.assertIn("e.phone LIKE %s", sql)
         self.assertEqual(sql.count("%s"), len(params))
 
     def test_short_page_has_no_next_cursor(self):
@@ -149,6 +151,9 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("COALESCE(s.visitor_company_name, a.visitor_organization) AS visitor_company_name", sql)
         self.assertIn("COALESCE(s.visitor_name, a.visitor_name) AS visitor_name", sql)
         self.assertIn("s.visitor_email, s.visitor_phone, a.visitor_organization", sql)
+        self.assertIn("e.company_name AS employee_company_name", sql)
+        self.assertIn("e.email AS employee_email", sql)
+        self.assertIn("e.phone AS employee_phone", sql)
         self.assertIn("LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id", sql)
         self.assertNotIn("a.authorized_by IS NOT NULL", sql)
         self.assertEqual(sql.count("%s"), len(params))

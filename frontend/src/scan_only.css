@@ -29,12 +29,16 @@
 .scan-upload > label { width: 100%; min-height: 43px; cursor: pointer; font-size: 13px; }
 .scan-upload > p { font-size: 10px; color: #718a80; margin-top: 7px; }
 .scan-only-outcome:empty { display: none; }
-.scan-final { text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 55dvh; padding: 38px 18px; border-radius: 13px; }
+.scan-final { text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 55dvh; padding: 38px 18px; border-radius: 13px; animation: scan-result-arrive 360ms cubic-bezier(.2,.9,.3,1) both; }
 .scan-final.accepted { color: #176947; background: #e8f6e9; border: 1px solid #c6e0c8; }
 .scan-final.rejected { color: #99353a; background: #fff0ef; border: 1px solid #e9c6c7; }
-.scan-final > .icon { width: 88px; height: 88px; padding: 19px; border: 2px solid currentColor; border-radius: 50%; margin-bottom: 27px; }
+.scan-final > .icon { width: 88px; height: 88px; padding: 19px; border: 2px solid currentColor; border-radius: 50%; margin-bottom: 27px; animation: scan-result-icon 520ms cubic-bezier(.2,1.25,.4,1) 80ms both; }
 .scan-final h1 { font-size: clamp(32px, 5vw, 49px); letter-spacing: -1.4px; }
 .scan-final p { margin-top: 18px; font-size: 15px; max-width: 400px; }
+.scan-final > span { margin-top: 24px; font-size: 12px; opacity: .72; }
+@keyframes scan-result-arrive { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes scan-result-icon { from { opacity: 0; transform: scale(.45) rotate(-18deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
+@media (prefers-reduced-motion: reduce) { .scan-final, .scan-final > .icon { animation: none; } }
 .scan-working { text-align: center; padding: 29px 15px; color: #527d70; }
 .scan-working h2 { font-size: 18px; margin-top: 12px; }
 .scan-working .spinner { width: 29px; height: 29px; }

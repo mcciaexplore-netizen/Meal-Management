@@ -102,13 +102,7 @@ class ScanAppService:
 
     def read(self, browser_hash, request_id, token):
         identifier, row = self._reserve(browser_hash, request_id)
-        return self.meals.read(ScanAppContext(row["staff_id"]), self._scan(identifier, row, token))
-
-    def record(self, browser_hash, request_id, token, visitor_details):
-        identifier, row = self._reserve(browser_hash, request_id)
-        return self.meals.record(
-            ScanAppContext(row["staff_id"]), self._scan(identifier, row, token, visitor_details),
-        )
+        return self.meals.record(ScanAppContext(row["staff_id"]), self._scan(identifier, row, token))
 
     def result(self, browser_hash, request_id):
         identifier, row = self._owned(browser_hash, request_id)

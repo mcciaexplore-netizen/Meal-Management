@@ -81,7 +81,7 @@ class ScanAppMealTests(unittest.TestCase):
 
     def test_master_read_validates_then_waits_without_meal_or_proof_binding(self):
         self.receipt["reading"] = True
-        self.tx.one.side_effect = self.pending_rows()
+        self.tx.one.side_effect = self.pending_rows() + [None]
         result = self.service._process(self.context, self.scan, self.receipt)
         self.assertEqual(result, {"kind": "MASTER", "next": "VISITOR_DETAILS", "request_id": str(self.scan.request_id)})
         self.tx.insert.assert_not_called()
@@ -115,7 +115,7 @@ class ScanAppMealTests(unittest.TestCase):
         self.assertFalse(any("FROM visitor_authorizations WHERE id" in call.args[0] for call in self.tx.one.call_args_list))
 
     def test_direct_master_without_details_rejects_attempt_and_leaves_request_unbound(self):
-        self.tx.one.side_effect = self.pending_rows() + [{"id": 12}]
+        self.tx.one.side_effect = self.pending_rows() + [None, {"id": 12}]
         result = self.service._process(self.context, self.scan, self.receipt)
         self.assertFalse(result.approved)
         self.assertEqual(result.code, "VISITOR_DETAILS_REQUIRED")
@@ -192,7 +192,7 @@ class ScanAppMealTests(unittest.TestCase):
 
     def test_waiting_response_is_not_returned_before_commit(self):
         self.receipt["reading"] = True
-        self.tx.one.side_effect = self.pending_rows()
+        self.tx.one.side_effect = self.pending_rows() + [None]
         service = MealService(FailingCommitDatabase(self.tx))
         with patch.object(service, "_receive", return_value=self.receipt), patch.object(service, "_mark_interrupted"):
             result = service.read(self.context, self.scan)
@@ -209,6 +209,36 @@ class ScanAppMealTests(unittest.TestCase):
         self.assertFalse(result.approved)
         self.assertIsNone(result.serving_id)
         self.assertEqual(result.code, "PROCESSING_UNCONFIRMED")
+
+    def test_allocated_master_records_one_meal_and_exhausts_on_final_allowance(self):
+        allocation = {
+            "qr_id": 12, "company_name": "Example Ltd", "contact_name": "Ravi Patel",
+            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5,
+            "meals_used": 4, "exhausted_at": None,
+        }
+        self.receipt["public_scanner"] = True
+        self.tx.one.side_effect = self.pending_rows() + [allocation]
+        result = self.service._process(self.context, self.scan, self.receipt)
+        self.assertTrue(result.approved)
+        self.assertEqual(result.meal_ids, (91,))
+        serving = self.tx.insert.call_args_list[0].args[1]
+        self.assertEqual(serving[-4:], ("Example Ltd", "Ravi Patel", "ravi@example.test", "+919876543210"))
+        allowance = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("UPDATE master_qr_allocations"))
+        self.assertIn("meals_used < meal_limit", allowance.args[0])
+        self.assertEqual(allowance.args[1], (self.tx.now(), 12))
+
+    def test_exhausted_allocated_master_is_rejected_without_a_meal(self):
+        allocation = {
+            "qr_id": 12, "company_name": "Example Ltd", "contact_name": "Ravi Patel",
+            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5,
+            "meals_used": 5, "exhausted_at": self.tx.now(),
+        }
+        self.receipt["public_scanner"] = True
+        self.tx.one.side_effect = self.pending_rows() + [allocation, {"id": 12}]
+        result = self.service._process(self.context, self.scan, self.receipt)
+        self.assertFalse(result.approved)
+        self.assertEqual(result.code, "QR_EXPIRED")
+        self.tx.insert.assert_not_called()
 
     def test_invalid_details_are_logged_without_reserving_or_poisoning_request(self):
         self.tx.one.side_effect = [{"id": 3, "location_id": 4}, None]

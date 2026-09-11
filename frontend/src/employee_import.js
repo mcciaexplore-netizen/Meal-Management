@@ -30,7 +30,7 @@ export function showEmployeeImport(context, onChange) {
   text.oninput = () => { file.value = ""; clearPreview(); };
   function drawPreview() {
     const rows = operation.payload ?? [];
-    preview.innerHTML = `<div class="detail-section"><h3>${rows.length} employees ready for review</h3>${table(["Code", "Name", "Email", "Department ID"], rows.map(row => `<tr><td>${escape(row.employee_code)}</td><td>${escape(row.full_name)}</td><td>${escape(row.email)}</td><td>${escape(row.department_id)}</td></tr>`), "Employee import preview")}<p class="field-help">Review every row. Existing employee codes are not overwritten. Emails remain pending approval.</p><button type="button" class="button primary" id="confirm-employee-import">${operation.submitted ? "Retry same import" : "Import employees"}</button></div>`;
+    preview.innerHTML = `<div class="detail-section"><h3>${rows.length} employees ready for review</h3>${table(["Code", "Name", "Email", "Company", "Phone", "Department ID"], rows.map(row => `<tr><td>${escape(row.employee_code)}</td><td>${escape(row.full_name)}</td><td>${escape(row.email)}</td><td>${escape(row.company_name)}</td><td>${escape(row.phone)}</td><td>${escape(row.department_id)}</td></tr>`), "Employee import preview")}<p class="field-help">Review every row. Existing employee codes are not overwritten. Emails remain pending approval.</p><button type="button" class="button primary" id="confirm-employee-import">${operation.submitted ? "Retry same import" : "Import employees"}</button></div>`;
     preview.querySelector("button").onclick = async () => {
       if (operation.inFlight) return;
       errors.innerHTML = "";

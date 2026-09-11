@@ -24,13 +24,13 @@ INSERT_TABLES = {
     "locations", "scanner_devices", "meal_types", "qr_credentials", "email_queue",
     "audit_events", "serving_requests", "visitor_authorizations", "servings", "meals",
     "scan_attempts", "scan_app_requests", "employee_email_batches", "login_rate_limits",
-    "employee_archives", "meal_voids",
+    "employee_archives", "meal_voids", "master_qr_allocations",
 }
 UPDATE_TABLES = {
     "employees", "staff_accounts", "staff_sessions", "locations", "scanner_devices",
     "qr_credentials", "email_queue", "serving_requests", "visitor_authorizations",
     "scan_attempts", "login_rate_limits", "scan_app_requests", "employee_email_batches",
-    "system_locks",
+    "system_locks", "master_qr_allocations",
 }
 MIGRATIONS = Path(__file__).resolve().parents[2] / "database" / "migrations"
 PROVIDER_SECRET = "fictional-provider-secret-never-print"
@@ -416,7 +416,7 @@ class RuntimeAccountTests(unittest.TestCase):
     def test_missing_reviewed_migration_stops_before_paths_and_database(self):
         migrations = load_migrations(MIGRATIONS)[:-1]
         with patch.object(runtime_account, "load_migrations", return_value=migrations), patch.object(runtime_account, "_paths") as paths:
-            with self.assertRaisesRegex(DomainError, "RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_SEVEN"):
+            with self.assertRaisesRegex(DomainError, "RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_NINE"):
                 self.fixture.run()
             paths.assert_not_called()
         self.assert_no_credentials_or_database()

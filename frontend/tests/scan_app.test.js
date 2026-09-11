@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { masterDetailsRequested, ScanAppOperation, scanReadBody, scanVisitorBody, visitorFields } from "../src/scan_app_operation.js";
+import { ScanAppOperation, scanReadBody } from "../src/scan_app_operation.js";
 import { loadScannerMarker, saveScannerMarker } from "../src/scanner_state.js";
 import { mealTable } from "../src/screens.js";
 
@@ -9,7 +9,6 @@ const requestId = "10000000-0000-4000-8000-000000000001";
 const scope = "a".repeat(64);
 const visitor = { company_name: "Test Company", name: "Test Visitor", email: "visitor@example.com", phone: "+91 98765 43210" };
 const approved = { approved: true, code: "APPROVED", request_id: requestId, serving_id: 10, meal_ids: [12], duplicate: false };
-const prompt = { request_id: requestId, kind: "MASTER", next: "VISITOR_DETAILS" };
 
 test("scan-only HTML loads its own entry without dashboard navigation", async () => {
   const html = await readFile(new URL("../scan.html", import.meta.url), "utf8");
@@ -18,36 +17,34 @@ test("scan-only HTML loads its own entry without dashboard navigation", async ()
   assert.doesNotMatch(html, /src="\/assets\/app\.js"|dashboard|sidebar|data-page/);
 });
 
+test("scanner animates final decisions and automatically resets after two seconds", async () => {
+  const source = await readFile(new URL("../src/scan_app.js", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../src/scan_only.css", import.meta.url), "utf8");
+  assert.match(source, /Accepted · 1 meal/);
+  assert.match(source, /Meal rejected/);
+  assert.match(source, /QR has expired\. Please contact the administrator\./);
+  assert.match(source, /setTimeout\([\s\S]*?2000\)/);
+  assert.doesNotMatch(source, /visitor-meal-form|Scan next meal|\/visitors/);
+  assert.match(styles, /@keyframes scan-result-arrive/);
+  assert.match(styles, /@keyframes scan-result-icon/);
+});
+
 test("employee QR read sends no category or submitted staff identity and accepts one committed meal", async () => {
   const flow = new ScanAppOperation(() => requestId);
   let submitted;
   const result = await flow.read("employee-token", async body => { submitted = body; return approved; });
   assert.deepEqual(submitted, { request_id: requestId, token: "employee-token" });
   assert.equal(result.approved, true);
-  assert.equal(flow.needsVisitor, false);
   assert.equal(flow.request.quantity, 1);
   assert.equal(flow.result.serving_id, 10);
 });
 
-test("master classification opens details without recording an approved meal", async () => {
+test("master QR scan records one committed meal without visitor input", async () => {
   const flow = new ScanAppOperation(() => requestId);
-  await flow.read("master-token", async () => prompt);
-  assert.equal(flow.needsVisitor, true);
-  assert.equal(flow.result, null);
-  assert.equal(flow.request.request_id, requestId);
-  assert.equal(flow.request.visitor_details, undefined);
-});
-
-test("master submission requires only the four visitor fields and records one meal under the same request", async () => {
-  const flow = new ScanAppOperation(() => requestId);
-  await flow.read("master-token", async () => prompt);
   let submitted;
-  await flow.recordVisitor(visitor, async body => { submitted = body; return approved; });
-  assert.deepEqual(submitted, { request_id: requestId, token: "master-token", visitor_details: visitor });
-  assert.equal(submitted.authorization_id, undefined);
-  assert.equal(submitted.staff_id, undefined);
+  await flow.read("master-token", async body => { submitted = body; return approved; });
+  assert.deepEqual(submitted, { request_id: requestId, token: "master-token" });
   assert.equal(flow.result.approved, true);
-  assert.ok(Object.isFrozen(submitted.visitor_details));
 });
 
 test("parallel camera reads share one request and only one submission", async () => {
@@ -73,47 +70,19 @@ test("completed employee retries return the original committed result without an
   assert.equal(duplicate.duplicate, true);
 });
 
-test("master network retries retain all four submitted fields unchanged", async () => {
+test("master network retries retain the original request and credential", async () => {
   const flow = new ScanAppOperation(() => requestId);
-  await flow.read("master-token", async () => prompt);
   let firstBody;
-  await assert.rejects(flow.recordVisitor(visitor, async body => { firstBody = body; throw new Error("Unknown network outcome"); }));
-  assert.throws(() => flow.bindVisitor({ ...visitor, name: "Different Visitor" }), /bound to the pending serving/);
+  await assert.rejects(flow.read("master-token", async body => { firstBody = body; throw new Error("Unknown network outcome"); }));
   let retried;
-  await flow.retry(async () => { throw new Error("Must not use read for a visitor retry"); }, async body => { retried = body; return approved; });
+  await flow.retry(async body => { retried = body; return approved; });
   assert.deepEqual(retried, firstBody);
   assert.equal(flow.result.serving_id, 10);
 });
 
-test("validation rejection can correct visitor fields without changing request or QR", async () => {
+test("reload marker for master scan excludes credential and visitor data", async () => {
   const flow = new ScanAppOperation(() => requestId);
-  await flow.read("master-token", async () => prompt);
-  await assert.rejects(flow.recordVisitor(visitor, async () => { throw Object.assign(new Error("Invalid input"), { status: 422 }); }));
-  assert.deepEqual(flow.correctVisitor(), visitor);
-  assert.equal(flow.request.request_id, requestId);
-  assert.equal(flow.request.token, "master-token");
-  assert.equal(flow.request.visitor_details, undefined);
-  flow.bindVisitor({ ...visitor, name: "Corrected Visitor" });
-  assert.equal(flow.request.visitor_details.name, "Corrected Visitor");
-});
-
-test("visitor input validation mirrors email and phone requirements before freezing", () => {
-  assert.equal(visitorFields({ ...visitor, email: "VISITOR@EXAMPLE.COM" }).email, "visitor@example.com");
-  for (const phone of ["abc1234567", "123", "1234567890123456", "１２３４５６７"]) assert.throws(() => visitorFields({ ...visitor, phone }), /phone number/);
-  assert.throws(() => visitorFields({ ...visitor, email: "not-email" }), /email address/);
-  for (const name of ["company_name", "name", "email", "phone"]) assert.throws(() => visitorFields({ ...visitor, [name]: "" }));
-});
-
-test("master prompt must match the currently scanned request", () => {
-  assert.equal(masterDetailsRequested(prompt, { request_id: requestId }), true);
-  assert.equal(masterDetailsRequested({ ...prompt, request_id: "different" }, { request_id: requestId }), false);
-  assert.equal(masterDetailsRequested({ ...prompt, approved: true }, { request_id: requestId }), false);
-});
-
-test("reload marker for master submission excludes every visitor field and credential", async () => {
-  const flow = new ScanAppOperation(() => requestId);
-  await flow.read("master-token", async () => prompt);
-  flow.bindVisitor(visitor);
+  await assert.rejects(flow.read("master-token", async () => { throw new Error("Unknown network outcome"); }));
   const values = new Map();
   const storage = { setItem: (key, value) => values.set(key, value), getItem: key => values.get(key) };
   saveScannerMarker(storage, scope, flow.request);
@@ -123,7 +92,6 @@ test("reload marker for master submission excludes every visitor field and crede
   restored.restore(loadScannerMarker(storage, scope));
   assert.equal(restored.request.request_id, requestId);
   assert.equal(restored.request.token, undefined);
-  assert.equal(restored.request.visitor_details, undefined);
 });
 
 test("staff-bound serving markers are not accepted by the public scanner", () => {
@@ -138,11 +106,6 @@ test("read payload excludes quantity, visitor details, and caller-supplied ident
   assert.deepEqual(Object.keys(scanReadBody(request)).sort(), ["request_id", "token"]);
 });
 
-test("visitor payload excludes quantity, service settings, and caller identity", () => {
-  const request = { request_id: requestId, token: "token", scanner_code: "A", meal_type_id: 1, quantity: 7, visitor_details: visitor, staff_id: 20, role: "ADMIN" };
-  assert.deepEqual(scanVisitorBody(request), { request_id: requestId, token: "token", visitor_details: visitor });
-});
-
 test("dashboard meal reports show the four visitor fields with HTML escaping", () => {
   const html = mealTable([{ id: 1, kind: "MASTER", visitor_company_name: "A & B", visitor_name: "Visitor <Name>", visitor_email: "visitor@example.com", visitor_phone: "+91 98765 43210", meal_type_name: "Lunch", waiter_name: "Staff", location_name: "Office", served_at: "2026-09-09T12:00:00Z" }]);
   assert.match(html, /A &amp; B/);
@@ -150,6 +113,13 @@ test("dashboard meal reports show the four visitor fields with HTML escaping", (
   assert.match(html, /visitor@example.com/);
   assert.match(html, /\+91 98765 43210/);
   assert.doesNotMatch(html, /Visitor <Name>/);
+});
+
+test("dashboard meal reports show employee company email and phone", () => {
+  const html = mealTable([{ id: 2, kind: "EMPLOYEE", employee_code: "EMP-2", employee_name: "Employee Name", employee_company_name: "Employee Company", employee_email: "employee@example.com", employee_phone: "+91 98765 43211", meal_type_name: "Lunch", waiter_name: "Scanner", location_name: "Office", served_at: "2026-09-09T12:00:00Z" }]);
+  assert.match(html, /Employee Company/);
+  assert.match(html, /employee@example.com/);
+  assert.match(html, /\+91 98765 43211/);
 });
 
 test("administrator meal history can render a removal control", () => {

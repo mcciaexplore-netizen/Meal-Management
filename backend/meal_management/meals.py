@@ -7,8 +7,8 @@ from uuid import UUID
 from .auth import audit, require_actor, require_scan_actor
 from .database import retry_transaction
 from .errors import DomainError
-from .models import ScanInput, ScanResult
-from .security import normalize_email, payload_digest, required_text, token_digest, utc_naive
+from .models import ScanAppContext, ScanInput, ScanResult
+from .security import normalize_email, normalize_phone, payload_digest, required_text, token_digest, utc_naive
 
 
 class AttemptRejection(DomainError):
@@ -46,9 +46,7 @@ def normalize_visitor_details(value):
     company_name = required_text(value["company_name"], "VISITOR_COMPANY_NAME", 150)
     name = required_text(value["name"], "VISITOR_NAME", 150)
     email = normalize_email(value["email"])
-    phone = required_text(value["phone"], "VISITOR_PHONE", 32)
-    if not re.fullmatch(r"\+?[0-9 ()\-.]+", phone) or not 7 <= sum(character.isdigit() for character in phone) <= 15:
-        raise DomainError("INVALID_VISITOR_PHONE")
+    phone = normalize_phone(value["phone"], "VISITOR_PHONE")
     return {"company_name": company_name, "name": name, "email": email, "phone": phone}
 
 
@@ -305,7 +303,8 @@ class MealService:
                 "staff_id": actor.staff_id if actor else None,
                 "scanner_id": scanner["id"] if scanner else None,
                 "location_id": scanner["location_id"] if scanner else None,
-                "visitor_details": visitor_details, "visitor_hash": visitor_hash, "reading": reading}
+                "visitor_details": visitor_details, "visitor_hash": visitor_hash, "reading": reading,
+                "public_scanner": isinstance(context, ScanAppContext)}
 
     def _finish_attempt(self, tx, receipt, code, serving_id=None, qr_id=None):
         changed = tx.execute(
@@ -427,6 +426,7 @@ class MealService:
         qr = tx.one("SELECT * FROM qr_credentials WHERE id = %s FOR UPDATE", (initial_qr["id"],))
         now = tx.now()
         check_qr(qr, now)
+        serving_visitor = receipt.get("visitor_details")
         if qr["kind"] == "EMPLOYEE":
             if scan.quantity != 1:
                 raise DomainError("EMPLOYEE_QUANTITY_MUST_BE_ONE")
@@ -436,7 +436,37 @@ class MealService:
                 raise DomainError("VISITOR_DETAILS_NOT_APPLICABLE")
             self._bind_scan(tx, scan, receipt)
         elif qr["kind"] == "MASTER":
-            if receipt.get("reading"):
+            allocation = None
+            if scan.authorization_id is None and receipt.get("visitor_details") is None:
+                allocation = tx.one(
+                    "SELECT qr_id, company_name, contact_name, email, phone, meal_limit, meals_used, exhausted_at "
+                    "FROM master_qr_allocations WHERE qr_id = %s FOR UPDATE",
+                    (qr["id"],),
+                )
+            if allocation is not None:
+                if scan.quantity != 1:
+                    raise DomainError("VISITOR_QUANTITY_MUST_BE_ONE")
+                if scan.authorization_id is not None or receipt.get("visitor_details") is not None:
+                    raise DomainError("MASTER_ALLOCATION_SCOPE_MISMATCH")
+                if allocation["exhausted_at"] is not None or allocation["meals_used"] >= allocation["meal_limit"]:
+                    raise DomainError("QR_EXPIRED")
+                changed = tx.execute(
+                    "UPDATE master_qr_allocations SET "
+                    "exhausted_at = CASE WHEN meals_used + 1 = meal_limit THEN %s ELSE NULL END, "
+                    "meals_used = meals_used + 1 "
+                    "WHERE qr_id = %s AND meals_used < meal_limit AND exhausted_at IS NULL",
+                    (now, qr["id"]),
+                )
+                if changed != 1:
+                    raise DomainError("QR_EXPIRED")
+                serving_visitor = {
+                    "company_name": allocation["company_name"],
+                    "name": allocation["contact_name"],
+                    "email": allocation["email"],
+                    "phone": allocation["phone"],
+                }
+                self._bind_scan(tx, scan, receipt)
+            elif receipt.get("reading"):
                 changed = tx.execute(
                     "UPDATE scan_attempts SET outcome = 'AWAITING_DETAILS', qr_id = %s, "
                     "completed_at = %s WHERE id = %s AND outcome = 'RECEIVED'",
@@ -445,14 +475,14 @@ class MealService:
                 if changed != 1:
                     raise DomainError("ATTEMPT_ALREADY_FINALIZED")
                 return {"kind": "MASTER", "next": "VISITOR_DETAILS", "request_id": receipt["request_text"]}
-            if receipt.get("visitor_details") is not None:
+            elif receipt.get("visitor_details") is not None:
                 if scan.quantity != 1:
                     raise DomainError("VISITOR_QUANTITY_MUST_BE_ONE")
                 if scan.authorization_id is not None:
                     raise DomainError("VISITOR_DETAILS_AUTHORIZATION_CONFLICT")
             else:
                 if scan.authorization_id is None:
-                    raise AttemptRejection("VISITOR_DETAILS_REQUIRED")
+                    raise AttemptRejection("QR_EXPIRED" if receipt.get("public_scanner") else "VISITOR_DETAILS_REQUIRED")
                 now = self._validate_authorization(tx, actor, scan, receipt, qr, scanner)
                 check_qr(qr, now)
         else:
@@ -465,8 +495,8 @@ class MealService:
             receipt["request_id"], qr["id"], qr["kind"], employee_id, scan.meal_type_id, scan.quantity,
             actor.staff_id, scanner["id"], scanner["location_id"], scan.authorization_id, now,
         ]
-        if receipt.get("visitor_details") is not None:
-            visitor = receipt["visitor_details"]
+        if serving_visitor is not None:
+            visitor = serving_visitor
             serving_columns += ", visitor_company_name, visitor_name, visitor_email, visitor_phone"
             serving_values.extend(visitor[key] for key in ("company_name", "name", "email", "phone"))
         serving_id = tx.insert(

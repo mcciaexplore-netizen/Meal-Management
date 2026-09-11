@@ -4,9 +4,9 @@ import test from "node:test";
 import { BulkEmployeeImport, employeePayloadFingerprint, parseEmployeeCsv } from "../src/bulk_employees.js";
 import { employeeImportForm } from "../src/employee_import.js";
 
-const headers = "employee_code,full_name,email,department_id";
+const headers = "employee_code,full_name,email,company_name,phone,department_id";
 const departments = [{ id: 4, name: "Facilities", is_active: true }, { id: 6, name: "Inactive", is_active: false }];
-const csv = `${headers}\nEMP-01,Fictional Person,Person@example.test,4`;
+const csv = `${headers}\nEMP-01,Fictional Person,Person@example.test,Example Company,+1 202 555 0101,4`;
 const employees = parseEmployeeCsv(csv, departments);
 const requestId = "22222222-2222-4222-8222-222222222222";
 const result = { batch_id: 8, employees: [{ employee_id: 2, qr_id: 3, email_id: 4 }], replayed: false };
@@ -22,18 +22,18 @@ const setup = request => {
 };
 
 test("CSV parsing supports reordered headers, BOM, CRLF and quoted commas", () => {
-  const rows = parseEmployeeCsv('\uFEFFemail,department_id,full_name,employee_code\r\nPerson@example.test,4,"Person, Fictional",EMP-01\r\n', departments);
-  assert.deepEqual(rows, [{ employee_code: "EMP-01", full_name: "Person, Fictional", email: "person@example.test", department_id: 4 }]);
-  const quoted = parseEmployeeCsv(`${headers}\nEMP-01,"Fictional ""Name""",person@example.test,4`, departments);
+  const rows = parseEmployeeCsv('\uFEFFemail,department_id,phone,full_name,company_name,employee_code\r\nPerson@example.test,4,+1 202 555 0101,"Person, Fictional",Example Company,EMP-01\r\n', departments);
+  assert.deepEqual(rows, [{ employee_code: "EMP-01", full_name: "Person, Fictional", email: "person@example.test", company_name: "Example Company", phone: "+1 202 555 0101", department_id: 4 }]);
+  const quoted = parseEmployeeCsv(`${headers}\nEMP-01,"Fictional ""Name""",person@example.test,Example Company,+1 202 555 0101,4`, departments);
   assert.equal(quoted[0].full_name, 'Fictional "Name"');
 });
 
 test("invalid CSV structure and invalid employee fields fail before requests", () => {
-  for (const text of ["", headers, `wrong,headers\na,b`, `${headers},extra\na,b,c,4,d`, `${headers}\na,b,c,4,extra`, `${headers}\na,"unfinished,c,4`, `${headers}\na,"name"bad,c,4`, `${headers}\n,Name,person@example.test,4`, `${headers}\nA,Name,invalid-email,4`, `${headers}\nA,Name,person@example.test,6`, `${headers}\nA,Name,person@example.test,99`, `${headers}\nA,Name,person@example.test,1e2`, `${csv}\nemp-01,Other,other@example.test,4`]) assert.throws(() => parseEmployeeCsv(text, departments));
+  for (const text of ["", headers, `wrong,headers\na,b`, `${headers},extra\na,b,c,d,e,4,extra`, `${headers}\na,b,c,d,e,4,extra`, `${headers}\na,"unfinished,c,d,e,4`, `${headers}\na,"name"bad,c,d,e,4`, `${headers}\n,Name,person@example.test,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,invalid-email,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,Example Company,invalid,4`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,6`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,99`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,1e2`, `${csv}\nemp-01,Other,other@example.test,Example Company,+1 202 555 0102,4`]) assert.throws(() => parseEmployeeCsv(text, departments));
 });
 
 test("CSV enforces 100 rows and file size limits", () => {
-  const row = index => `E${index},Name ${index},p${index}@example.test,4`;
+  const row = index => `E${index},Name ${index},p${index}@example.test,Example Company,+1 202 555 ${String(index).padStart(4, "0")},4`;
   assert.equal(parseEmployeeCsv(`${headers}\n${Array.from({ length: 100 }, (_, index) => row(index)).join("\n")}`, departments).length, 100);
   assert.throws(() => parseEmployeeCsv(`${headers}\n${Array.from({ length: 101 }, (_, index) => row(index)).join("\n")}`, departments), /100/);
   assert.throws(() => parseEmployeeCsv("x".repeat(65537), departments), /64 KB/);

@@ -154,21 +154,19 @@ class PublicScannerApiTests(ApiTestCase):
         self.assertNotIn(self.token, response.text)
         self.assertEqual(self.harness.staff.authentication_calls, [])
 
-    def test_master_read_opens_only_the_visitor_form(self):
-        expected = {"kind": "MASTER", "next": "VISITOR_DETAILS", "request_id": self.request_id}
+    def test_master_read_returns_only_the_committed_meal_result(self):
+        expected = {"approved": True, "code": "APPROVED", "request_id": self.request_id,
+                    "serving_id": 25, "meal_ids": [31], "duplicate": False}
         self.scanner.read.return_value = expected
         response = self.post()
         self.assertEqual(response.json(), expected)
-        self.scanner.record.assert_not_called()
         self.harness.services.approvals.authorize.assert_not_called()
 
-    def test_visitor_submission_forwards_exactly_four_normalized_fields(self):
-        body = {"request_id": self.request_id, "token": self.token,
-                "visitor_details": {**self.details(), "email": " VISITOR@EXAMPLE.TEST "}}
-        response = self.post("/api/scanner/visitors", body)
-        self.assertTrue(response.json()["approved"])
-        self.assertEqual(self.scanner.record.call_args.args[3], self.details())
-        self.assertEqual(len(self.scanner.record.call_args.args), 4)
+    def test_scanner_exposes_no_visitor_details_submission_route(self):
+        response = self.post("/api/scanner/visitors", {
+            "request_id": self.request_id, "token": self.token, "visitor_details": self.details(),
+        })
+        self.assert_error(response, 404, "NOT_FOUND")
 
     def test_client_cannot_override_identity_or_service_settings(self):
         for extra in ({"staff_id": 1}, {"waiter_id": 1}, {"roles": ["ADMIN"]}, {"scanner_code": "OTHER"},
@@ -177,15 +175,6 @@ class PublicScannerApiTests(ApiTestCase):
                 response = self.post(body={"request_id": self.request_id, "token": self.token, **extra})
                 self.assert_error(response, 422, "INVALID_INPUT")
         self.scanner.read.assert_not_called()
-
-    def test_visitors_cannot_override_quantity_or_add_a_guest_category(self):
-        for extra in ({"quantity": 2}, {"kind": "GUEST"}, {"scanner_code": "OTHER"}, {"staff_id": 1}):
-            with self.subTest(extra=extra):
-                response = self.post("/api/scanner/visitors", {
-                    "request_id": self.request_id, "token": self.token, "visitor_details": self.details(), **extra,
-                })
-                self.assert_error(response, 422, "INVALID_INPUT")
-        self.scanner.record.assert_not_called()
 
     def test_scanner_cookie_does_not_grant_admin_or_staff_access(self):
         self.session()
@@ -252,13 +241,10 @@ class PublicScannerApiTests(ApiTestCase):
         self.assertNotIn("serving_id", response.text)
 
     def test_invalid_input_is_logged_without_echoing_qr_or_contact_data(self):
-        response = self.post("/api/scanner/visitors", {"request_id": self.request_id, "token": self.token,
-                                                       "visitor_details": {**self.details(), "email": "invalid"}})
+        response = self.post(body={"request_id": self.request_id, "token": self.token, "kind": "MASTER"})
         self.assert_error(response, 422, "INVALID_INPUT")
         self.scanner.record_invalid.assert_called_once()
-        self.scanner.record.assert_not_called()
         self.assertNotIn(self.token, response.text)
-        self.assertNotIn("Fictional Visitor", response.text)
 
     def test_limits_apply_once_before_each_valid_or_invalid_submission(self):
         self.post()

@@ -4,7 +4,7 @@ from uuid import UUID
 
 from .auth import audit, require_actor
 from .errors import DomainError
-from .security import normalize_email, payload_digest, required_text
+from .security import normalize_email, normalize_phone, payload_digest, required_text
 
 
 _UNSET = object()
@@ -85,31 +85,36 @@ class EmployeeService:
         full_name,
         email,
         department_id,
+        company_name=None,
+        phone=None,
         selfie_object_key=None,
         expires_at=None,
     ):
         employee_code = required_text(employee_code, "employee_code", 32)
         full_name = required_text(full_name, "full_name", 150)
         email = normalize_email(email)
+        company_name = None if company_name is None else required_text(company_name, "company_name", 150)
+        phone = None if phone is None else normalize_phone(phone, "EMPLOYEE_PHONE")
         selfie_object_key = _selfie_key(selfie_object_key)
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
             result = self._register(
                 tx, actor, employee_code, full_name, email, department_id,
+                company_name=company_name, phone=phone,
                 selfie_object_key=selfie_object_key, expires_at=expires_at,
             )
         return result
 
-    def _register(self, tx, actor, employee_code, full_name, email, department_id, *, selfie_object_key=None, expires_at=None, bulk_batch_id=None):
+    def _register(self, tx, actor, employee_code, full_name, email, department_id, *, company_name=None, phone=None, selfie_object_key=None, expires_at=None, bulk_batch_id=None):
         self._department(tx, department_id)
         now = tx.now()
         try:
             employee_id = tx.insert(
                 "INSERT INTO employees "
-                "(employee_code, full_name, email, department_id, is_active, "
-                "selfie_object_key, created_at, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (employee_code, full_name, email, department_id, True, selfie_object_key, now, now),
+                "(employee_code, full_name, email, company_name, phone, department_id, "
+                "is_active, selfie_object_key, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (employee_code, full_name, email, company_name, phone, department_id, True, selfie_object_key, now, now),
             )
         except Exception as exc:
             if getattr(exc, "errno", None) == 1062:
@@ -124,6 +129,7 @@ class EmployeeService:
             tx, actor.staff_id, "EMPLOYEE_REGISTERED", "employees", employee_id,
             after={
                 "employee_code": employee_code, "full_name": full_name, "email": email,
+                "company_name": company_name, "phone": phone,
                 "department_id": department_id, "selfie_object_key": selfie_object_key,
                 "qr_id": issued.qr_id, "email_id": email_id,
             },
@@ -153,12 +159,14 @@ class EmployeeService:
             raise DomainError("INVALID_EMPLOYEE_BATCH")
         normalized = []
         for employee in employees:
-            if not isinstance(employee, dict) or set(employee) != {"employee_code", "full_name", "email", "department_id"}:
+            if not isinstance(employee, dict) or set(employee) != {"employee_code", "full_name", "email", "company_name", "phone", "department_id"}:
                 raise DomainError("INVALID_EMPLOYEE_BATCH")
             normalized.append({
                 "employee_code": required_text(employee["employee_code"], "employee_code", 32),
                 "full_name": required_text(employee["full_name"], "full_name", 150),
                 "email": normalize_email(employee["email"]),
+                "company_name": required_text(employee["company_name"], "company_name", 150),
+                "phone": normalize_phone(employee["phone"], "EMPLOYEE_PHONE"),
                 "department_id": _positive_id(employee["department_id"], "department_id"),
             })
         if len({row["employee_code"].casefold() for row in normalized}) != len(normalized):
@@ -201,6 +209,8 @@ class EmployeeService:
         employee_code=_UNSET,
         full_name=_UNSET,
         email=_UNSET,
+        company_name=_UNSET,
+        phone=_UNSET,
         department_id=_UNSET,
         selfie_object_key=_UNSET,
     ):
@@ -212,6 +222,10 @@ class EmployeeService:
             supplied["full_name"] = required_text(full_name, "full_name", 150)
         if email is not _UNSET:
             supplied["email"] = normalize_email(email)
+        if company_name is not _UNSET:
+            supplied["company_name"] = required_text(company_name, "company_name", 150)
+        if phone is not _UNSET:
+            supplied["phone"] = normalize_phone(phone, "EMPLOYEE_PHONE")
         if department_id is not _UNSET:
             supplied["department_id"] = _positive_id(department_id, "department_id")
         if selfie_object_key is not _UNSET:
@@ -219,7 +233,7 @@ class EmployeeService:
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
             employee = tx.one(
-                "SELECT id, employee_code, full_name, email, department_id, "
+                "SELECT id, employee_code, full_name, email, company_name, phone, department_id, "
                 "selfie_object_key, is_active FROM employees WHERE id = %s FOR UPDATE",
                 (employee_id,),
             )
@@ -239,11 +253,14 @@ class EmployeeService:
             try:
                 tx.execute(
                     "UPDATE employees SET employee_code = %s, full_name = %s, email = %s, "
-                    "department_id = %s, selfie_object_key = %s, updated_at = %s WHERE id = %s",
+                    "company_name = %s, phone = %s, department_id = %s, selfie_object_key = %s, "
+                    "updated_at = %s WHERE id = %s",
                     (
                         updated["employee_code"],
                         updated["full_name"],
                         updated["email"],
+                        updated["company_name"],
+                        updated["phone"],
                         updated["department_id"],
                         updated["selfie_object_key"],
                         tx.now(),

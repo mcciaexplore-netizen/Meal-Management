@@ -27,7 +27,7 @@ export async function dashboard(target, context) {
 }
 
 function employeeForm(catalog, employee = {}) {
-  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments), employee.department_id)}</div>`;
+  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments), employee.department_id)}</div>`;
 }
 
 export async function employees(target, context) {
@@ -63,7 +63,7 @@ export async function employees(target, context) {
       photoInput.setBusy(true);
       try {
         const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
-        const result = await api("/employees", { method: "POST", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), department_id: departmentId } });
+        const result = await api("/employees", { method: "POST", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), company_name: data.get("company_name"), phone: data.get("phone"), department_id: departmentId } });
         const stillOpen = dialog.contains(form);
         photoInput.dispose();
         if (stillOpen) closeModal();
@@ -102,7 +102,7 @@ export async function employeeDetail(id, context, onChange) {
     dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div><div class="detail-section danger-zone"><h3>Remove employee</h3><p class="muted small">Removes the employee from administration, revokes their QR, and preserves historical audit records.</p><button class="button danger-outline" id="employee-remove">Remove employee</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
     formAction(dialog.querySelector("#employee-edit"), async data => {
       const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
-      await api(`/employees/${id}`, { method: "PATCH", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), department_id: departmentId } });
+      await api(`/employees/${id}`, { method: "PATCH", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), company_name: data.get("company_name"), phone: data.get("phone"), department_id: departmentId } });
       notify("Employee updated.");
       await onChange();
     });
@@ -169,8 +169,25 @@ function removalDialog(title, description, label, callback) {
   formAction(dialog.querySelector("form"), async data => callback(data.get("reason")));
 }
 
+function masterRequestDialog(title, values, callback) {
+  const dialog = modal(title, `<p class="muted">Create one QR for this visitor group. Each successful scan records one meal and reduces the remaining allowance by one.</p><form><div class="form-grid">${field("Company Name", "company_name", values?.company_name ?? "", "text", 'required maxlength="150" autocomplete="organization"')}${field("POC Name", "contact_name", values?.contact_name ?? "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email", "email", values?.email ?? "", "email", 'required maxlength="254" autocomplete="email"')}${field("Phone Number", "phone", values?.phone ?? "", "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Number of people", "meal_limit", values?.meal_limit ?? 1, "number", 'required min="1" max="65535" step="1"')}${field("Expiry, local time", "expires_at", "", "datetime-local")}</div><p class="field-help">The QR expires automatically after the final allowed meal. You may also set an earlier date and time.</p>${formEnd("Generate master QR")}</form>`);
+  formAction(dialog.querySelector("form"), async data => callback({
+    company_name: data.get("company_name"),
+    contact_name: data.get("contact_name"),
+    email: data.get("email"),
+    phone: data.get("phone"),
+    meal_limit: positive(data.get("meal_limit"), "number of people"),
+    expires_at: optionalExpiry(data.get("expires_at"))
+  }));
+}
+
+function masterQrStatus(row) {
+  if (row.exhausted_at || Number(row.meals_remaining) === 0) return badge("Expired", "danger");
+  return qrStatus(row);
+}
+
 export async function masters(target, context) {
-  target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Admin-office master QR", "One reusable QR for visitor meals.", '<button class="button primary" id="new-master">' + icon("plus") + ' Issue master QR</button>')}<div class="info-banner">${icon("qr")}<span>In Meal Scanner, scan this QR and enter Company Name, Name, Email, and Phone. Each completed submission records one visitor meal.</span></div><section class="panel"><div id="master-list">${loading()}</div><div class="pagination" id="master-pagination"></div></section>`;
+  target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Visitor master QRs", "Create one limited QR for each visitor group.", '<button class="button primary" id="new-master">' + icon("plus") + ' Create visitor QR</button>')}<div class="info-banner">${icon("qr")}<span>Enter the visitor group details and number of people here. The scanner records one meal per scan and expires the QR after the final allowed meal.</span></div><section class="panel"><div id="master-list">${loading()}</div><div class="pagination" id="master-pagination"></div></section>`;
   let rows = [];
   let cursor = null;
   async function load(append = false) {
@@ -178,7 +195,7 @@ export async function masters(target, context) {
     if (!context.isCurrent()) return;
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
-    target.querySelector("#master-list").innerHTML = rows.length ? table(["Credential", "Status", "Issued", "Expiry", ""], rows.map(row => `<tr><td><strong>Office master QR ${escape(rowId(row))}</strong></td><td>${qrStatus(row)}</td><td>${escape(timestamp(row.issued_at))}</td><td>${escape(row.expires_at ? timestamp(row.expires_at) : "No expiry")}</td><td>${action("open-master", rowId(row), "Manage")}</td></tr>`), "Master credentials") : empty("No master QR issued", "Issue an office credential before approving visitor meals.", "qr");
+    target.querySelector("#master-list").innerHTML = rows.length ? table(["Visitor group", "POC", "Meals", "Status", "Issued", ""], rows.map(row => `<tr><td><strong>${escape(row.company_name ?? `Legacy master QR ${rowId(row)}`)}</strong><span class="cell-subtitle">QR ${escape(rowId(row))}</span></td><td>${escape(row.contact_name ?? "—")}<span class="cell-subtitle">${escape(row.email ?? "")}</span></td><td>${escape(row.meals_used ?? 0)} / ${escape(row.meal_limit ?? "—")}<span class="cell-subtitle">${escape(row.meals_remaining ?? "—")} remaining</span></td><td>${masterQrStatus(row)}</td><td>${escape(timestamp(row.issued_at))}</td><td>${action("open-master", rowId(row), "Manage")}</td></tr>`), "Visitor master credentials") : empty("No visitor QR created", "Create a limited master QR for the next visitor group.", "qr");
     target.querySelectorAll('[data-action="open-master"]').forEach(button => button.onclick = () => detail(Number(button.dataset.id)));
     target.querySelector("#master-pagination").innerHTML = `<span>${rows.length} credentials shown</span>${cursor ? '<button class="button" id="more-master">Load more</button>' : ""}`;
     target.querySelector("#more-master")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
@@ -188,10 +205,10 @@ export async function masters(target, context) {
     try {
       const qr = await api(`/master-qrs/${id}`);
       if (!dialog.open) return;
-      dialog.querySelector(".modal-content").innerHTML = `${qrCard(qr)}<p class="field-help">Keep this reusable QR private. Meal Scanner records one visitor meal after entering the visitor's company, name, email, and phone.</p><div class="stack-actions"><button class="button" id="replace-master">${qr.revoked_at ? "Issue new master QR" : "Replace master QR"}</button>${!qr.revoked_at ? '<button class="button danger-outline" id="revoke-master">Revoke master QR</button>' : ""}<a class="button primary" href="${escape(context.scanner_url)}">Open Meal Scanner</a></div>`;
-      dialog.querySelector("#replace-master").onclick = () => expiryDialog(qr.revoked_at ? "Issue new master QR" : "Replace master QR", async expiresAt => {
-        const result = await api(qr.revoked_at ? "/master-qrs" : `/master-qrs/${id}/replace`, { method: "POST", body: { expires_at: expiresAt } });
-        notify(qr.revoked_at ? "New master QR issued." : "Master QR replaced. Previous credential revoked.");
+      dialog.querySelector(".modal-content").innerHTML = `${qrCard(qr)}<div class="detail-grid"><div><span>Company</span><strong>${escape(qr.company_name ?? "Legacy credential")}</strong></div><div><span>POC</span><strong>${escape(qr.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escape(qr.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escape(qr.phone ?? "—")}</strong></div><div><span>Meals recorded</span><strong>${escape(qr.meals_used ?? 0)} of ${escape(qr.meal_limit ?? "—")}</strong></div><div><span>Meals remaining</span><strong>${escape(qr.meals_remaining ?? "—")}</strong></div></div><p class="field-help">Each deliberate scan records one meal. After the final allowance is committed, this QR is expired automatically.</p><div class="stack-actions"><button class="button" id="replace-master">Create another visitor QR</button>${!qr.revoked_at && !qr.exhausted_at ? '<button class="button danger-outline" id="revoke-master">Revoke master QR</button>' : ""}<a class="button primary" href="${escape(context.scanner_url)}">Open Meal Scanner</a></div>`;
+      dialog.querySelector("#replace-master").onclick = () => masterRequestDialog("Create another visitor QR", qr, async body => {
+        const result = await api("/master-qrs", { method: "POST", body });
+        notify("Visitor master QR created.");
         await load();
         await detail(result.qr_id ?? result.id);
       });
@@ -203,9 +220,9 @@ export async function masters(target, context) {
       }));
     } catch (error) { if (dialog.open) dialog.querySelector(".modal-content").innerHTML = errorMessage(error); }
   }
-  target.querySelector("#new-master").onclick = () => expiryDialog("Issue master QR", async expiresAt => {
-    const result = await api("/master-qrs", { method: "POST", body: { expires_at: expiresAt } });
-    notify("Master QR issued.");
+  target.querySelector("#new-master").onclick = () => masterRequestDialog("Create visitor master QR", null, async body => {
+    const result = await api("/master-qrs", { method: "POST", body });
+    notify("Visitor master QR created.");
     await load();
     await detail(result.qr_id ?? result.id);
   });
@@ -237,7 +254,7 @@ export function mealTable(rows, removable = false) {
   if (!rows.length) return empty("No meals in this period", "Try a different date range or record a serving.", "plate");
   const headers = ["Meal", "Employee / visitor", "Company", "Email", "Phone", "Category", "Service", "Waiter", "Location", "Date & time"];
   if (removable) headers.push("");
-  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.visitor_email ?? "—")}</td><td>${escape(row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${escape(row.meal_type_name ?? row.meal_type_code ?? row.meal_type_id)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td>${removable ? `<td>${action("meal-remove", row.meal_id ?? row.id, "Remove", "small-button danger-outline")}</td>` : ""}</tr>`), "Meal records");
+  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.employee_company_name ?? row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.employee_email ?? row.visitor_email ?? "—")}</td><td>${escape(row.employee_phone ?? row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${escape(row.meal_type_name ?? row.meal_type_code ?? row.meal_type_id)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td>${removable ? `<td>${action("meal-remove", row.meal_id ?? row.id, "Remove", "small-button danger-outline")}</td>` : ""}</tr>`), "Meal records");
 }
 
 function scanTable(rows) {

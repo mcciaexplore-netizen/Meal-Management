@@ -58,6 +58,8 @@ class MealServicesFixture(IsolatedMySQLTestCase):
             "Fictional Employee",
             f"employee-{suffix}@example.test",
             self.department_id,
+            company_name="Fictional Example Company",
+            phone="+1 202 555 0101",
             selfie_object_key=f"selfies/{suffix}.jpg",
         )
         preview = self.qr.email_queue.preview(self.admin_context, registration.email_id)
@@ -437,6 +439,9 @@ class MealServicesMySQLTests(MealServicesFixture):
         self.assertEqual(included[0]["served_at"], boundary)
         self.assertEqual(included[0]["waiter_id"], self.waiter_id)
         self.assertEqual(included[0]["location_id"], self.location_id)
+        self.assertEqual(included[0]["employee_company_name"], "Fictional Example Company")
+        self.assertEqual(included[0]["employee_email"], self.scalar("SELECT email FROM employees WHERE id = %s", (registration.employee_id,)))
+        self.assertEqual(included[0]["employee_phone"], "+1 202 555 0101")
         self.assertEqual(excluded, [])
 
     def test_date_range_report_counts_meals_and_servings_separately(self):

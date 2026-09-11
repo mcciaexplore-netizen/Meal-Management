@@ -19,7 +19,7 @@ class EmployeeEmailApiTests(unittest.TestCase):
         self.harness.app.state.email_actions = self.actions
         self.bulk = {
             "request_id": str(uuid4()),
-            "employees": [{"employee_code": "TEST-ONE", "full_name": "Fictional Employee", "email": "one@example.test", "department_id": 1}],
+            "employees": [{"employee_code": "TEST-ONE", "full_name": "Fictional Employee", "email": "one@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department_id": 1}],
         }
         self.harness.services.employees.register_bulk.return_value = {
             "batch_id": 4, "employees": [{"employee_id": 7, "qr_id": 101, "email_id": 20}], "replayed": False,

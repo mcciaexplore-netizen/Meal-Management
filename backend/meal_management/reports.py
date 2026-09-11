@@ -43,6 +43,8 @@ class ReportService:
             records = tx.all(
                 "SELECT m.id AS meal_id, m.served_at, s.id AS serving_id, "
                 "s.employee_id, e.employee_code, e.full_name AS employee_name, "
+                "e.company_name AS employee_company_name, e.email AS employee_email, "
+                "e.phone AS employee_phone, "
                 "s.meal_type_id, t.code AS meal_type_code, t.name AS meal_type_name, "
                 "s.waiter_id, w.display_name AS waiter_name, "
                 "s.location_id, l.code AS location_code, l.name AS location_name, "

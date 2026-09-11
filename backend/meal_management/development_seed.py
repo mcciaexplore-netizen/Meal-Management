@@ -204,13 +204,17 @@ class DevelopmentSeedService:
             for (key, name, email), password in zip(WAITERS, waiter_passwords):
                 waiter_id = staff.create_staff(context, name, email, password, ["WAITER"])
                 self._own(tx, actor.staff_id, key, "WAITER", waiter_id, name)
-            master = qr.issue_master(context)
+            master = qr.issue_master(
+                context, company_name="TEST Example Visitors", contact_name="TEST Visitor Lead",
+                email="visitor.lead@example.test", phone="+1 202 555 0199", meal_limit=10,
+            )
             self._own(tx, actor.staff_id, "master", "MASTER", master.qr_id, MASTER_LABEL, credential=master)
             for code, name, scenario, expected_code in EMPLOYEES:
                 expiry = _EXPIRING_FIXTURE if scenario == "EXPIRED" else None
                 registered = employees.register(
                     context, employee_code=code, full_name=name, email=code.lower() + "@example.test",
-                    department_id=department_id, expires_at=expiry,
+                    department_id=department_id, company_name="TEST Example Company",
+                    phone="+1 202 555 " + code[-3:], expires_at=expiry,
                 )
                 credential = self._archive_registered(tx, qr, registered)
                 self._own(

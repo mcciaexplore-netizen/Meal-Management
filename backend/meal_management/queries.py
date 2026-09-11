@@ -62,8 +62,8 @@ class QueryService:
         if q is not None:
             term = required_text(q, "SEARCH", 150)
             term = term.replace("=", "==").replace("%", "=%").replace("_", "=_")
-            filters.append("(e.employee_code LIKE %s ESCAPE '=' OR e.full_name LIKE %s ESCAPE '=' OR e.email LIKE %s ESCAPE '=')")
-            params.extend(["%" + term + "%"] * 3)
+            filters.append("(e.employee_code LIKE %s ESCAPE '=' OR e.full_name LIKE %s ESCAPE '=' OR e.email LIKE %s ESCAPE '=' OR e.company_name LIKE %s ESCAPE '=' OR e.phone LIKE %s ESCAPE '=')")
+            params.extend(["%" + term + "%"] * 5)
         if active is not None:
             if type(active) is not bool:
                 raise DomainError("INVALID_ACTIVE_FILTER")
@@ -73,7 +73,7 @@ class QueryService:
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             rows = tx.all(
-                "SELECT e.id, e.employee_code, e.full_name, e.email, e.department_id, "
+                "SELECT e.id, e.employee_code, e.full_name, e.email, e.company_name, e.phone, e.department_id, "
                 "d.name AS department_name, e.is_active, e.selfie_object_key, e.created_at, e.updated_at "
                 "FROM employees e JOIN departments d ON d.id = e.department_id WHERE "
                 + " AND ".join(filters) + " ORDER BY e.id LIMIT %s",
@@ -86,7 +86,7 @@ class QueryService:
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             row = tx.one(
-                "SELECT e.id, e.employee_code, e.full_name, e.email, e.department_id, "
+                "SELECT e.id, e.employee_code, e.full_name, e.email, e.company_name, e.phone, e.department_id, "
                 "d.name AS department_name, e.is_active, e.selfie_object_key, e.created_at, e.updated_at "
                 "FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.id = %s "
                 "AND NOT EXISTS (SELECT 1 FROM employee_archives x WHERE x.employee_id = e.id)",
@@ -119,9 +119,11 @@ class QueryService:
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             rows = tx.all(
-                "SELECT id, id AS qr_id, kind, issued_by, issued_at, expires_at, revoked_at, "
-                "revoked_by, revocation_reason FROM qr_credentials "
-                "WHERE kind = 'MASTER' AND id > %s ORDER BY id LIMIT %s",
+                "SELECT q.id, q.id AS qr_id, q.kind, q.issued_by, q.issued_at, q.expires_at, q.revoked_at, "
+                "q.revoked_by, q.revocation_reason, a.company_name, a.contact_name, a.email, a.phone, "
+                "a.meal_limit, a.meals_used, a.meal_limit - a.meals_used AS meals_remaining, a.exhausted_at "
+                "FROM qr_credentials q LEFT JOIN master_qr_allocations a ON a.qr_id = q.id "
+                "WHERE q.kind = 'MASTER' AND q.id > %s ORDER BY q.id LIMIT %s",
                 (after_id, limit + 1),
             )
         return _page(rows, limit)
@@ -131,8 +133,11 @@ class QueryService:
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             row = tx.one(
-                "SELECT id, id AS qr_id, kind, employee_id, issued_by, issued_at, expires_at, "
-                "revoked_at, revoked_by, revocation_reason FROM qr_credentials WHERE id = %s",
+                "SELECT q.id, q.id AS qr_id, q.kind, q.employee_id, q.issued_by, q.issued_at, q.expires_at, "
+                "q.revoked_at, q.revoked_by, q.revocation_reason, a.company_name, a.contact_name, a.email, "
+                "a.phone, a.meal_limit, a.meals_used, a.meal_limit - a.meals_used AS meals_remaining, "
+                "a.exhausted_at FROM qr_credentials q LEFT JOIN master_qr_allocations a ON a.qr_id = q.id "
+                "WHERE q.id = %s",
                 (qr_id,),
             )
             if row is None:
@@ -188,7 +193,8 @@ class QueryService:
             rows = tx.all(
                 "SELECT m.id, m.id AS meal_id, m.served_at, m.unit_number, s.id AS serving_id, "
                 "s.request_id, s.kind, s.quantity AS serving_quantity, s.employee_id, "
-                "e.employee_code, e.full_name AS employee_name, s.meal_type_id, "
+                "e.employee_code, e.full_name AS employee_name, e.company_name AS employee_company_name, "
+                "e.email AS employee_email, e.phone AS employee_phone, s.meal_type_id, "
                 "t.code AS meal_type_code, t.name AS meal_type_name, s.waiter_id, "
                 "w.display_name AS waiter_name, s.location_id, l.name AS location_name, "
                 "s.scanner_id, d.code AS scanner_code, "

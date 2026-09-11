@@ -120,7 +120,7 @@ class FakeSeedQr:
             }
             return IssuedQr(identifier, token)
 
-    def issue_master(self, context):
+    def issue_master(self, context, **values):
         return self.create(context, "MASTER")
 
     def retrieve(self, context, qr_id):

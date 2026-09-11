@@ -25,6 +25,13 @@ def normalize_email(value):
     return value.lower()
 
 
+def normalize_phone(value, field="PHONE"):
+    value = required_text(value, field, 32)
+    if not re.fullmatch(r"\+?[0-9 ()\-.]+", value) or not 7 <= sum(character.isdigit() for character in value) <= 15:
+        raise DomainError("INVALID_" + field)
+    return value
+
+
 def utc_naive(value):
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise DomainError("TIMEZONE_REQUIRED")

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, Strict
 
 from .errors import DomainError
 from .meals import normalize_visitor_details
+from .security import normalize_phone
 
 
 Identifier = Annotated[StrictInt, Field(gt=0, le=2**64 - 1)]
@@ -42,24 +43,56 @@ class EmployeeInput(InputModel):
     employee_code: Annotated[str, Field(min_length=1, max_length=32)]
     full_name: Name
     email: Annotated[str, Field(min_length=3, max_length=254)]
+    company_name: Name
+    phone: Annotated[str, Field(min_length=7, max_length=32)]
     department_id: Identifier
     selfie_object_key: Annotated[str, Field(min_length=1, max_length=512)] | None = None
     expires_at: datetime | None = None
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value):
+        try:
+            return normalize_phone(value, "EMPLOYEE_PHONE")
+        except DomainError:
+            raise ValueError("Invalid employee phone") from None
 
 
 class EmployeeUpdate(InputModel):
     employee_code: Annotated[str, Field(min_length=1, max_length=32)] | None = None
     full_name: Name | None = None
     email: Annotated[str, Field(min_length=3, max_length=254)] | None = None
+    company_name: Name | None = None
+    phone: Annotated[str, Field(min_length=7, max_length=32)] | None = None
     department_id: Identifier | None = None
     selfie_object_key: Annotated[str, Field(min_length=1, max_length=512)] | None = None
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value):
+        if value is None:
+            return None
+        try:
+            return normalize_phone(value, "EMPLOYEE_PHONE")
+        except DomainError:
+            raise ValueError("Invalid employee phone") from None
 
 
 class BulkEmployeeInput(InputModel):
     employee_code: Annotated[str, Field(min_length=1, max_length=32)]
     full_name: Name
     email: Annotated[str, Field(min_length=3, max_length=254)]
+    company_name: Name
+    phone: Annotated[str, Field(min_length=7, max_length=32)]
     department_id: Identifier
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value):
+        try:
+            return normalize_phone(value, "EMPLOYEE_PHONE")
+        except DomainError:
+            raise ValueError("Invalid employee phone") from None
 
 
 class BulkEmployeesInput(InputModel):
@@ -84,6 +117,30 @@ class EmailProcessInput(EmailApprovalInput):
 
 class ExpiryInput(InputModel):
     expires_at: datetime | None = None
+
+
+class MasterQrInput(InputModel):
+    company_name: Name
+    contact_name: Name
+    email: Annotated[str, Field(min_length=3, max_length=254)]
+    phone: Annotated[str, Field(min_length=7, max_length=32)]
+    meal_limit: Quantity
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def normalized(self):
+        try:
+            values = normalize_visitor_details({
+                "company_name": self.company_name, "name": self.contact_name,
+                "email": self.email, "phone": self.phone,
+            })
+        except DomainError:
+            raise ValueError("Invalid visitor group details") from None
+        self.company_name = values["company_name"]
+        self.contact_name = values["name"]
+        self.email = values["email"]
+        self.phone = values["phone"]
+        return self
 
 
 class RevokeInput(InputModel):
@@ -182,10 +239,6 @@ class ScannerReadBody(InputModel):
         if not 1 <= len(value.get_secret_value()) <= 256:
             raise ValueError("Invalid credential length")
         return value
-
-
-class ScannerVisitorBody(ScannerReadBody):
-    visitor_details: VisitorDetailsInput
 
 
 class ScannerActivationBody(InputModel):
