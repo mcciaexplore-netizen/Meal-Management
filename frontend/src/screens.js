@@ -6,6 +6,7 @@ import { bindEmployeePhoto, employeePhotoField, employeePhotoLimitLabel, validat
 import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "./email_delivery.js";
 import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
+import { bulkRemovalPayload } from "./bulk_removal.js";
 
 const active = rows => (rows ?? []).filter(row => row.is_active !== false && row.is_active !== 0);
 const rowId = row => row.id ?? row.qr_id ?? row.authorization_id;
@@ -461,6 +462,74 @@ export async function emails(target, context) {
   return () => operation.cancel();
 }
 
+function bulkRemovalRows(kind, rows) {
+  if (kind === "employees") {
+    return rows.map(row => `<tr><td><input class="bulk-record-selection" type="checkbox" name="record_id" value="${escape(row.id)}" aria-label="Select ${escape(row.full_name)}"></td><td><strong>${escape(row.full_name)}</strong><span class="cell-subtitle">${escape(row.email)}</span></td><td class="mono">${escape(row.employee_code)}</td><td>${badge(row.is_active ? "Active" : "Inactive", row.is_active ? "positive" : "neutral")}</td></tr>`);
+  }
+  return rows.map(row => `<tr><td><input class="bulk-record-selection" type="checkbox" name="record_id" value="${escape(row.meal_id ?? row.id)}" aria-label="Select meal ${escape(row.meal_id ?? row.id)}"></td><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? row.visitor_company_name ?? "")}</span></td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${escape(timestamp(row.served_at))}</td></tr>`);
+}
+
+function showBulkRemovalSelection(dialog, context, kind, rows) {
+  const employeeMode = kind === "employees";
+  const name = employeeMode ? "employees" : "meal records";
+  const description = employeeMode
+    ? "Selected employees will be removed from administration, deactivated, and have their active QRs revoked. Their historical meals and audit records remain."
+    : "Selected meals will be removed from normal history and totals. Their serving, scan, and audit evidence remains.";
+  const headers = employeeMode ? ["Select", "Employee", "Code", "Status"] : ["Select", "Meal", "Employee / visitor", "Category", "Recorded"];
+  const content = dialog.querySelector(".modal-content");
+  if (!rows.length) {
+    content.innerHTML = empty(`No ${name} available`, employeeMode ? "There are no current employees to remove." : "No meals were recorded in the selected dates.", employeeMode ? "people" : "plate");
+    return;
+  }
+  content.innerHTML = `<p class="muted">${escape(description)}</p><form id="bulk-removal-form"><div class="bulk-removal-toolbar"><button type="button" class="small-button" id="select-removal-records">Select shown</button><button type="button" class="small-button" id="clear-removal-records">Clear</button><strong id="bulk-removal-count">0 selected</strong></div>${table(headers, bulkRemovalRows(kind, rows), `Select ${name} to remove`)}${field("Reason for removal", "reason", "", "text", 'required maxlength="255" autocomplete="off"')}<label class="confirmation-check"><input type="checkbox" name="confirmed" required><span>I understand this batch removal cannot be reversed from the dashboard.</span></label><p class="field-help">A maximum of 100 records can be removed in one batch. The complete batch succeeds or fails together.</p>${formEnd(`Remove selected ${name}`)}</form>`;
+  const form = content.querySelector("#bulk-removal-form");
+  const checkboxes = Array.from(form.querySelectorAll('[name="record_id"]'));
+  const count = form.querySelector("#bulk-removal-count");
+  const updateCount = () => {
+    const selected = checkboxes.filter(input => input.checked).length;
+    count.textContent = `${selected} selected`;
+  };
+  checkboxes.forEach(input => input.addEventListener("change", updateCount));
+  form.querySelector("#select-removal-records").onclick = () => {
+    checkboxes.forEach((input, index) => { input.checked = index < 100; });
+    if (checkboxes.length > 100) notify("The first 100 records were selected. Remove another batch afterward.");
+    updateCount();
+  };
+  form.querySelector("#clear-removal-records").onclick = () => {
+    checkboxes.forEach(input => { input.checked = false; });
+    updateCount();
+  };
+  formAction(form, async data => {
+    const payload = bulkRemovalPayload(kind, data.getAll("record_id"), data.get("reason"));
+    const endpoint = employeeMode ? "/employees/bulk-remove" : "/meals/bulk-remove";
+    const result = await api(endpoint, { method: "POST", body: payload });
+    closeModal();
+    notify(`${result.removed_count} ${name} removed.`);
+    if (context.isCurrent()) await context.reload();
+  });
+}
+
+async function openBulkEmployeeRemoval(context) {
+  const dialog = modal("Bulk remove employees", loading(), true);
+  try {
+    const rows = await allPages("/employees");
+    if (dialog.open && context.isCurrent()) showBulkRemovalSelection(dialog, context, "employees", rows);
+  } catch (error) {
+    if (dialog.open && context.isCurrent()) dialog.querySelector(".modal-content").innerHTML = errorMessage(error);
+  }
+}
+
+function openBulkMealRemoval(context) {
+  const month = new Date();
+  month.setDate(1);
+  const dialog = modal("Bulk remove meal records", `<p class="muted">Choose the dates containing the meal records you want to remove.</p><form id="bulk-meal-range"><div class="form-grid">${field("From", "start", dateInput(month), "date", "required")}${field("Through", "end", dateInput(), "date", "required")}</div>${formEnd("Load meal records")}</form>`, true);
+  formAction(dialog.querySelector("#bulk-meal-range"), async data => {
+    const range = dateRange(data.get("start"), data.get("end"));
+    const rows = await allPages(`/reports/meals?${query(range)}`);
+    if (dialog.open && context.isCurrent()) showBulkRemovalSelection(dialog, context, "meals", rows);
+  });
+}
+
 export async function settings(target, context) {
   const configs = [
     { key: "departments", title: "Departments", rows: context.catalog.departments, fields: field("Department name", "name", "", "text", 'required maxlength="100"') },
@@ -468,7 +537,7 @@ export async function settings(target, context) {
     { key: "locations", title: "Serving locations", rows: context.catalog.locations, fields: field("Code", "code", "", "text", 'required maxlength="32"') + field("Name", "name", "", "text", 'required maxlength="150"') },
     { key: "scanners", title: "Scanning counters", rows: context.catalog.scanners, fields: field("Scanner code", "code", "", "text", 'required maxlength="64"') + field("Name", "name", "", "text", 'required maxlength="150"') + selectField("Location", "location_id", active(context.catalog.locations)) }
   ];
-  target.innerHTML = `${heading("OFFICE SETUP", "Service settings", "Set up departments, meal services, locations, and registered scanning counters.")}<div class="settings-grid">${configs.map(config => `<section class="panel"><div class="panel-heading"><h2>${config.title}</h2><button class="small-button" data-add-catalog="${config.key}">Add</button></div>${config.rows?.length ? `<ul class="catalog-list">${config.rows.map(row => `<li><span><strong>${escape(row.name)}</strong>${row.code ? `<small>${escape(row.code)}</small>` : ""}</span>${badge(row.is_active ? "Active" : "Inactive", row.is_active ? "positive" : "neutral")}</li>`).join("")}</ul>` : empty("Nothing configured yet", "Add an entry to get this workspace ready.", "settings")}</section>`).join("")}</div><section class="panel"><div class="panel-heading"><div><h2>Staff accounts</h2><p class="muted small">Workspace access for administrators and waiters.</p></div><button class="button" id="new-staff">${icon("plus")} Add staff</button></div><div id="staff-list">${loading()}</div><div class="pagination" id="staff-pagination"></div></section>`;
+  target.innerHTML = `${heading("OFFICE SETUP", "Service settings", "Set up departments, meal services, locations, and registered scanning counters.")}<div class="settings-grid">${configs.map(config => `<section class="panel"><div class="panel-heading"><h2>${config.title}</h2><button class="small-button" data-add-catalog="${config.key}">Add</button></div>${config.rows?.length ? `<ul class="catalog-list">${config.rows.map(row => `<li><span><strong>${escape(row.name)}</strong>${row.code ? `<small>${escape(row.code)}</small>` : ""}</span>${badge(row.is_active ? "Active" : "Inactive", row.is_active ? "positive" : "neutral")}</li>`).join("")}</ul>` : empty("Nothing configured yet", "Add an entry to get this workspace ready.", "settings")}</section>`).join("")}</div><section class="panel"><div class="panel-heading"><div><h2>Staff accounts</h2><p class="muted small">Workspace access for administrators and waiters.</p></div><button class="button" id="new-staff">${icon("plus")} Add staff</button></div><div id="staff-list">${loading()}</div><div class="pagination" id="staff-pagination"></div></section><section class="panel danger-zone bulk-removal-panel"><div class="panel-heading"><div><h2>Bulk data removal</h2><p class="muted small">Remove employee and meal records in audited batches.</p></div></div><div class="bulk-removal-actions"><div><h3>Employees</h3><p class="muted small">Select up to 100 employees. Active QRs are revoked automatically.</p><button class="button danger-outline" id="bulk-remove-employees">Select employees</button></div><div><h3>Meal records</h3><p class="muted small">Choose a date range, then select up to 100 employee or visitor meals.</p><button class="button danger-outline" id="bulk-remove-meals">Select meals</button></div></div></section>`;
   target.querySelectorAll("[data-add-catalog]").forEach(button => button.onclick = () => {
     const config = configs.find(item => item.key === button.dataset.addCatalog);
     const dialog = modal(`Add to ${config.title.toLowerCase()}`, `<form>${config.fields}${formEnd("Save")}</form>`);
@@ -513,5 +582,7 @@ export async function settings(target, context) {
       await loadStaff();
     });
   };
+  target.querySelector("#bulk-remove-employees").onclick = () => openBulkEmployeeRemoval(context);
+  target.querySelector("#bulk-remove-meals").onclick = () => openBulkMealRemoval(context);
   await loadStaff();
 }

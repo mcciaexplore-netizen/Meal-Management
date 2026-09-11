@@ -24,7 +24,7 @@ If a different target is displayed, stop and review the configuration. Do not ty
 
 Success prints `Aiven account meal_runtime@% created and verified.` and the path to `var/private/vercel/database-runtime.env`. That file has owner-only permissions and sits in a private directory ignored by Git. It contains database connection settings only; it is not a replacement for a complete application environment file. Do not paste its contents into chat or commit it.
 
-Before reporting success, the command verifies MySQL 8.4, UTC, the selected database, negotiated TLS with certificate and hostname verification, migrations 001–006 and their checksums, the exact runtime account, mandatory SSL, no active or mandatory roles, and exactly the approved grants. These read-only checks do not verify application writes, triggers, concurrent scans, email delivery, or hosted execution. Those checks remain separate.
+Before reporting success, the command verifies MySQL 8.4, UTC, the selected database, negotiated TLS with certificate and hostname verification, migrations 001–007 and their checksums, the exact runtime account, mandatory SSL, no active or mandatory roles, and exactly the approved grants. The runtime account needs INSERT on `employee_archives` and `meal_voids` for administrator removals. These read-only checks do not verify application writes, triggers, concurrent scans, email delivery, or hosted execution. Those checks remain separate.
 
 The command refuses existing credentials files, unsafe paths, an insecure output directory, or a mismatched confirmation. Plain `CREATE USER` refuses an existing account without resetting its password or adding grants to it. Grants start only after account creation returns successfully.
 

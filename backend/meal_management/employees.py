@@ -32,6 +32,15 @@ def _selfie_key(value):
     return value
 
 
+def _employee_ids(values):
+    if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= 100:
+        raise DomainError("INVALID_EMPLOYEE_IDS")
+    identifiers = tuple(_positive_id(value, "employee_id") for value in values)
+    if len(set(identifiers)) != len(identifiers):
+        raise DomainError("INVALID_EMPLOYEE_IDS")
+    return tuple(sorted(identifiers))
+
+
 class EmployeeService:
     def __init__(self, db, qr_service):
         self.db = db
@@ -355,3 +364,65 @@ class EmployeeService:
                 after={"archived_at": archived_at, "reason": reason},
             )
         return archived_at
+
+    def archive_bulk(self, context, employee_ids, reason):
+        identifiers = _employee_ids(employee_ids)
+        reason = required_text(reason, "removal_reason", 255)
+        placeholders = ", ".join(["%s"] * len(identifiers))
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            employees = tx.all(
+                "SELECT id, employee_code, full_name, email, is_active "
+                f"FROM employees WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE",
+                identifiers,
+            )
+            if tuple(employee["id"] for employee in employees) != identifiers:
+                raise DomainError("EMPLOYEE_NOT_FOUND")
+            archived = tx.all(
+                "SELECT employee_id FROM employee_archives "
+                f"WHERE employee_id IN ({placeholders}) ORDER BY employee_id FOR SHARE",
+                identifiers,
+            )
+            if archived:
+                raise DomainError("EMPLOYEE_ALREADY_REMOVED")
+            credentials = tx.all(
+                "SELECT id, employee_id, revoked_at FROM qr_credentials "
+                f"WHERE employee_id IN ({placeholders}) AND revoked_at IS NULL "
+                "ORDER BY employee_id, id FOR UPDATE",
+                identifiers,
+            )
+            credentials_by_employee = {credential["employee_id"]: credential for credential in credentials}
+            archived_at = tx.now()
+            for employee in employees:
+                employee_id = employee["id"]
+                tx.insert(
+                    "INSERT INTO employee_archives "
+                    "(employee_id, archived_by_staff_id, reason, archived_at) VALUES (%s, %s, %s, %s)",
+                    (employee_id, actor.staff_id, reason, archived_at),
+                )
+                tx.execute(
+                    "UPDATE employees SET is_active = %s, updated_at = %s WHERE id = %s",
+                    (False, archived_at, employee_id),
+                )
+                credential = credentials_by_employee.get(employee_id)
+                if credential is not None:
+                    self.qr_service._revoke(tx, actor.staff_id, credential, reason)
+                audit(
+                    tx,
+                    actor.staff_id,
+                    "EMPLOYEE_REMOVED",
+                    "employees",
+                    employee_id,
+                    before={
+                        "employee_code": employee["employee_code"],
+                        "full_name": employee["full_name"],
+                        "email": employee["email"],
+                        "is_active": bool(employee["is_active"]),
+                    },
+                    after={"archived_at": archived_at, "reason": reason, "bulk": True},
+                )
+        return {
+            "employee_ids": list(identifiers),
+            "removed_count": len(identifiers),
+            "removed_at": archived_at,
+        }

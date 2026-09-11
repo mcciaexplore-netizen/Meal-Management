@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeesInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -251,6 +251,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def employee_bulk_create(body: BulkEmployeesInput, ctx=Depends(admin)):
         return services.employees.register_bulk(ctx, str(body.request_id), [item.model_dump() for item in body.employees])
 
+    @app.post("/api/employees/bulk-remove")
+    def employee_bulk_remove(body: BulkEmployeeRemovalInput, ctx=Depends(admin)):
+        return services.employees.archive_bulk(ctx, body.employee_ids, body.reason)
+
     @app.get("/api/employees/{employee_id}")
     def employee_get(employee_id: PathIdentifier, ctx=Depends(admin)):
         return app.state.queries.employee(ctx, employee_id)
@@ -429,6 +433,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def meal_history(start: datetime, end: datetime, limit: Limit = 50, after_id: Cursor = 0,
                      employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
         return app.state.queries.meal_history(ctx, start, end, limit=limit, after_id=after_id, employee_id=employee_id)
+
+    @app.post("/api/meals/bulk-remove")
+    def meal_bulk_remove(body: BulkMealRemovalInput, ctx=Depends(admin)):
+        return services.meals.void_bulk(ctx, body.meal_ids, body.reason)
 
     @app.delete("/api/meals/{meal_id}")
     def meal_remove(meal_id: PathIdentifier, body: RemovalInput, ctx=Depends(admin)):

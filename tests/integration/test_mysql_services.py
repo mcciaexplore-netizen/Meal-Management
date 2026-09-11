@@ -455,6 +455,115 @@ class MealServicesMySQLTests(MealServicesFixture):
         self.assertEqual(report["totals"]["employee_meals"], 0)
         self.assertEqual(report["by_authorizing_admin"][0]["admin_id"], self.admin_id)
 
+    def test_removed_meal_is_excluded_from_history_and_totals_without_deleting_ledger(self):
+        from meal_management.queries import QueryService
+        from meal_management.reports import ReportService
+
+        registration, token = self.employee()
+        recorded = self.meals.record(self.waiter_context, self.scan(token))
+        meal_id = recorded.meal_ids[0]
+        served_at = self.scalar("SELECT served_at FROM meals WHERE id = %s", (meal_id,))
+        start = served_at.replace(tzinfo=timezone.utc)
+        end = start + timedelta(microseconds=1)
+        self.meals.void(self.admin_context, meal_id, "Integration correction")
+        history = QueryService(self.db).meal_history(self.admin_context, start, end)
+        totals = ReportService(self.db).meal_report(self.admin_context, start, end)
+        self.assertEqual(history["items"], [])
+        self.assertEqual(totals["totals"]["meal_count"], 0)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meals WHERE id = %s", (meal_id,)), 1)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id = %s", (meal_id,)), 1)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM servings WHERE id = %s", (recorded.serving_id,)), 1)
+        self.assertEqual(registration.employee_id, self.scalar("SELECT employee_id FROM servings WHERE id = %s", (recorded.serving_id,)))
+
+    def test_concurrent_meal_removal_creates_one_void_record(self):
+        from meal_management.errors import DomainError
+
+        _, token = self.employee()
+        meal_id = self.meals.record(self.waiter_context, self.scan(token)).meal_ids[0]
+        barrier = threading.Barrier(2)
+
+        def remove():
+            barrier.wait(timeout=10)
+            try:
+                self.meals.void(self.admin_context, meal_id, "Concurrent correction")
+                return "REMOVED"
+            except DomainError as error:
+                return error.code
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [future.result(timeout=30) for future in (pool.submit(remove), pool.submit(remove))]
+        self.assertEqual(sorted(results), ["MEAL_ALREADY_REMOVED", "REMOVED"])
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id = %s", (meal_id,)), 1)
+
+    def test_removed_employee_is_hidden_and_qr_is_revoked(self):
+        from meal_management.errors import DomainError
+        from meal_management.queries import QueryService
+
+        registration, _ = self.employee()
+        self.employees.archive(self.admin_context, registration.employee_id, "Integration duplicate")
+        with self.assertRaises(DomainError) as caught:
+            QueryService(self.db).employee(self.admin_context, registration.employee_id)
+        employee = self.rows("SELECT is_active FROM employees WHERE id = %s", (registration.employee_id,))[0]
+        credential = self.rows("SELECT revoked_at, token_ciphertext FROM qr_credentials WHERE id = %s", (registration.qr_id,))[0]
+        self.assertEqual(caught.exception.code, "EMPLOYEE_NOT_FOUND")
+        self.assertFalse(employee["is_active"])
+        self.assertIsNotNone(credential["revoked_at"])
+        self.assertIsNone(credential["token_ciphertext"])
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM employee_archives WHERE employee_id = %s", (registration.employee_id,)), 1)
+
+    def test_bulk_employee_removal_archives_all_selected_records_in_one_transaction(self):
+        from meal_management.errors import DomainError
+        from meal_management.queries import QueryService
+
+        first, _ = self.employee()
+        second, _ = self.employee()
+        result = self.employees.archive_bulk(
+            self.admin_context,
+            [second.employee_id, first.employee_id],
+            "Integration bulk cleanup",
+        )
+        self.assertEqual(result["employee_ids"], sorted([first.employee_id, second.employee_id]))
+        self.assertEqual(result["removed_count"], 2)
+        for registration in (first, second):
+            with self.assertRaises(DomainError) as caught:
+                QueryService(self.db).employee(self.admin_context, registration.employee_id)
+            self.assertEqual(caught.exception.code, "EMPLOYEE_NOT_FOUND")
+            self.assertEqual(self.scalar("SELECT COUNT(*) FROM employee_archives WHERE employee_id = %s", (registration.employee_id,)), 1)
+            self.assertIsNotNone(self.scalar("SELECT revoked_at FROM qr_credentials WHERE id = %s", (registration.qr_id,)))
+
+    def test_invalid_bulk_employee_selection_rolls_back_the_complete_batch(self):
+        from meal_management.errors import DomainError
+
+        registration, _ = self.employee()
+        missing_id = self.scalar("SELECT COALESCE(MAX(id), 0) + 1000 FROM employees")
+        with self.assertRaises(DomainError) as caught:
+            self.employees.archive_bulk(
+                self.admin_context,
+                [registration.employee_id, missing_id],
+                "Integration rollback check",
+            )
+        self.assertEqual(caught.exception.code, "EMPLOYEE_NOT_FOUND")
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM employee_archives WHERE employee_id = %s", (registration.employee_id,)), 0)
+        self.assertIsNone(self.scalar("SELECT revoked_at FROM qr_credentials WHERE id = %s", (registration.qr_id,)))
+
+    def test_bulk_meal_removal_excludes_every_selected_record_from_reports(self):
+        from meal_management.queries import QueryService
+
+        _, token = self.employee()
+        first = self.meals.record(self.waiter_context, self.scan(token))
+        second = self.meals.record(self.waiter_context, self.scan(token))
+        identifiers = [first.meal_ids[0], second.meal_ids[0]]
+        times = self.rows("SELECT MIN(served_at) AS first, MAX(served_at) AS last FROM meals WHERE id IN (%s, %s)", identifiers)[0]
+        result = self.meals.void_bulk(self.admin_context, identifiers[::-1], "Integration bulk correction")
+        self.assertEqual(result["meal_ids"], sorted(identifiers))
+        history = QueryService(self.db).meal_history(
+            self.admin_context,
+            times["first"].replace(tzinfo=timezone.utc),
+            times["last"].replace(tzinfo=timezone.utc) + timedelta(microseconds=1),
+        )
+        self.assertFalse(set(identifiers).intersection(row["meal_id"] for row in history["items"]))
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id IN (%s, %s)", identifiers), 2)
+
     def test_successful_retry_returns_original_approval_after_qr_revocation(self):
         registration, token = self.employee()
         scan = self.scan(token)

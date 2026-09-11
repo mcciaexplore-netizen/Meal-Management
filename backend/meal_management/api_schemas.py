@@ -94,6 +94,28 @@ class RemovalInput(InputModel):
     reason: Annotated[str, Field(min_length=1, max_length=255)]
 
 
+class BulkEmployeeRemovalInput(RemovalInput):
+    employee_ids: Annotated[list[Identifier], Field(min_length=1, max_length=100)]
+
+    @field_validator("employee_ids")
+    @classmethod
+    def unique_employee_ids(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("Employee identifiers must be unique")
+        return value
+
+
+class BulkMealRemovalInput(RemovalInput):
+    meal_ids: Annotated[list[Identifier], Field(min_length=1, max_length=100)]
+
+    @field_validator("meal_ids")
+    @classmethod
+    def unique_meal_ids(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("Meal identifiers must be unique")
+        return value
+
+
 class AuthorizationInput(InputModel):
     request_id: UUID
     master_qr_id: Identifier

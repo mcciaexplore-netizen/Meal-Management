@@ -31,6 +31,15 @@ def positive_integer(value, name, maximum=2**64 - 1):
     return value
 
 
+def positive_identifiers(values, name):
+    if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= 100:
+        raise DomainError("INVALID_" + name)
+    identifiers = tuple(positive_integer(value, name[:-1]) for value in values)
+    if len(set(identifiers)) != len(identifiers):
+        raise DomainError("INVALID_" + name)
+    return tuple(sorted(identifiers))
+
+
 def normalize_visitor_details(value):
     if not isinstance(value, dict) or set(value) != {"company_name", "name", "email", "phone"}:
         raise DomainError("INVALID_VISITOR_DETAILS")
@@ -572,3 +581,52 @@ class MealService:
                 after={"voided_at": voided_at, "reason": reason},
             )
         return voided_at
+
+    def void_bulk(self, context, meal_ids, reason):
+        identifiers = positive_identifiers(meal_ids, "MEAL_IDS")
+        reason = required_text(reason, "removal_reason", 255)
+        placeholders = ", ".join(["%s"] * len(identifiers))
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            meals = tx.all(
+                "SELECT m.id, m.serving_id, m.unit_number, m.served_at, s.kind "
+                "FROM meals m JOIN servings s ON s.id = m.serving_id "
+                f"WHERE m.id IN ({placeholders}) ORDER BY m.id FOR UPDATE",
+                identifiers,
+            )
+            if tuple(meal["id"] for meal in meals) != identifiers:
+                raise DomainError("MEAL_NOT_FOUND")
+            voids = tx.all(
+                "SELECT meal_id FROM meal_voids "
+                f"WHERE meal_id IN ({placeholders}) ORDER BY meal_id FOR SHARE",
+                identifiers,
+            )
+            if voids:
+                raise DomainError("MEAL_ALREADY_REMOVED")
+            voided_at = tx.now()
+            for meal in meals:
+                meal_id = meal["id"]
+                tx.insert(
+                    "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (meal_id, actor.staff_id, reason, voided_at),
+                )
+                audit(
+                    tx,
+                    actor.staff_id,
+                    "MEAL_REMOVED",
+                    "meals",
+                    meal_id,
+                    before={
+                        "serving_id": meal["serving_id"],
+                        "unit_number": meal["unit_number"],
+                        "served_at": meal["served_at"],
+                        "kind": meal["kind"],
+                    },
+                    after={"voided_at": voided_at, "reason": reason, "bulk": True},
+                )
+        return {
+            "meal_ids": list(identifiers),
+            "removed_count": len(identifiers),
+            "removed_at": voided_at,
+        }

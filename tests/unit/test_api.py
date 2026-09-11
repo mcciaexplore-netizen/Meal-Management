@@ -156,6 +156,7 @@ class ApiHarness:
         self.staff = FakeStaff()
         self.meals = FakeMealStore(self.staff)
         self.meals.void = Mock()
+        self.meals.void_bulk = Mock(return_value={"meal_ids": [12, 13], "removed_count": 2})
         self.queries = Mock()
         self.queries.list_employees.return_value = {"items": [], "next_cursor": None}
         self.queries.employee.return_value = {
@@ -191,6 +192,7 @@ class ApiHarness:
             email_queue=Mock(),
         )
         self.services.employees.register.return_value = Registration(7, 101, 1)
+        self.services.employees.archive_bulk.return_value = {"employee_ids": [7, 8], "removed_count": 2}
         self.services.qr.export_svg.return_value = '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
         self.services.qr.issue_employee.return_value = IssuedQr(101, self.meals.employee_token)
         self.services.qr.replace_employee.return_value = IssuedQr(102, self.meals.employee_token)
@@ -488,13 +490,49 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.assertEqual(self.harness.staff.current(context)["staff_id"], 1)
         self.assertEqual((meal_id, reason), (12, "Recorded by mistake"))
 
+    def test_bulk_employee_and_meal_removal_use_authenticated_admin(self):
+        employees = self.harness.post("/api/employees/bulk-remove", json={"employee_ids": [8, 7], "reason": "Duplicate import"})
+        meals = self.harness.post("/api/meals/bulk-remove", json={"meal_ids": [13, 12], "reason": "Duplicate serving"})
+        self.assertEqual(employees.status_code, 200)
+        self.assertEqual(employees.json(), {"employee_ids": [7, 8], "removed_count": 2})
+        self.assertEqual(meals.status_code, 200)
+        self.assertEqual(meals.json(), {"meal_ids": [12, 13], "removed_count": 2})
+        employee_context, employee_ids, employee_reason = self.harness.services.employees.archive_bulk.call_args.args
+        meal_context, meal_ids, meal_reason = self.harness.services.meals.void_bulk.call_args.args
+        self.assertEqual(self.harness.staff.current(employee_context)["staff_id"], 1)
+        self.assertEqual(self.harness.staff.current(meal_context)["staff_id"], 1)
+        self.assertEqual((employee_ids, employee_reason), ([8, 7], "Duplicate import"))
+        self.assertEqual((meal_ids, meal_reason), ([13, 12], "Duplicate serving"))
+
+    def test_bulk_removal_validates_identifiers_reason_and_batch_size(self):
+        requests = (
+            ("/api/employees/bulk-remove", {"employee_ids": [], "reason": "Cleanup"}),
+            ("/api/employees/bulk-remove", {"employee_ids": [7, 7], "reason": "Cleanup"}),
+            ("/api/employees/bulk-remove", {"employee_ids": list(range(1, 102)), "reason": "Cleanup"}),
+            ("/api/meals/bulk-remove", {"meal_ids": [12], "reason": ""}),
+            ("/api/meals/bulk-remove", {"meal_ids": [True], "reason": "Cleanup"}),
+        )
+        for path, body in requests:
+            with self.subTest(path=path, body=body):
+                self.assert_error(self.harness.post(path, json=body), 422, "INVALID_INPUT")
+        self.harness.services.employees.archive_bulk.assert_not_called()
+        self.harness.services.meals.void_bulk.assert_not_called()
+
     def test_waiter_cannot_remove_employees_or_meals(self):
         self.harness.login("waiter")
-        for path in ("/api/employees/7", "/api/meals/12"):
+        for path, body in (
+            ("/api/employees/7", {"reason": "Unauthorized change"}),
+            ("/api/meals/12", {"reason": "Unauthorized change"}),
+            ("/api/employees/bulk-remove", {"employee_ids": [7], "reason": "Unauthorized change"}),
+            ("/api/meals/bulk-remove", {"meal_ids": [12], "reason": "Unauthorized change"}),
+        ):
             with self.subTest(path=path):
-                self.assert_error(self.harness.delete(path, json={"reason": "Unauthorized change"}), 403, "ROLE_REQUIRED")
+                response = self.harness.delete(path, json=body) if path in {"/api/employees/7", "/api/meals/12"} else self.harness.post(path, json=body)
+                self.assert_error(response, 403, "ROLE_REQUIRED")
         self.harness.services.employees.archive.assert_not_called()
+        self.harness.services.employees.archive_bulk.assert_not_called()
         self.harness.services.meals.void.assert_not_called()
+        self.harness.services.meals.void_bulk.assert_not_called()
 
     def test_employee_qr_is_private_and_scoped_to_employee_lookup(self):
         response = self.client.get("/api/employees/7/qr")

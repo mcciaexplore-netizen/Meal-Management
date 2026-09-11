@@ -77,6 +77,42 @@ class EmployeeRemovalTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "EMPLOYEE_REMOVED")
         self.tx.execute.assert_not_called()
 
+    def test_bulk_removal_is_one_transaction_with_one_reason_and_actor(self):
+        employees = [
+            self.employee,
+            {"id": 42, "employee_code": "EMP-42", "full_name": "Kabir Shah", "email": "kabir@example.test", "is_active": False},
+        ]
+        credentials = [{"id": 72, "employee_id": 41, "revoked_at": None}]
+        self.tx.all.side_effect = [employees, [], credentials]
+        with patch("meal_management.employees.require_actor", return_value=self.actor), patch("meal_management.employees.audit") as audit:
+            result = self.service.archive_bulk(self.context, [42, 41], "Office cleanup")
+        self.assertEqual(result, {"employee_ids": [41, 42], "removed_count": 2, "removed_at": self.now})
+        self.assertTrue(self.db.committed)
+        self.assertEqual(self.tx.insert.call_count, 2)
+        self.assertEqual(self.tx.execute.call_count, 2)
+        self.qr._revoke.assert_called_once_with(self.tx, 7, credentials[0], "Office cleanup")
+        self.assertEqual(audit.call_count, 2)
+        self.assertTrue(all(call.args[2] == "EMPLOYEE_REMOVED" for call in audit.call_args_list))
+
+    def test_bulk_removal_rejects_missing_record_before_writing_anything(self):
+        self.tx.all.return_value = [self.employee]
+        with patch("meal_management.employees.require_actor", return_value=self.actor):
+            with self.assertRaises(DomainError) as caught:
+                self.service.archive_bulk(self.context, [41, 42], "Office cleanup")
+        self.assertEqual(caught.exception.code, "EMPLOYEE_NOT_FOUND")
+        self.assertTrue(self.db.rolled_back)
+        self.tx.insert.assert_not_called()
+        self.tx.execute.assert_not_called()
+        self.qr._revoke.assert_not_called()
+
+    def test_bulk_removal_rejects_duplicate_and_oversized_identifier_sets(self):
+        for identifiers in ([41, 41], list(range(1, 102))):
+            with self.subTest(count=len(identifiers)):
+                with self.assertRaises(DomainError) as caught:
+                    self.service.archive_bulk(self.context, identifiers, "Office cleanup")
+                self.assertEqual(caught.exception.code, "INVALID_EMPLOYEE_IDS")
+        self.tx.all.assert_not_called()
+
 
 class MealRemovalTests(unittest.TestCase):
     def setUp(self):
@@ -120,6 +156,37 @@ class MealRemovalTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "INVALID_REMOVAL_REASON")
         self.assertFalse(self.db.committed)
         self.assertFalse(self.db.rolled_back)
+
+    def test_bulk_removal_voids_every_selected_meal_atomically(self):
+        meals = [
+            self.meal,
+            {"id": 92, "serving_id": 78, "unit_number": 1, "served_at": self.now, "kind": "MASTER"},
+        ]
+        self.tx.all.side_effect = [meals, []]
+        with patch("meal_management.meals.require_actor", return_value=self.actor), patch("meal_management.meals.audit") as audit:
+            result = self.service.void_bulk(self.context, [92, 91], "Duplicate imports")
+        self.assertEqual(result, {"meal_ids": [91, 92], "removed_count": 2, "removed_at": self.now})
+        self.assertTrue(self.db.committed)
+        self.assertEqual(self.tx.insert.call_count, 2)
+        self.assertEqual(audit.call_count, 2)
+        self.assertTrue(all(call.args[2] == "MEAL_REMOVED" for call in audit.call_args_list))
+
+    def test_bulk_removal_rejects_already_removed_meal_before_writing_anything(self):
+        self.tx.all.side_effect = [[self.meal], [{"meal_id": 91}]]
+        with patch("meal_management.meals.require_actor", return_value=self.actor):
+            with self.assertRaises(DomainError) as caught:
+                self.service.void_bulk(self.context, [91], "Duplicate imports")
+        self.assertEqual(caught.exception.code, "MEAL_ALREADY_REMOVED")
+        self.assertTrue(self.db.rolled_back)
+        self.tx.insert.assert_not_called()
+
+    def test_bulk_removal_rejects_empty_duplicate_and_oversized_identifier_sets(self):
+        for identifiers in ([], [91, 91], list(range(1, 102))):
+            with self.subTest(count=len(identifiers)):
+                with self.assertRaises(DomainError) as caught:
+                    self.service.void_bulk(self.context, identifiers, "Duplicate imports")
+                self.assertEqual(caught.exception.code, "INVALID_MEAL_IDS")
+        self.tx.all.assert_not_called()
 
 
 if __name__ == "__main__":

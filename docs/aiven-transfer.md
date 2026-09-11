@@ -110,7 +110,7 @@ sh deploy/start-scanner.sh --env-file .env.aiven --env-file-only
 
 The file-only flag prevents inherited environment variables from overriding the selected file. The administrator remains at `http://localhost:8000/` and the scanner at `http://localhost:8001/`. Both must use the same reviewed Aiven database. Starting one application does not start the other or apply migrations.
 
-Check each application's `/health/live` first. The separate `/health/ready` checks connect to MySQL and require approved database access; both must report ready with migrations 001–006 applied. Review employee and QR records, local photo retrieval, existing reports, and email approval states. Use separately approved test data for scan writes and deliberate retry checks. Keep real email disabled until its own verification and approval.
+Check each application's `/health/live` first. The separate `/health/ready` checks connect to MySQL and require approved database access; both must report ready with migrations 001–007 applied. Review employee and QR records, local photo retrieval, existing reports, email approval states, and administrator removal controls. Use separately approved test data for scan writes and deliberate retry checks. Keep real email disabled until its own verification and approval.
 
 ## Vercel-only runtime-account proposal
 

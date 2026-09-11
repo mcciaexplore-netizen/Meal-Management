@@ -57,7 +57,7 @@ The target database must already exist. Aiven may provide `defaultdb`; decide wh
 
 Use the [guarded local backup and Aiven restore workflow](aiven-transfer.md) for the existing application. It separates the operator's secure local backup from the approved empty-target restore and application switch.
 
-Choose the transfer procedure after reviewing both schemas. Do not initialize tables in a destination intended for a full schema-and-data restore. The repository currently contains migrations 001 through 006; actual pending migrations require live inspection.
+Choose the transfer procedure after reviewing both schemas. Do not initialize tables in a destination intended for a full schema-and-data restore. The repository currently contains migrations 001 through 007; actual pending migrations require live inspection.
 
 For the existing application, plan an approved local backup and restore into an empty destination. Preserve employee, staff, QR, scanner configuration, meal, audit, email-queue, and migration-ledger records. Review trigger definitions and managed-service restore privileges before import. Preserve all applicable QR encryption keys and separately retain private photo files, which are not stored in MySQL. Avoid exposing the laptop database to the internet for migration.
 
