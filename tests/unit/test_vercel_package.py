@@ -91,6 +91,42 @@ class VercelPackagingTests(unittest.TestCase):
         manifest = json.loads((directory / "bundle-manifest.json").read_text())
         self.assertEqual(names, set(manifest["files"]) | {"bundle-manifest.json", ".vercelignore"})
 
+    def test_scanner_installation_assets_are_packaged_and_verified_without_admin_exposure(self):
+        install_assets = {
+            "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png",
+        }
+        for role in ("admin", "scanner"):
+            with self.subTest(role=role):
+                directory, _ = self._package(role)
+                manifest = json.loads((directory / "bundle-manifest.json").read_text())
+                for name in install_assets:
+                    public = directory / "public" / "assets" / name
+                    bundled = directory / "frontend" / "dist" / role / name
+                    if role == "scanner":
+                        self.assertEqual(public.read_bytes(), bundled.read_bytes())
+                        self.assertEqual(manifest["files"]["public/assets/" + name], hashlib.sha256(public.read_bytes()).hexdigest())
+                    else:
+                        self.assertFalse(public.exists())
+                        self.assertFalse(bundled.exists())
+                self.assertEqual(verification.verify_bundle(directory, {}), role)
+
+    def test_scanner_package_refuses_missing_installation_icon(self):
+        def incomplete_frontend(project_root, output):
+            self._build(project_root, output)
+            (output / "scanner" / "icon-192.png").unlink()
+
+        destination = self.root / "scanner-missing-icon"
+        with patch.object(packaging, "_build_frontend", side_effect=incomplete_frontend):
+            with self.assertRaises(FileNotFoundError):
+                packaging.package_application("scanner", project_root=self.project, output_directory=destination)
+        self.assertFalse(destination.exists())
+
+    def test_scanner_verification_rejects_tampered_installation_manifest(self):
+        directory, _ = self._package("scanner")
+        (directory / "public" / "assets" / "manifest.webmanifest").write_text('{"start_url":"https://example.test"}')
+        with self.assertRaisesRegex(RuntimeError, "CHECKSUM_MISMATCH"):
+            verification.verify_bundle(directory, {})
+
     def test_vercelignore_defaults_to_excluding_every_unlisted_upload(self):
         directory, _ = self._package("scanner")
         lines = (directory / ".vercelignore").read_text().splitlines()

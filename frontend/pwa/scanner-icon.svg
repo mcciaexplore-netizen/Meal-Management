@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#107f73"/>
+  <g fill="none" stroke="#ffffff" stroke-width="16" stroke-linejoin="round">
+    <rect x="112" y="112" width="112" height="112" rx="16"/>
+    <rect x="288" y="112" width="112" height="112" rx="16"/>
+    <rect x="112" y="288" width="112" height="112" rx="16"/>
+  </g>
+  <g fill="#ffffff">
+    <rect x="151" y="151" width="34" height="34" rx="5"/>
+    <rect x="327" y="151" width="34" height="34" rx="5"/>
+    <rect x="151" y="327" width="34" height="34" rx="5"/>
+  </g>
+  <path d="M282 342l40 40 80-88" fill="none" stroke="#ffffff" stroke-width="23" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

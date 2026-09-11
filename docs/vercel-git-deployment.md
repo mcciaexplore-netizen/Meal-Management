@@ -52,6 +52,8 @@ The old CLI bundles under `build/vercel` remain private local build outputs. The
 
 ## Hosted verification still required
 
+The scanner now includes a web-app installation banner, manifest, and phone icons. These public assets require no new environment variables or database changes. Follow [phone installation and testing](scanner-installation.md) after redeploying the reviewed scanner build. The existing migration requirements above still apply to the employee-contact and master-group features.
+
 After both builds reach Ready, verify the application startup and health responses, approved database connectivity, administrator login and permissions, scanner-device activation, and absence of administrator API routes on the scanner. Keep real email sending disabled until its separate configuration and verification steps are complete. The four existing local photos still require their approved private-storage transfer.
 
 Verify employee and master QR meals, retry recovery, dashboard visibility, and phone camera behavior using approved test data. Create a master group with five people in the admin application; five deliberate scanner requests must create five meals with the saved contact details, and a sixth must reject as expired. The scanner must collect no visitor form. Retry the fifth request with its original browser and UUID after exhaustion; it must return that same fifth meal without consuming another allowance. Check that completed approval/rejection animations return to the initial scanner screen after two seconds, while connection failures retain their unresolved request. Neither local payload checks nor unit/API tests establish that hosted integration is working.

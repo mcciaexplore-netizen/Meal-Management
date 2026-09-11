@@ -27,7 +27,36 @@ test("build emits separate admin and scanner artifact directories and removes on
   assert.deepEqual((await readdir(output)).sort(), ["admin", "preserve.txt", "scanner"]);
   assert.equal(await readFile(join(output, "preserve.txt"), "utf8"), "Unrelated file");
   assert.deepEqual((await readdir(join(output, "admin"))).sort(), ["THIRD_PARTY_NOTICES.txt", "app.js", "index.html", "styles.css"]);
-  assert.deepEqual((await readdir(join(output, "scanner"))).sort(), ["THIRD_PARTY_NOTICES.txt", "index.html", "scan-app.js", "scan-only.css", "styles.css"]);
+  assert.deepEqual((await readdir(join(output, "scanner"))).sort(), ["THIRD_PARTY_NOTICES.txt", "apple-touch-icon.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "index.html", "manifest.webmanifest", "scan-app.js", "scan-only.css", "styles.css"]);
+});
+
+test("scanner installation uses its own root without credentials and includes correctly sized PNG icons", async () => {
+  const manifest = JSON.parse(await readFile(join(output, "scanner", "manifest.webmanifest"), "utf8"));
+  assert.equal(manifest.id, "/");
+  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.scope, "/");
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.prefer_related_applications, false);
+  assert.equal(manifest.short_name, "Meal Scanner");
+  for (const [file, size] of [["icon-192.png", 192], ["icon-512.png", 512], ["icon-maskable-512.png", 512], ["apple-touch-icon.png", 180]]) {
+    const png = await readFile(join(output, "scanner", file));
+    assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+    if (file !== "apple-touch-icon.png") {
+      const icon = manifest.icons.find(item => item.src === `/assets/${file}`);
+      assert.equal(icon.sizes, `${size}x${size}`);
+      assert.equal(icon.type, "image/png");
+      assert.equal(icon.purpose, file.includes("maskable") ? "maskable" : "any");
+    }
+  }
+  const scannerHtml = await readFile(join(output, "scanner", "index.html"), "utf8");
+  assert.match(scannerHtml, /rel="manifest" href="\/assets\/manifest.webmanifest"/);
+  assert.match(scannerHtml, /rel="apple-touch-icon"/);
+  assert.match(scannerHtml, /id="scanner-install"/);
+  assert.ok(scannerHtml.indexOf('id="scanner-install"') < scannerHtml.indexOf('id="scan-app"'));
+  const adminHtml = await readFile(join(output, "admin", "index.html"), "utf8");
+  assert.doesNotMatch(adminHtml, /manifest.webmanifest|scanner-install|apple-touch-icon/);
 });
 
 test("each HTML entry references only assets available from its own application", async () => {

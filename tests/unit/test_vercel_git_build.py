@@ -134,6 +134,24 @@ class VercelGitBuildTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.frontend.call_count, 2)
 
+    def test_git_build_includes_installation_assets_only_for_scanner(self):
+        install_assets = {
+            "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png",
+        }
+        for role in ("admin", "scanner"):
+            with self.subTest(role=role):
+                self.build(role)
+                files = self.manifest(role)["files"]
+                for name in install_assets:
+                    public_name = "public/assets/" + name
+                    bundled_name = "frontend/dist/" + role + "/" + name
+                    if role == "scanner":
+                        self.assertEqual(files[public_name], files[bundled_name])
+                        self.assertEqual((self.target(role) / public_name).read_bytes(), (self.target(role) / bundled_name).read_bytes())
+                    else:
+                        self.assertNotIn(public_name, files)
+                        self.assertNotIn(bundled_name, files)
+
     def test_repeat_can_update_changed_source_when_previous_outputs_match_manifest(self):
         self.build()
         name = "backend/meal_management/runtime.py"
@@ -145,6 +163,33 @@ class VercelGitBuildTests(unittest.TestCase):
         self.assertNotEqual(self.manifest()["files"][name], previous)
         for filename, original in self.scaffold["admin"].items():
             self.assertEqual((self.target() / filename).read_bytes(), original)
+
+    def build_scanner_without_installation_assets(self):
+        previous_assets = tuple(name for name in packaging.ASSETS["scanner"] if name not in packaging.SCANNER_INSTALL_ASSETS)
+        with patch.dict(packaging.ASSETS, {"scanner": previous_assets}):
+            self.build("scanner")
+
+    def test_existing_scanner_build_can_add_installation_assets_after_verifying_old_outputs(self):
+        self.build_scanner_without_installation_assets()
+        previous = self.manifest("scanner")
+        self.build("scanner")
+        current = self.manifest("scanner")
+        self.assertEqual(set(current["files"]), self.expected_files("scanner"))
+        self.assertEqual(len(current["files"]) - len(previous["files"]), 10)
+        for name, checksum in previous["files"].items():
+            self.assertEqual(current["files"][name], checksum)
+
+    def test_installation_asset_upgrade_refuses_tampered_previous_scanner_output(self):
+        self.build_scanner_without_installation_assets()
+        path = self.target("scanner") / "frontend" / "dist" / "scanner" / "scan-app.js"
+        path.write_text("preserve user modifications", encoding="utf-8")
+        self.assert_unchanged_failure("scanner")
+
+    def test_installation_asset_upgrade_preserves_unowned_icon_in_old_scanner_output(self):
+        self.build_scanner_without_installation_assets()
+        path = self.target("scanner") / "public" / "assets" / "icon-192.png"
+        path.write_bytes(b"preserve unowned icon")
+        self.assert_unchanged_failure("scanner")
 
     def test_tampered_generated_file_refuses_repeat_without_overwrite(self):
         self.build()

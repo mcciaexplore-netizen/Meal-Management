@@ -21,9 +21,14 @@ RUNTIME_MODULES = (
     "models", "qr", "queries", "reports", "runtime", "scan_app", "scan_receipts", "scanner_access",
     "scanner_api", "security", "storage", "vercel_runtime",
 )
+SCANNER_INSTALL_ASSETS = (
+    "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png",
+)
 ASSETS = {
     "admin": ("app.js", "styles.css", "THIRD_PARTY_NOTICES.txt"),
-    "scanner": ("scan-app.js", "styles.css", "scan-only.css", "THIRD_PARTY_NOTICES.txt"),
+    "scanner": (
+        "scan-app.js", "styles.css", "scan-only.css", "THIRD_PARTY_NOTICES.txt",
+    ) + SCANNER_INSTALL_ASSETS,
 }
 CONTENT_SECURITY_POLICY = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; frame-src 'self' blob:"
 

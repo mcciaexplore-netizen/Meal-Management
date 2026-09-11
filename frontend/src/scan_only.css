@@ -1,4 +1,13 @@
 .scan-only-body { background: #edf3f2; }
+.scanner-install-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin: 14px auto; max-width: 774px; padding: 17px 20px; background: #fff; border: 1px solid #b9d7ce; border-radius: 12px; color: #173844; box-shadow: 0 3px 15px #16362c08; }
+.scanner-install-copy { flex: 1 1 250px; }
+.scanner-install-copy h2 { margin: 0; font-size: 18px; }
+.scanner-install-copy p { margin-top: 6px; font-size: 13px; line-height: 1.5; color: #577168; }
+.scanner-install-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.scanner-install-actions .button { min-height: 44px; font-size: 13px; }
+.scanner-install-help, .scanner-install-error { flex-basis: 100%; font-size: 13px; line-height: 1.6; }
+.scanner-install-help { padding-top: 12px; border-top: 1px solid #dbe7e2; }
+.scanner-install-error { color: #7a5221; }
 .scan-app-shell { min-height: 100dvh; display: flex; flex-direction: column; }
 .scan-app-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 15px max(20px, env(safe-area-inset-left)); background: #102d3a; color: #fff; }
 .scan-app-brand { display: flex; align-items: center; gap: 12px; }
@@ -57,6 +66,9 @@
 .scan-visitor-card form input { min-height: 49px; font-size: 16px; }
 .scan-visitor-card .button { min-height: 51px; margin-top: 9px; font-size: 16px; }
 @media (max-width: 600px) {
+  .scanner-install-banner { margin: 12px; padding: 16px; gap: 12px; }
+  .scanner-install-actions { width: 100%; }
+  .scanner-install-actions .button { flex: 1; }
   .scan-app-header { padding: 13px 15px; }
   .scan-app-brand { gap: 9px; }
   .scan-app-brand strong { font-size: 17px; }

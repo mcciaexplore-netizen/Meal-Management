@@ -9,7 +9,10 @@ from pathlib import Path, PurePosixPath
 
 ASSETS = {
     "admin": {"app.js", "styles.css", "THIRD_PARTY_NOTICES.txt"},
-    "scanner": {"scan-app.js", "styles.css", "scan-only.css", "THIRD_PARTY_NOTICES.txt"},
+    "scanner": {
+        "scan-app.js", "styles.css", "scan-only.css", "THIRD_PARTY_NOTICES.txt",
+        "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png",
+    },
 }
 ERROR_CODES = frozenset({
     "VERCEL_BUNDLE_MANIFEST_INVALID", "VERCEL_BUNDLE_MANIFEST_READ_FAILED",

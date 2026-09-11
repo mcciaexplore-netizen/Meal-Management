@@ -5,13 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#102d3a">
     <meta name="color-scheme" content="light">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Meal Scanner">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>Meal Scanner</title>
+    <link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">
+    <link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <link rel="stylesheet" href="/assets/styles.css">
     <link rel="stylesheet" href="/assets/scan-only.css">
     <script type="module" src="/assets/scan-app.js"></script>
   </head>
   <body class="scan-only-body">
     <a href="#main" class="skip-link">Skip to scanner</a>
+    <aside id="scanner-install" aria-labelledby="scanner-install-title" hidden></aside>
     <div id="scan-app"><main id="main" class="startup" aria-busy="true">Opening Meal Scanner…</main></div>
     <div id="notifications" class="notifications" aria-live="polite" aria-atomic="true"></div>
     <dialog id="modal"></dialog>

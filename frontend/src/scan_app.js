@@ -7,7 +7,9 @@ import { ScannerTransport } from "./scanner_api.js";
 import { ScanAppOperation } from "./scan_app_operation.js";
 import { chooseScannerRecovery } from "./scanner_recovery.js";
 import { scheduleScanResultReset } from "./scan_result_reset.js";
+import { mountScannerInstall } from "./scanner_install.js";
 
+mountScannerInstall({ root: document.getElementById("scanner-install"), window, navigator });
 const root = document.getElementById("scan-app");
 const transport = new ScannerTransport();
 let flow = null;

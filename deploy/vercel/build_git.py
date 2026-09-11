@@ -97,6 +97,14 @@ def _generated_files(root, names):
 
 def _existing(root, application, names):
     found = _generated_files(root, names)
+    accepted_names = [names]
+    if application == "scanner":
+        installation_names = {
+            prefix + name
+            for prefix in ("frontend/dist/scanner/", "public/assets/")
+            for name in packaging.SCANNER_INSTALL_ASSETS
+        }
+        accepted_names.append(names - installation_names)
     marker = root / MANIFEST
     if not marker.exists() and not marker.is_symlink():
         if found:
@@ -108,7 +116,7 @@ def _existing(root, application, names):
             not isinstance(manifest, dict) or set(manifest) != {"format_version", "application", "files"}
             or type(manifest["format_version"]) is not int or manifest["format_version"] != 1
             or manifest["application"] != application or not isinstance(manifest["files"], dict)
-            or set(manifest["files"]) != names or found != names
+            or set(manifest["files"]) not in accepted_names or found != set(manifest["files"])
         ):
             raise GitBuildError("VERCEL_GIT_EXISTING_OUTPUT_INVALID")
         for name, digest in manifest["files"].items():
