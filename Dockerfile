@@ -1,7 +1,9 @@
 # One image for both applications. Choose the process at runtime with
 # MEAL_APPLICATION=admin (default) or MEAL_APPLICATION=scanner.
 
-FROM node:20-slim AS frontend
+# Base images come from the ECR Public mirror of Docker Official Images to avoid
+# Docker Hub pull limits in CodeBuild.
+FROM public.ecr.aws/docker/library/node:20-slim AS frontend
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -9,7 +11,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-FROM python:3.12-slim AS runtime
+FROM public.ecr.aws/docker/library/python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

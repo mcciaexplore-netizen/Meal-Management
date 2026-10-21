@@ -8,6 +8,12 @@ Description: >-
 Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
+  VpcCidr:
+    Type: String
+    Default: 172.31.0.0/16
+    Description: >-
+      CIDR of VpcId (172.31.0.0/16 for a default VPC). Only the load balancer
+      inside this range is trusted for X-Forwarded-For/Proto.
   LoadBalancerSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Public subnets in at least two Availability Zones for the load balancer.
@@ -75,6 +81,107 @@ Resources:
       LifecyclePolicy:
         LifecyclePolicyText: |
           {"rules":[{"rulePriority":1,"description":"Keep the last 20 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}
+
+  # Builds the image in AWS so no local Docker is needed. deploy/aws/push-image.sh
+  # uploads a `git archive` of the current commit to SourceBucket and starts it.
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-sources
+            Status: Enabled
+            ExpirationInDays: 14
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: build-and-push
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-image*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub ${SourceBucket.Arn}/*
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt Repository.Arn
+
+  ImageBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AWS::StackName}-image
+      ServiceRole: !GetAtt BuildRole.Arn
+      TimeoutInMinutes: 30
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Type: S3
+        Location: !Sub ${SourceBucket}/source.zip
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${REPOSITORY_URI%%/*}"
+            build:
+              commands:
+                - docker build --platform linux/amd64 -t "$REPOSITORY_URI:$IMAGE_TAG" .
+            post_build:
+              commands:
+                - test "$CODEBUILD_BUILD_SUCCEEDING" = 1
+                - docker push "$REPOSITORY_URI:$IMAGE_TAG"
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: REPOSITORY_URI
+            Value: !GetAtt Repository.RepositoryUri
+          - Name: IMAGE_TAG
+            Value: latest
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub /aws/codebuild/${AWS::StackName}-image
 
   PhotoBucket:
     Type: AWS::S3::Bucket
@@ -337,6 +444,7 @@ Resources:
             - { Name: SCANNER_ORIGIN, Value: !Sub "https://${ScannerHostname}" }
             - { Name: ALLOWED_HOSTS, Value: !Sub "${AdminHostname},${ScannerHostname}" }
             - { Name: COOKIE_SECURE, Value: "true" }
+            - { Name: FORWARDED_ALLOW_IPS, Value: !Ref VpcCidr }
             - { Name: DB_HOST, Value: !Ref DbHost }
             - { Name: DB_PORT, Value: !Ref DbPort }
             - { Name: DB_NAME, Value: !Ref DbName }
@@ -400,6 +508,7 @@ Resources:
             - { Name: SCANNER_ORIGIN, Value: !Sub "https://${ScannerHostname}" }
             - { Name: ALLOWED_HOSTS, Value: !Sub "${AdminHostname},${ScannerHostname}" }
             - { Name: COOKIE_SECURE, Value: "true" }
+            - { Name: FORWARDED_ALLOW_IPS, Value: !Ref VpcCidr }
             - { Name: DB_HOST, Value: !Ref DbHost }
             - { Name: DB_PORT, Value: !Ref DbPort }
             - { Name: DB_NAME, Value: !Ref DbName }
@@ -501,3 +610,7 @@ Outputs:
     Value: !Ref PhotoBucket
   ClusterName:
     Value: !Ref Cluster
+  SourceBucketName:
+    Value: !Ref SourceBucket
+  ImageBuildProject:
+    Value: !Ref ImageBuild

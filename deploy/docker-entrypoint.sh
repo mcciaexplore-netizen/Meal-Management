@@ -24,12 +24,14 @@ if [ "$#" -gt 0 ]; then
 fi
 
 # Production mode rejects non-HTTPS requests, so the scheme and client address
-# must come from the load balancer's X-Forwarded-* headers. Only expose the
-# container to the load balancer, or narrow FORWARDED_ALLOW_IPS to its subnet.
+# must come from the load balancer's X-Forwarded-* headers. Set
+# FORWARDED_ALLOW_IPS to the load balancer's network (e.g. the VPC CIDR). Never
+# use "*": uvicorn would then take the client-supplied left-most address and
+# login/scan rate limits could be bypassed.
 exec uvicorn "$module:create_app" --factory \
     --host 0.0.0.0 \
     --port "${PORT:-8000}" \
     --workers "${WEB_CONCURRENCY:-2}" \
     --proxy-headers \
-    --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-*}" \
+    --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}" \
     --no-access-log

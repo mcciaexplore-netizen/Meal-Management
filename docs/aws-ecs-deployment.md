@@ -7,15 +7,16 @@ The admin and scanner applications run as two ECS Fargate services built from on
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Builds the frontend in a Node stage and runs the backend on Python 3.12 as a non-root user. `MEAL_APPLICATION=admin` or `scanner` selects the process. |
-| `deploy/docker-entrypoint.sh` | Writes `DB_SSL_CA_PEM` to a private file and sets `DB_SSL_CA`. Starts uvicorn with proxy headers trusted, so the load balancer's `X-Forwarded-Proto: https` satisfies the production HTTPS check. Any arguments run as a one-off command instead. |
+| `deploy/docker-entrypoint.sh` | Writes `DB_SSL_CA_PEM` to a private file and sets `DB_SSL_CA`. Starts uvicorn trusting `X-Forwarded-*` headers only from `FORWARDED_ALLOW_IPS` (the stack sets this to the VPC range). That way the load balancer's `X-Forwarded-Proto: https` satisfies the production HTTPS check, and clients can't fake their IP to get around the login and scan rate limits. Never set it to `*`. Any arguments run as a one-off command instead. |
 | `.dockerignore` | Keeps `.env*`, `*.pem`, `.venv`, tests, docs and deploy tooling out of the image. |
 | `docker-compose.yml` | Runs both services locally from the same image, reading settings from `.env.docker`. |
 | `deploy/aws/ecs-stack.yaml` | CloudFormation for the ECR repository, S3 bucket, ECS cluster, load balancer, IAM roles, log group, task definitions and both services. |
 | `deploy/aws/app-secret.example.json` | The keys the Secrets Manager secret must contain. |
-| `deploy/aws/push-image.sh` | Builds and pushes the image, then updates the stack to the new tag and waits for both services to stabilise. |
+| `deploy/aws/push-image.sh` | Uploads a snapshot of the working tree to S3, builds the image in CodeBuild (no local Docker needed), then updates the stack to the new tag and waits for both services to stabilise. |
 
 ## What the stack creates
 
+- **Image build.** A CodeBuild project and a private S3 bucket for source snapshots, which are deleted after 14 days. Base images come from ECR Public, which avoids Docker Hub's pull limits.
 - **ECR repository.** Named after the stack. Images are scanned on push, and only the last 20 are kept.
 - **S3 bucket for photos.**
   - Private, with all public access blocked.
@@ -73,7 +74,7 @@ The admin and scanner applications run as two ECS Fargate services built from on
        ParameterKey=EmailSender,ParameterValue=sender@example.com
    aws cloudformation wait stack-create-complete --stack-name meal-management
    ```
-5. **Push the first image.** Run `sh deploy/aws/push-image.sh meal-management`. It needs Docker and the AWS CLI.
+5. **Push the first image.** Run `sh deploy/aws/push-image.sh meal-management`. It needs only the AWS CLI and git; CodeBuild does the Docker build.
 6. **Start the services.** Update the stack with `AdminDesiredCount=1` and `ScannerDesiredCount=1`, reusing previous values for the other parameters.
 7. **DNS.** Point both hostnames at the `LoadBalancerDnsName` stack output, using a CNAME or a Route 53 alias.
 
@@ -83,7 +84,7 @@ The admin and scanner applications run as two ECS Fargate services built from on
 sh deploy/aws/push-image.sh meal-management
 ```
 
-The image is tagged with the current git commit. The script updates the stack to the new tag and waits for both services to stabilise. If the new tasks fail health checks, ECS rolls back to the previous task definition.
+The image is tagged with the current git commit, plus `-dirty-<timestamp>` when there are uncommitted changes. The script updates the stack to the new tag and waits for both services to stabilise. If the new tasks fail health checks, ECS rolls back to the previous task definition.
 
 ## Migrations and the first administrator
 
@@ -105,7 +106,7 @@ The load balancer's health check uses plain HTTP and sends the task IP as the ho
 
 ## Not done yet
 
-- The image has never been built. Docker was not installed on the machine where these files were written. Run `docker build .` first.
+- The image has never been built. The first CodeBuild run will be its first build.
 - The template passes `cfn-lint` but has never been deployed.
 - Automatic email sending (`EMAIL_AUTO_SEND_ENABLED`) stays off. Real sending stays off until `EmailSendEnabled=true`.
 - Nothing is set up yet for autoscaling, a WAF, alarms, or limiting the admin site to office IPs.
