@@ -1,5 +1,11 @@
-# Runs both applications from the same image. Settings come from .env.docker
-# (copy .env.example, use production values, never commit it).
+# Single-server deployment: Caddy terminates HTTPS (automatic Let's Encrypt
+# certificates) and routes by hostname to the admin and scanner containers.
+#
+# Settings come from .env.docker (create it with deploy/docker/make-env.py; it
+# is git-ignored). ADMIN_HOST and SCANNER_HOST in that file must resolve to this
+# server, and ports 80 and 443 must be open.
+#
+#   docker compose up -d --build
 services:
   admin:
     build: .
@@ -7,8 +13,9 @@ services:
     env_file: .env.docker
     environment:
       MEAL_APPLICATION: admin
-    ports:
-      - "8000:8000"
+      HEALTHCHECK_HOST: ${ADMIN_HOST}
+      FORWARDED_ALLOW_IPS: 172.28.0.0/16
+    networks: [app]
     restart: unless-stopped
 
   scanner:
@@ -16,8 +23,34 @@ services:
     env_file: .env.docker
     environment:
       MEAL_APPLICATION: scanner
-    ports:
-      - "8001:8000"
-    depends_on:
-      - admin
+      HEALTHCHECK_HOST: ${SCANNER_HOST}
+      FORWARDED_ALLOW_IPS: 172.28.0.0/16
+    networks: [app]
+    depends_on: [admin]
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8.4
+    environment:
+      ADMIN_HOST: ${ADMIN_HOST}
+      SCANNER_HOST: ${SCANNER_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [app]
+    depends_on: [admin, scanner]
+    restart: unless-stopped
+
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  caddy-data:
+  caddy-config:

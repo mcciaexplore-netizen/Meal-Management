@@ -1,0 +1,15 @@
+{$ADMIN_HOST} {
+	encode gzip
+	request_body {
+		max_size 6MB
+	}
+	reverse_proxy admin:8000
+}
+
+{$SCANNER_HOST} {
+	encode gzip
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy scanner:8000
+}

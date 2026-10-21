@@ -23,11 +23,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install only the dependencies declared in pyproject.toml (plus the AWS extra).
+# Install only the dependencies declared in pyproject.toml, plus the AWS (S3/SES)
+# and Vercel Blob photo storage extras.
 # The package itself runs from /app/backend so it can locate frontend/dist and
 # database/migrations relative to the project root.
 COPY pyproject.toml ./
-RUN python -c "import tomllib; p = tomllib.load(open('pyproject.toml', 'rb'))['project']; print('\n'.join(p['dependencies'] + p['optional-dependencies']['production']))" > /tmp/requirements.txt \
+RUN python -c "import tomllib; p = tomllib.load(open('pyproject.toml', 'rb'))['project']; print('\n'.join(p['dependencies'] + p['optional-dependencies']['production'] + p['optional-dependencies']['vercel']))" > /tmp/requirements.txt \
     && pip install -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
