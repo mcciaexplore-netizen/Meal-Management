@@ -230,3 +230,81 @@ class MigrationRunner:
             return tuple(applied)
         finally:
             self._close(connection, tx, lock_name)
+
+
+POSTGRES_MIGRATIONS = Path(__file__).resolve().parents[2] / "database" / "postgres"
+
+
+class PostgresMigrationRunner:
+    def __init__(self, database, directory=POSTGRES_MIGRATIONS):
+        self.database = database
+        self.migrations = load_migrations(directory)
+
+    def _connect(self):
+        connection = self.database._connect()
+        try:
+            tx = Session(connection, "postgres")
+            if tx.one("SELECT current_setting('server_version_num')::integer AS version")["version"] < 150000:
+                raise DomainError("MIGRATIONS_REQUIRE_POSTGRES_15")
+            if not tx.one("SELECT pg_try_advisory_lock(hashtext('meal-migrations')) AS acquired")["acquired"]:
+                raise DomainError("MIGRATIONS_ALREADY_RUNNING")
+            connection.commit()
+            return connection, tx
+        except BaseException:
+            connection.close()
+            raise
+
+    def _close(self, connection, tx):
+        try:
+            connection.rollback()
+            tx.one("SELECT pg_advisory_unlock(hashtext('meal-migrations')) AS released")
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _objects(self, tx):
+        return [row["name"] for row in tx.all(
+            "SELECT table_name AS name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() ORDER BY table_name"
+        )]
+
+    def inspect(self):
+        connection, tx = self._connect()
+        try:
+            objects = self._objects(tx)
+            ledger = tx.all("SELECT version, name, checksum, status FROM schema_migrations ORDER BY version") if "schema_migrations" in objects else []
+            return {"tables": objects, "migrations": ledger}
+        finally:
+            self._close(connection, tx)
+
+    def apply(self):
+        connection, tx = self._connect()
+        try:
+            objects = self._objects(tx)
+            if objects and "schema_migrations" not in objects:
+                raise DomainError("UNTRACKED_DATABASE_REQUIRES_REVIEW")
+            tx.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                "version INTEGER NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL, "
+                "checksum CHAR(64) NOT NULL, status VARCHAR(16) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED')), "
+                "started_at TIMESTAMP(6) NOT NULL DEFAULT (statement_timestamp() AT TIME ZONE 'UTC'), "
+                "applied_at TIMESTAMP(6) NULL)"
+            )
+            connection.commit()
+            pending = validate_ledger(self.migrations, tx.all(
+                "SELECT version, name, checksum, status FROM schema_migrations ORDER BY version"
+            ))
+            applied = []
+            for migration in pending:
+                for statement in migration.statements:
+                    tx.execute(statement)
+                tx.execute(
+                    "INSERT INTO schema_migrations (version, name, checksum, status, applied_at) "
+                    "VALUES (%s, %s, %s, 'APPLIED', statement_timestamp() AT TIME ZONE 'UTC')",
+                    (migration.version, migration.name, migration.checksum),
+                )
+                connection.commit()
+                applied.append(migration.version)
+            return tuple(applied)
+        finally:
+            self._close(connection, tx)

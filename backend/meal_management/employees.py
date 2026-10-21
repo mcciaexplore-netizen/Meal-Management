@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from .auth import audit, require_actor
+from .database import savepoint
 from .errors import DomainError
 from .security import normalize_email, normalize_phone, payload_digest, required_text
 
@@ -184,11 +185,12 @@ class EmployeeService:
                 result = self._bulk_replay(tx, batch, fingerprint, len(normalized))
             else:
                 try:
-                    batch_id = tx.insert(
-                        "INSERT INTO employee_email_batches (request_id, created_by_staff_id, request_hash, created_at) "
-                        "VALUES (%s, %s, %s, %s)",
-                        (identifier.bytes, actor.staff_id, fingerprint, tx.now()),
-                    )
+                    with savepoint(tx):
+                        batch_id = tx.insert(
+                            "INSERT INTO employee_email_batches (request_id, created_by_staff_id, request_hash, created_at) "
+                            "VALUES (%s, %s, %s, %s)",
+                            (identifier.bytes, actor.staff_id, fingerprint, tx.now()),
+                        )
                 except Exception as exc:
                     if getattr(exc, "errno", None) != 1062:
                         raise

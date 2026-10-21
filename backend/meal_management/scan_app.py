@@ -2,7 +2,7 @@ import hmac
 from contextlib import contextmanager
 from uuid import UUID
 
-from .database import retry_transaction
+from .database import retry_transaction, savepoint
 from .errors import DomainError
 from .meals import request_uuid
 from .models import ScanAppContext, ScanInput
@@ -70,13 +70,14 @@ class ScanAppService:
                     "meal_type_id": profile["meal_type_id"], "scanner_code": profile["scanner_code"],
                 }
                 try:
-                    tx.execute(
-                        "INSERT INTO scan_app_requests "
-                        "(request_id, browser_hash, staff_id, scanner_id, meal_type_id, scanner_code) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (identifier.bytes, browser_hash, row["staff_id"], row["scanner_id"],
-                         row["meal_type_id"], row["scanner_code"]),
-                    )
+                    with savepoint(tx):
+                        tx.execute(
+                            "INSERT INTO scan_app_requests "
+                            "(request_id, browser_hash, staff_id, scanner_id, meal_type_id, scanner_code) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (identifier.bytes, browser_hash, row["staff_id"], row["scanner_id"],
+                             row["meal_type_id"], row["scanner_code"]),
+                        )
                 except Exception as error:
                     if getattr(error, "errno", None) != 1062:
                         raise

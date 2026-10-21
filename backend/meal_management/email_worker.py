@@ -2,6 +2,7 @@ import hmac
 import secrets
 from datetime import datetime
 
+from .database import null_safe_equal
 from .delivery import DeliveryError, validate_email_recipient
 from .email_queue import EmailQueueService
 from .errors import DomainError
@@ -62,7 +63,7 @@ class EmailDeliveryWorker:
             "UPDATE email_queue SET status = %s, last_error = %s, updated_at = %s, "
             "payload_ciphertext = CASE WHEN %s IN ('SENT', 'CANCELLED') "
             "THEN NULL ELSE payload_ciphertext END "
-            "WHERE id = %s AND status = %s AND last_error <=> %s",
+            "WHERE id = %s AND status = %s AND " + null_safe_equal(tx, "last_error"),
             (status, code, tx.now(), status, email_id, expected_status, expected_error),
         )
         if changed != 1:

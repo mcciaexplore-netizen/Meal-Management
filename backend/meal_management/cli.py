@@ -14,7 +14,7 @@ from .development_seed import DevelopmentSeedService, WAITERS, require_developme
 from .delivery import delivery_from_settings
 from .email_worker import EmailDeliveryWorker
 from .errors import DomainError
-from .migrations import MigrationRunner, load_migrations
+from .migrations import MigrationRunner, PostgresMigrationRunner, load_migrations
 from .runtime import RuntimeSettings
 from .security import QrRenderer, TokenVault
 
@@ -63,6 +63,10 @@ def build_parser():
     restore.add_argument("--allow-database-changes", action="store_true")
     restore.add_argument("--writers-paused", action="store_true")
     restore.add_argument("--directory", type=Path, default=PROJECT_ROOT / "database" / "migrations")
+    to_postgres = commands.add_parser("transfer-to-postgres", help="Copy every table from a MySQL database into the configured PostgreSQL database.")
+    to_postgres.add_argument("--source-env-file", type=Path, required=True)
+    to_postgres.add_argument("--allow-database-changes", action="store_true")
+    to_postgres.add_argument("--writers-paused", action="store_true")
     account = commands.add_parser("create-aiven-runtime", help="Review and create the restricted Aiven account for Vercel.")
     account.add_argument("--allow-database-changes", action="store_true", help="Allow account creation only after interactive target confirmation.")
     return parser
@@ -312,6 +316,33 @@ def _send_email(args):
     return 0 if result["status"] in {"SENT", "ALREADY_SENT"} else 2
 
 
+def _transfer_to_postgres(args):
+    if not args.allow_database_changes:
+        raise DomainError("EXPLICIT_DATABASE_CHANGE_APPROVAL_REQUIRED")
+    if not args.writers_paused:
+        raise DomainError("TRANSFER_REQUIRES_PAUSED_WRITERS")
+    path = args.source_env_file.expanduser().absolute()
+    if not path.is_file():
+        raise DomainError("ENVIRONMENT_FILE_NOT_FOUND")
+    from dotenv import dotenv_values
+
+    from .pg_transfer import transfer_mysql_to_postgres
+
+    values = {key: value for key, value in dotenv_values(path, interpolate=False).items() if value is not None}
+    values["DB_ENGINE"] = "mysql"
+    source = Settings.from_env(values)
+    target = Settings.from_env()
+    if target.db_engine != "postgres":
+        raise DomainError("TRANSFER_TARGET_MUST_BE_POSTGRES")
+    print("Source: MySQL " + source.db_host + ":" + str(source.db_port) + "/" + source.db_name)
+    print("Target: PostgreSQL " + target.db_host + ":" + str(target.db_port) + "/" + target.db_name)
+    if sys.stdin.isatty() and input("Type COPY to replace all data in the target: ") != "COPY":
+        raise DomainError("TRANSFER_NOT_CONFIRMED")
+    summary = transfer_mysql_to_postgres(source, target)
+    print("Transfer committed: " + str(len(summary)) + " tables, " + str(sum(count for _, count in summary)) + " rows, every row verified.")
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
@@ -320,6 +351,8 @@ def main(argv=None):
         if args.command == "create-aiven-runtime":
             return _runtime_account_command(args)
         _load_environment(args.env_file)
+        if args.command == "transfer-to-postgres":
+            return _transfer_to_postgres(args)
         if args.command == "check-config":
             database_settings = Settings.from_env()
             runtime = RuntimeSettings.from_env()
@@ -355,7 +388,12 @@ def main(argv=None):
             StaffService(database).bootstrap_admin(display_name, email, password)
             print("First administrator created.")
             return 0
-        runner = MigrationRunner(database, args.directory)
+        if database.dialect == "postgres":
+            if args.command == "baseline":
+                raise DomainError("BASELINE_NOT_SUPPORTED_FOR_POSTGRES")
+            runner = PostgresMigrationRunner(database)
+        else:
+            runner = MigrationRunner(database, args.directory)
         if args.command == "schema-inspect":
             print(json.dumps(runner.inspect(), indent=2))
         elif args.command == "baseline":

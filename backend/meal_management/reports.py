@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from .auth import require_actor
-from .database import Database
+from .database import Database, typed_null
 from .errors import DomainError
 from .models import ServerContext
 
@@ -97,11 +97,11 @@ class ReportService:
                 "WHERE m.served_at >= %s AND m.served_at < %s "
                 "AND NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id)"
                 ") "
-                "SELECT 'TOTAL' AS section, NULL AS group_id, "
-                "NULL AS code, NULL AS name, COUNT(*) AS meal_count, "
+                "SELECT 'TOTAL' AS section, " + typed_null(tx, "BIGINT") + " AS group_id, "
+                + typed_null(tx, "VARCHAR") + " AS code, " + typed_null(tx, "VARCHAR") + " AS name, COUNT(*) AS meal_count, "
                 "COUNT(DISTINCT serving_id) AS serving_count FROM filtered_meals "
                 "UNION ALL "
-                "SELECT 'KIND', NULL, kind, kind, COUNT(*), "
+                "SELECT 'KIND', " + typed_null(tx, "BIGINT") + ", kind, kind, COUNT(*), "
                 "COUNT(DISTINCT serving_id) FROM filtered_meals GROUP BY kind "
                 "UNION ALL "
                 "SELECT 'MEAL_TYPE', meal_type_id, meal_type_code, meal_type_name, "

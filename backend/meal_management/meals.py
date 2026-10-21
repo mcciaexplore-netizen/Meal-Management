@@ -5,7 +5,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from .auth import audit, require_actor, require_scan_actor
-from .database import retry_transaction
+from .database import ignore_duplicate, retry_transaction
 from .errors import DomainError
 from .models import ScanAppContext, ScanInput, ScanResult
 from .security import normalize_email, normalize_phone, payload_digest, required_text, token_digest, utc_naive
@@ -93,8 +93,8 @@ def check_meal_type(tx, meal_type_id):
 
 def reserve_request(tx, identifier, fingerprint):
     tx.execute(
-        "INSERT INTO serving_requests (id, payload_hash, status) VALUES (%s, %s, 'PENDING') "
-        "ON DUPLICATE KEY UPDATE id = id",
+        "INSERT INTO serving_requests (id, payload_hash, status) VALUES (%s, %s, 'PENDING')"
+        + ignore_duplicate(tx, "id"),
         (identifier.bytes, fingerprint),
     )
     return tx.one("SELECT * FROM serving_requests WHERE id = %s FOR UPDATE", (identifier.bytes,))

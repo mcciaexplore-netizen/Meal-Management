@@ -4,7 +4,7 @@ import re
 import secrets
 from datetime import timedelta
 
-from .database import retry_transaction
+from .database import ignore_duplicate, retry_transaction
 from .errors import DomainError
 
 
@@ -69,7 +69,7 @@ class ScannerLimiter:
             for key, limit in sorted(buckets):
                 tx.execute(
                     "INSERT INTO login_rate_limits (bucket_hash, window_started_at, attempts, updated_at) "
-                    "VALUES (%s, %s, 0, %s) ON DUPLICATE KEY UPDATE bucket_hash = bucket_hash",
+                    "VALUES (%s, %s, 0, %s)" + ignore_duplicate(tx, "bucket_hash"),
                     (key, now, now),
                 )
                 row = tx.one("SELECT * FROM login_rate_limits WHERE bucket_hash = %s FOR UPDATE", (key,))

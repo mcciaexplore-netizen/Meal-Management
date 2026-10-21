@@ -16,6 +16,7 @@ class Settings:
     qr_encryption_keys: tuple[str, ...] = field(repr=False)
     db_connect_timeout: int = 10
     db_ssl_ca: str | None = None
+    db_engine: str = "mysql"
 
     @classmethod
     def from_env(cls, mapping=None):
@@ -28,8 +29,11 @@ class Settings:
             raise error
         if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", env["DB_NAME"]):
             raise ConfigurationError("INVALID_DATABASE_NAME")
+        engine = (env.get("DB_ENGINE") or "mysql").strip().lower()
+        if engine not in {"mysql", "postgres"}:
+            raise ConfigurationError("INVALID_SETTING_DB_ENGINE")
         try:
-            port = int(env.get("DB_PORT", "3306"))
+            port = int(env.get("DB_PORT", "3306" if engine == "mysql" else "5432"))
             timeout = int(env.get("DB_CONNECT_TIMEOUT", "10"))
         except (ValueError, TypeError):
             raise ConfigurationError("INVALID_DATABASE_CONFIGURATION") from None
@@ -50,4 +54,5 @@ class Settings:
             qr_encryption_keys=keys,
             db_connect_timeout=timeout,
             db_ssl_ca=env.get("DB_SSL_CA") or None,
+            db_engine=engine,
         )
