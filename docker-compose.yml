@@ -1,0 +1,23 @@
+# Runs both applications from the same image. Settings come from .env.docker
+# (copy .env.example, use production values, never commit it).
+services:
+  admin:
+    build: .
+    image: meal-management:latest
+    env_file: .env.docker
+    environment:
+      MEAL_APPLICATION: admin
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  scanner:
+    image: meal-management:latest
+    env_file: .env.docker
+    environment:
+      MEAL_APPLICATION: scanner
+    ports:
+      - "8001:8000"
+    depends_on:
+      - admin
+    restart: unless-stopped
