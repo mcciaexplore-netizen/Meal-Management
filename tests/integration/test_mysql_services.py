@@ -540,7 +540,7 @@ class MealServicesMySQLTests(MealServicesFixture):
         from meal_management.errors import DomainError
 
         registration, _ = self.employee()
-        missing_id = self.scalar("SELECT COALESCE(MAX(id), 0) + 1000 FROM employees")
+        missing_id = int(self.scalar("SELECT COALESCE(MAX(id), 0) + 1000 FROM employees"))
         with self.assertRaises(DomainError) as caught:
             self.employees.archive_bulk(
                 self.admin_context,

@@ -17,6 +17,8 @@ class EmployeeEmailPolicyMySQLTests(MealServicesFixture):
             "employee_code": "BULK-" + prefix + "-" + str(index),
             "full_name": "Fictional Bulk Employee " + str(index),
             "email": "bulk-" + prefix + "-" + str(index) + "@example.test",
+            "company_name": "Fictional Example Company",
+            "phone": "+1 202 555 0101",
             "department_id": self.department_id,
         } for index in range(count)]
 
