@@ -200,6 +200,8 @@ class StaffService:
             )
             if staff is None:
                 raise DomainError("STAFF_NOT_FOUND")
+            if staff.get("is_scanner", False):
+                raise DomainError("SCANNER_ACCOUNT_PROTECTED")
             roles = {
                 row["role_code"]
                 for row in tx.all(
@@ -228,6 +230,49 @@ class StaffService:
                 before={"is_active": bool(staff["is_active"])},
                 after={"is_active": is_active},
             )
+
+    def update(self, context, staff_id, display_name, email):
+        if type(staff_id) is not int or staff_id < 1:
+            raise DomainError("INVALID_STAFF_ID")
+        display_name = required_text(display_name, "display_name", 150)
+        email = normalize_email(email)
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            staff = tx.one(
+                "SELECT id, display_name, email, is_scanner FROM staff_accounts WHERE id = %s FOR UPDATE",
+                (staff_id,),
+            )
+            if staff is None:
+                raise DomainError("STAFF_NOT_FOUND")
+            if staff.get("is_scanner", False):
+                raise DomainError("SCANNER_ACCOUNT_PROTECTED")
+            if (staff["display_name"], staff["email"]) == (display_name, email):
+                return {"staff_id": staff_id, "sessions_ended": 0}
+            email_changed = staff["email"] != email
+            if email_changed and tx.one("SELECT id FROM staff_accounts WHERE email = %s AND id <> %s", (email, staff_id)):
+                raise DomainError("STAFF_EMAIL_EXISTS")
+            now = tx.now()
+            try:
+                tx.execute(
+                    "UPDATE staff_accounts SET display_name = %s, email = %s, updated_at = %s WHERE id = %s",
+                    (display_name, email, now, staff_id),
+                )
+            except Exception as error:
+                if getattr(error, "errno", None) == 1062:
+                    raise DomainError("STAFF_EMAIL_EXISTS") from None
+                raise
+            ended = 0
+            if email_changed:
+                ended = tx.execute(
+                    "UPDATE staff_sessions SET revoked_at = %s WHERE staff_id = %s AND revoked_at IS NULL",
+                    (now, staff_id),
+                )
+            audit(
+                tx, actor.staff_id, "STAFF_UPDATED", "staff_accounts", staff_id,
+                before={"display_name": staff["display_name"], "email": staff["email"]},
+                after={"display_name": display_name, "email": email, "sessions_ended": ended},
+            )
+        return {"staff_id": staff_id, "sessions_ended": ended}
 
     def set_roles(self, context, staff_id, roles):
         if type(staff_id) is not int or staff_id < 1:

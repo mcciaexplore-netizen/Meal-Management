@@ -396,3 +396,10 @@ dialog::backdrop { background: #102632a6; backdrop-filter: blur(3px); }
 .scanner-code-details div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
 .scanner-code-details dt { color: #7c8d95; }
 .scanner-code-details dd { margin: 0; font-weight: 600; text-align: right; }
+.status-filter { display: inline-flex; gap: 4px; margin: 0 0 12px; padding: 3px; background: #f1f5f6; border-radius: 6px; }
+.status-filter button { border: 0; background: transparent; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; color: #5a6b75; }
+.status-filter button.active { background: #fff; color: var(--teal-dark); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+.catalog-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: flex-end; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.role-choices { border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; margin: 12px 0; }
+.role-choices .checkbox { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }

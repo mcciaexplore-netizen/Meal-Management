@@ -250,7 +250,7 @@ class EmployeeService:
                 return
             updated = dict(employee)
             updated.update(supplied)
-            if "department_id" in supplied:
+            if "department_id" in supplied and supplied["department_id"] != employee["department_id"]:
                 self._department(tx, updated["department_id"])
             try:
                 tx.execute(

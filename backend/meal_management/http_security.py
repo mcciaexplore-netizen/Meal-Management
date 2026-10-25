@@ -36,6 +36,19 @@ def error_body(code, request_id=None):
         "SCANNER_RATE_LIMITED": "Too many scanner requests. Wait briefly, then retry the same serving.",
         "ACTIVE_UNTIL_OUT_OF_RANGE": "Choose an active-until date from today up to six months ahead.",
         "SCANNER_PHONE_NOT_FOUND": "That scanner phone or code was not found.",
+        "MEAL_TYPE_UNAVAILABLE": "This meal type is no longer offered. Ask the office administrator.",
+        "SCANNER_INACTIVE": "This scanning counter has been deactivated. Ask the office administrator.",
+        "LOCATION_INACTIVE": "This serving location has been deactivated. Ask the office administrator.",
+        "DEPARTMENT_UNAVAILABLE": "That department is inactive. Choose an active department.",
+        "DEPARTMENT_HAS_ACTIVE_EMPLOYEES": "This department still has active employees. Confirm to deactivate it anyway.",
+        "DEPARTMENT_NAME_EXISTS": "Another department already uses that name.",
+        "MEAL_TYPE_CODE_EXISTS": "Another meal type already uses that code.",
+        "LOCATION_CODE_EXISTS": "Another serving location already uses that code.",
+        "SCANNER_CODE_EXISTS": "Another scanning counter already uses that code.",
+        "STAFF_EMAIL_EXISTS": "Another staff account already uses that email address.",
+        "SHARED_SCANNER_SETTING_PROTECTED": "The Meal Scanner uses this item. You can rename it, but not change its code or deactivate it.",
+        "SCANNER_ACCOUNT_PROTECTED": "The built-in Meal Scanner account cannot be changed.",
+        "LAST_ACTIVE_ADMIN": "At least one active administrator must remain.",
         "SCANNER_PHONE_ALREADY_REVOKED": "That scanner phone or code is already revoked.",
         "REAL_EMAIL_NOT_AUTHORIZED": "Email sending is disabled. An administrator must enable the configured email provider before sending.",
         "EMAIL_APPROVAL_REQUIRED": "Approve this bulk email before sending it.",
@@ -59,6 +72,8 @@ def status_for(code):
     if code.endswith("NOT_FOUND") or code == "NOT_FOUND":
         return 404
     if "EXISTS" in code or "ALREADY" in code or "IDEMPOTENCY" in code:
+        return 409
+    if code in {"DEPARTMENT_HAS_ACTIVE_EMPLOYEES", "SHARED_SCANNER_SETTING_PROTECTED", "SCANNER_ACCOUNT_PROTECTED"}:
         return 409
     return 400
 

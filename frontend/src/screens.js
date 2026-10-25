@@ -7,6 +7,7 @@ import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailD
 import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
+import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
 
 const active = rows => (rows ?? []).filter(row => row.is_active !== false && row.is_active !== 0);
 const rowId = row => row.id ?? row.qr_id ?? row.authorization_id;
@@ -27,7 +28,7 @@ export async function dashboard(target, context) {
 }
 
 function employeeForm(catalog, employee = {}) {
-  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments), employee.department_id)}</div>`;
+  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments, employee.department_id), employee.department_id)}</div>`;
 }
 
 export async function employees(target, context) {
@@ -543,39 +544,61 @@ function openBulkMealRemoval(context) {
 }
 
 export async function settings(target, context) {
-  const configs = [
-    { key: "departments", title: "Departments", rows: context.catalog.departments, fields: field("Department name", "name", "", "text", 'required maxlength="100"') },
-    { key: "meal-types", title: "Meal types", rows: context.catalog.meal_types, fields: field("Code", "code", "", "text", 'required maxlength="32"') + field("Name", "name", "", "text", 'required maxlength="100"') },
-    { key: "locations", title: "Serving locations", rows: context.catalog.locations, fields: field("Code", "code", "", "text", 'required maxlength="32"') + field("Name", "name", "", "text", 'required maxlength="150"') },
-    { key: "scanners", title: "Scanning counters", rows: context.catalog.scanners, fields: field("Scanner code", "code", "", "text", 'required maxlength="64"') + field("Name", "name", "", "text", 'required maxlength="150"') + selectField("Location", "location_id", active(context.catalog.locations)) }
-  ];
-  target.innerHTML = `${heading("OFFICE SETUP", "Service settings", "Set up departments, meal services, locations, and registered scanning counters.")}<div class="settings-grid">${configs.map(config => `<section class="panel"><div class="panel-heading"><h2>${config.title}</h2><button class="small-button" data-add-catalog="${config.key}">Add</button></div>${config.rows?.length ? `<ul class="catalog-list">${config.rows.map(row => `<li><span><strong>${escape(row.name)}</strong>${row.code ? `<small>${escape(row.code)}</small>` : ""}</span>${badge(row.is_active ? "Active" : "Inactive", row.is_active ? "positive" : "neutral")}</li>`).join("")}</ul>` : empty("Nothing configured yet", "Add an entry to get this workspace ready.", "settings")}</section>`).join("")}</div><section class="panel"><div class="panel-heading"><div><h2>Staff accounts</h2><p class="muted small">Workspace access for administrators and waiters.</p></div><button class="button" id="new-staff">${icon("plus")} Add staff</button></div><div id="staff-list">${loading()}</div><div class="pagination" id="staff-pagination"></div></section><section class="panel danger-zone bulk-removal-panel"><div class="panel-heading"><div><h2>Bulk data removal</h2><p class="muted small">Remove employee and meal records in audited batches.</p></div></div><div class="bulk-removal-actions"><div><h3>Employees</h3><p class="muted small">Select up to 100 employees. Active QRs are revoked automatically.</p><button class="button danger-outline" id="bulk-remove-employees">Select employees</button></div><div><h3>Meal records</h3><p class="muted small">Choose a date range, then select up to 100 employee or visitor meals.</p><button class="button danger-outline" id="bulk-remove-meals">Select meals</button></div></div></section>`;
-  target.querySelectorAll("[data-add-catalog]").forEach(button => button.onclick = () => {
-    const config = configs.find(item => item.key === button.dataset.addCatalog);
-    const dialog = modal(`Add to ${config.title.toLowerCase()}`, `<form>${config.fields}${formEnd("Save")}</form>`);
-    formAction(dialog.querySelector("form"), async data => {
-      const body = Object.fromEntries(data);
-      if (body.location_id) body.location_id = positive(body.location_id, "location");
-      await api(`/catalog/${config.key}`, { method: "POST", body });
-      closeModal();
-      notify("Office setting added.");
-      await context.refreshCatalog();
-      await context.reload();
+  const addForms = {
+    departments: () => field("Department name", "name", "", "text", 'required maxlength="100"'),
+    "meal-types": () => field("Code", "code", "", "text", 'required maxlength="32"') + field("Name", "name", "", "text", 'required maxlength="100"'),
+    locations: () => field("Code", "code", "", "text", 'required maxlength="32"') + field("Name", "name", "", "text", 'required maxlength="150"'),
+    scanners: () => field("Scanner code", "code", "", "text", 'required maxlength="64"') + field("Name", "name", "", "text", 'required maxlength="150"') + selectField("Location", "location_id", active(context.catalog.locations))
+  };
+  const rowsFor = {
+    departments: () => context.catalog.departments ?? [],
+    "meal-types": () => context.catalog.meal_types ?? [],
+    locations: () => context.catalog.locations ?? [],
+    scanners: () => context.catalog.scanners ?? []
+  };
+  target.innerHTML = `${heading("OFFICE SETUP", "Service settings", "Set up departments, meal services, locations, and registered scanning counters. Deactivated entries stay in history and reports.")}<div class="settings-grid">${Object.keys(catalogKinds).map(kind => `<section class="panel" data-catalog-panel="${kind}"></section>`).join("")}</div><section class="panel"><div class="panel-heading"><div><h2>Staff accounts</h2><p class="muted small">Workspace access for administrators and waiters.</p></div><button class="button" id="new-staff">${icon("plus")} Add staff</button></div><div class="status-filter" role="group" aria-label="Staff status"><button type="button" class="active" data-staff-view="active" aria-pressed="true">Active</button><button type="button" data-staff-view="inactive" aria-pressed="false">Inactive</button></div><div id="staff-list">${loading()}</div><div class="pagination" id="staff-pagination"></div></section><section class="panel danger-zone bulk-removal-panel"><div class="panel-heading"><div><h2>Bulk data removal</h2><p class="muted small">Remove employee and meal records in audited batches.</p></div></div><div class="bulk-removal-actions"><div><h3>Employees</h3><p class="muted small">Select up to 100 employees. Active QRs are revoked automatically.</p><button class="button danger-outline" id="bulk-remove-employees">Select employees</button></div><div><h3>Meal records</h3><p class="muted small">Choose a date range, then select up to 100 employee or visitor meals.</p><button class="button danger-outline" id="bulk-remove-meals">Select meals</button></div></div></section>`;
+  const renders = {};
+  const refresh = async () => {
+    await context.refreshCatalog();
+    if (!context.isCurrent()) return;
+    Object.values(renders).forEach(render => render());
+  };
+  for (const kind of Object.keys(catalogKinds)) {
+    const section = target.querySelector(`[data-catalog-panel="${kind}"]`);
+    renders[kind] = bindCatalogPanel(section, kind, rowsFor[kind], () => context.catalog.shared ?? {}, refresh);
+    section.addEventListener("click", event => {
+      const button = event.target.closest("[data-add-catalog]");
+      if (!button) return;
+      const dialog = modal(`Add to ${catalogKinds[kind].title.toLowerCase()}`, `<form>${addForms[kind]()}${formEnd("Save")}</form>`);
+      formAction(dialog.querySelector("form"), async data => {
+        const body = Object.fromEntries(data);
+        if (body.location_id) body.location_id = positive(body.location_id, "location");
+        await api(`/catalog/${kind}`, { method: "POST", body });
+        closeModal();
+        notify("Office setting added.");
+        await refresh();
+      });
     });
-  });
+  }
   let staffRows = [];
   let staffCursor = null;
-  async function loadStaff(append = false) {
-    const result = await api(`/staff?${query({ limit: 30, after_id: append ? staffCursor : null })}`);
-    if (!context.isCurrent()) return;
-    staffRows = append ? staffRows.concat(list(result)) : list(result);
-    staffCursor = result.next_cursor;
-    target.querySelector("#staff-list").innerHTML = staffRows.length ? table(["Staff member", "Roles", "Status", ""], staffRows.map(row => `<tr><td><strong>${escape(row.display_name)}</strong><span class="cell-subtitle">${escape(row.email)}</span></td><td>${(row.roles ?? []).map(role => badge(role)).join(" ")}</td><td>${badge(row.is_active ? "Active" : "Disabled", row.is_active ? "positive" : "neutral")}</td><td>${(row.staff_id ?? row.id) !== context.user.staff_id ? action("staff-status", row.staff_id ?? row.id, row.is_active ? "Disable" : "Enable") : badge("You")}</td></tr>`), "Staff accounts") : empty("No staff accounts", "Add an account to give a waiter access.", "people");
-    target.querySelector("#staff-pagination").innerHTML = `<span>${staffRows.length} accounts shown</span>${staffCursor ? '<button class="button" id="more-staff">Load more</button>' : ""}`;
+  let staffView = "active";
+  function drawStaff() {
+    const shown = staffRows.filter(row => staffView === "active" ? isActive(row) : !isActive(row));
+    target.querySelector("#staff-list").innerHTML = shown.length ? table(["Staff member", "Roles", "Status", ""], shown.map(row => {
+      const id = row.staff_id ?? row.id;
+      const self = id === context.user.staff_id;
+      return `<tr><td><strong>${escape(row.display_name)}</strong><span class="cell-subtitle">${escape(row.email)}</span></td><td>${(row.roles ?? []).map(role => badge(role)).join(" ")}</td><td>${badge(row.is_active ? "Active" : "Disabled", row.is_active ? "positive" : "neutral")}</td><td class="row-actions">${action("staff-edit", id, "Edit")}${self ? badge("You") : action("staff-status", id, row.is_active ? "Deactivate" : "Reactivate")}</td></tr>`;
+    }), "Staff accounts") : empty(staffView === "active" ? "No active staff accounts" : "No inactive staff accounts", staffView === "active" ? "Add an account to give a waiter access." : "Deactivated accounts appear here with a Reactivate button.", "people");
+    target.querySelector("#staff-pagination").innerHTML = `<span>${staffRows.length} accounts loaded</span>${staffCursor ? '<button class="button" id="more-staff">Load more</button>' : ""}`;
     target.querySelector("#more-staff")?.addEventListener("click", () => loadStaff(true).catch(error => notify(error.message, "error")));
+    target.querySelectorAll('[data-action="staff-edit"]').forEach(button => button.onclick = () => {
+      const account = staffRows.find(row => Number(row.staff_id ?? row.id) === Number(button.dataset.id));
+      staffEditDialog(account, async () => { await context.refreshCatalog(); await loadStaff(); });
+    });
     target.querySelectorAll('[data-action="staff-status"]').forEach(button => button.onclick = () => {
       const account = staffRows.find(row => Number(row.staff_id ?? row.id) === Number(button.dataset.id));
-      confirmAction(account.is_active ? "Disable staff account" : "Enable staff account", `${account.is_active ? "Disable" : "Enable"} access for ${account.display_name}?`, async () => {
+      confirmAction(account.is_active ? "Deactivate staff account" : "Reactivate staff account", account.is_active ? `Deactivate ${account.display_name}? They are signed out and can no longer sign in. Their history stays.` : `Reactivate ${account.display_name}? They can sign in again.`, async () => {
         await api(`/staff/${account.staff_id ?? account.id}/active`, { method: "PATCH", body: { is_active: !account.is_active } });
         closeModal();
         notify("Staff account updated.");
@@ -584,6 +607,18 @@ export async function settings(target, context) {
       });
     });
   }
+  async function loadStaff(append = false) {
+    const result = await api(`/staff?${query({ limit: 30, after_id: append ? staffCursor : null })}`);
+    if (!context.isCurrent()) return;
+    staffRows = append ? staffRows.concat(list(result)) : list(result);
+    staffCursor = result.next_cursor;
+    drawStaff();
+  }
+  target.querySelectorAll("[data-staff-view]").forEach(button => button.onclick = () => {
+    staffView = button.dataset.staffView;
+    target.querySelectorAll("[data-staff-view]").forEach(item => { item.classList.toggle("active", item === button); item.setAttribute("aria-pressed", String(item === button)); });
+    drawStaff();
+  });
   target.querySelector("#new-staff").onclick = () => {
     const dialog = modal("Create a staff account", `<p class="muted small">Choose a strong, unique password and share it privately with the staff member.</p><form>${field("Display name", "display_name", "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", "", "email", 'required maxlength="254" autocomplete="off"')}${field("Password", "password", "", "password", 'required minlength="12" maxlength="1024" autocomplete="new-password"')}<label>Workspace role<select name="role"><option value="WAITER">Waiter</option><option value="ADMIN">Administrator</option></select></label>${formEnd("Create account")}</form>`);
     formAction(dialog.querySelector("form"), async data => {

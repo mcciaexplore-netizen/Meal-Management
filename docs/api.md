@@ -65,7 +65,14 @@ There is no public staff registration or first-admin endpoint. First-admin setup
 | `GET` | `/api/scanner-phones` | Admin | List active scanner phones and unused codes (never the codes themselves), plus `today` and `latest_active_date` in India time |
 | `POST` | `/api/scanner-phones` | Admin | Generate a one-time activation code from `label` (1–100 characters) and `active_until` (a `YYYY-MM-DD` date from today up to six months ahead, India time). The response is the only place the code appears. The phone stops at the end of that day in IST, stored in UTC |
 | `POST` | `/api/scanner-phones/{phone_id}/revoke` | Admin | Revoke an active phone immediately, or cancel an unused code |
-| `GET` | `/api/staff` | Admin | Paginated staff metadata and assigned roles, without password hashes |
+| `PATCH` | `/api/catalog/departments/{id}` | Admin | Rename a department from `name`; a used name returns `DEPARTMENT_NAME_EXISTS` (409) |
+| `GET` | `/api/catalog/departments/{id}/usage` | Admin | Return `active_employees` for the deactivation confirmation |
+| `PATCH` | `/api/catalog/departments/{id}/active` | Admin | Set `is_active`; deactivating a department with active employees needs `confirm: true`, otherwise `DEPARTMENT_HAS_ACTIVE_EMPLOYEES` (409) |
+| `PATCH` | `/api/catalog/{locations\|meal-types\|scanners}/{id}` | Admin | Change `code` and `name`; a used code returns `*_CODE_EXISTS` (409) |
+| `PATCH` | `/api/catalog/{locations\|meal-types\|scanners}/{id}/active` | Admin | Set `is_active`. The Meal Scanner's own location, counter and meal type return `SHARED_SCANNER_SETTING_PROTECTED` (409) for deactivation or code changes |
+| `GET` | `/api/staff` | Admin | Paginated staff metadata and assigned roles, without password hashes; the built-in scanner account is not listed |
+| `PATCH` | `/api/staff/{staff_id}` | Admin | Change `display_name` and `email`; an email change ends that person's sessions |
+| `PATCH` | `/api/staff/{staff_id}/roles` | Admin | Replace `roles`; the last active administrator keeps `ADMIN` |
 | `POST` | `/api/staff` | Admin | Create a staff account from `display_name`, `email`, `password`, and `roles` |
 | `PATCH` | `/api/staff/{staff_id}/active` | Admin | Set `is_active`; deactivation revokes sessions |
 

@@ -13,8 +13,9 @@ export const facilityDepartments = Object.freeze([
 
 const nameKey = value => String(value ?? "").trim().normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 const enabled = row => row.is_active !== false && row.is_active !== 0;
+const isCurrent = (row, currentId) => currentId !== null && currentId !== undefined && Number(row.id) === Number(currentId);
 
-export function employeeDepartmentOptions(rows = []) {
+export function employeeDepartmentOptions(rows = [], currentId = null) {
   const choices = [];
   const included = new Set();
   for (const department of facilityDepartments) {
@@ -23,14 +24,15 @@ export function employeeDepartmentOptions(rows = []) {
     const existing = rows.find(row => nameKey(row.name) === key);
     if (existing) {
       if (enabled(existing)) choices.push({ ...existing, name: department.name });
+      else if (isCurrent(existing, currentId)) choices.push({ ...existing, name: department.name + " (inactive)" });
     } else {
       choices.push({ id: "facility:" + department.key, name: department.name });
     }
   }
   for (const row of rows) {
     const key = nameKey(row.name);
-    if (enabled(row) && !included.has(key)) {
-      choices.push({ ...row });
+    if (!included.has(key) && (enabled(row) || isCurrent(row, currentId))) {
+      choices.push(enabled(row) ? { ...row } : { ...row, name: row.name + " (inactive)" });
       included.add(key);
     }
   }

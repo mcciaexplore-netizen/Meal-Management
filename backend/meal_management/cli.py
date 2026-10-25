@@ -145,7 +145,7 @@ def _runtime_account_command(args):
         raise DomainError("EXPLICIT_ENV_FILE_REQUIRED")
     if not sys.stdin.isatty():
         raise DomainError("RUNTIME_ACCOUNT_REQUIRES_INTERACTIVE_TERMINAL")
-    from .runtime_account import INSERT_TABLES, UPDATE_TABLES, create_aiven_runtime_account, target_confirmation
+    from .runtime_account import DELETE_TABLES, INSERT_TABLES, UPDATE_TABLES, create_aiven_runtime_account, target_confirmation
 
     _, settings, runtime = _transfer_environment(args.env_file)
     expected = target_confirmation(settings, runtime)
@@ -155,7 +155,8 @@ def _runtime_account_command(args):
     print("Grant SELECT on " + settings.db_name + ".*.")
     print("Grant INSERT on these " + settings.db_name + " tables: " + ", ".join(INSERT_TABLES) + ".")
     print("Grant UPDATE on these " + settings.db_name + " tables: " + ", ".join(UPDATE_TABLES) + ".")
-    print("No DELETE, schema changes, trigger creation, account management, or GRANT OPTION privileges are granted.")
+    print("Grant DELETE on these " + settings.db_name + " tables: " + ", ".join(DELETE_TABLES) + ".")
+    print("No other DELETE, schema changes, trigger creation, account management, or GRANT OPTION privileges are granted.")
     confirmation = input("Type " + expected + " to continue: ")
     result = create_aiven_runtime_account(
         settings, runtime, PROJECT_ROOT / "database" / "migrations", output,

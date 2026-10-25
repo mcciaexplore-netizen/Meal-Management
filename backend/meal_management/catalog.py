@@ -8,6 +8,28 @@ _CATALOGS = {
     "SCANNER": "scanner_devices",
     "MEAL_TYPE": "meal_types",
 }
+_LIMITS = {
+    "LOCATION": (32, 150),
+    "SCANNER": (64, 150),
+    "MEAL_TYPE": (32, 100),
+}
+_SHARED_COLUMNS = {
+    "LOCATION": "location_id",
+    "SCANNER": "scanner_id",
+    "MEAL_TYPE": "meal_type_id",
+}
+
+
+def _shared_ids(tx):
+    row = tx.one(
+        "SELECT p.scanner_id, p.meal_type_id, d.location_id "
+        "FROM scan_app_settings p JOIN scanner_devices d ON d.id = p.scanner_id WHERE p.id = 1"
+    )
+    return {} if row is None else dict(row)
+
+
+def _protected(error):
+    return getattr(error, "errno", None) == 1644
 
 
 def _positive_id(value, name):
@@ -98,27 +120,135 @@ class CatalogService:
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
             row = tx.one(
-                f"SELECT id, is_active FROM {table} WHERE id = %s FOR UPDATE",
+                f"SELECT id, code, name, is_active FROM {table} WHERE id = %s FOR UPDATE",
                 (identifier,),
             )
             if row is None:
                 raise DomainError(catalog + "_NOT_FOUND")
             previous = bool(row["is_active"])
-            if previous != is_active:
+            if previous == is_active:
+                return {"id": identifier, "is_active": is_active}
+            if not is_active and _shared_ids(tx).get(_SHARED_COLUMNS[catalog]) == identifier:
+                raise DomainError("SHARED_SCANNER_SETTING_PROTECTED")
+            try:
                 tx.execute(
                     f"UPDATE {table} SET is_active = %s WHERE id = %s",
                     (is_active, identifier),
                 )
-                audit(
-                    tx, actor.staff_id, catalog + "_STATUS_CHANGED", table, identifier,
-                    before={"is_active": previous}, after={"is_active": is_active},
-                )
+            except Exception as error:
+                if _protected(error):
+                    raise DomainError("SHARED_SCANNER_SETTING_PROTECTED") from None
+                raise
+            audit(
+                tx, actor.staff_id, catalog + "_STATUS_CHANGED", table, identifier,
+                before={"is_active": previous}, after={"is_active": is_active, "code": row["code"], "name": row["name"]},
+            )
+        return {"id": identifier, "is_active": is_active}
+
+    def _update(self, context, catalog, identifier, code, name):
+        _positive_id(identifier, catalog + "_ID")
+        code_limit, name_limit = _LIMITS[catalog]
+        code = required_text(code, catalog + "_CODE", code_limit)
+        name = required_text(name, catalog + "_NAME", name_limit)
+        table = _CATALOGS[catalog]
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            row = tx.one(f"SELECT id, code, name FROM {table} WHERE id = %s FOR UPDATE", (identifier,))
+            if row is None:
+                raise DomainError(catalog + "_NOT_FOUND")
+            if (row["code"], row["name"]) == (code, name):
+                return {"id": identifier, "code": code, "name": name}
+            if code != row["code"] and _shared_ids(tx).get(_SHARED_COLUMNS[catalog]) == identifier:
+                raise DomainError("SHARED_SCANNER_SETTING_PROTECTED")
+            try:
+                tx.execute(f"UPDATE {table} SET code = %s, name = %s WHERE id = %s", (code, name, identifier))
+            except Exception as error:
+                if getattr(error, "errno", None) == 1062:
+                    raise DomainError(catalog + "_CODE_EXISTS") from None
+                if _protected(error):
+                    raise DomainError("SHARED_SCANNER_SETTING_PROTECTED") from None
+                raise
+            audit(
+                tx, actor.staff_id, catalog + "_UPDATED", table, identifier,
+                before={"code": row["code"], "name": row["name"]}, after={"code": code, "name": name},
+            )
+        return {"id": identifier, "code": code, "name": name}
+
+    def update_location(self, context, location_id, code, name):
+        return self._update(context, "LOCATION", location_id, code, name)
+
+    def update_scanner(self, context, scanner_id, code, name):
+        return self._update(context, "SCANNER", scanner_id, code, name)
+
+    def update_meal_type(self, context, meal_type_id, code, name):
+        return self._update(context, "MEAL_TYPE", meal_type_id, code, name)
+
+    def update_department(self, context, department_id, name):
+        _positive_id(department_id, "DEPARTMENT_ID")
+        name = required_text(name, "DEPARTMENT_NAME", 100)
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            row = tx.one("SELECT id, name FROM departments WHERE id = %s FOR UPDATE", (department_id,))
+            if row is None:
+                raise DomainError("DEPARTMENT_NOT_FOUND")
+            if row["name"] == name:
+                return {"id": department_id, "name": name}
+            try:
+                tx.execute("UPDATE departments SET name = %s WHERE id = %s", (name, department_id))
+            except Exception as error:
+                if getattr(error, "errno", None) == 1062:
+                    raise DomainError("DEPARTMENT_NAME_EXISTS") from None
+                raise
+            audit(
+                tx, actor.staff_id, "DEPARTMENT_UPDATED", "departments", department_id,
+                before={"name": row["name"]}, after={"name": name},
+            )
+        return {"id": department_id, "name": name}
+
+    def _active_employees(self, tx, department_id):
+        return tx.one(
+            "SELECT COUNT(*) AS total FROM employees e "
+            "LEFT JOIN employee_archives a ON a.employee_id = e.id "
+            "WHERE e.department_id = %s AND e.is_active = 1 AND a.employee_id IS NULL",
+            (department_id,),
+        )["total"]
+
+    def department_usage(self, context, department_id):
+        _positive_id(department_id, "DEPARTMENT_ID")
+        with self.db.transaction() as tx:
+            require_actor(tx, context, {"ADMIN"})
+            if tx.one("SELECT id FROM departments WHERE id = %s", (department_id,)) is None:
+                raise DomainError("DEPARTMENT_NOT_FOUND")
+            return {"id": department_id, "active_employees": int(self._active_employees(tx, department_id))}
+
+    def set_department_active(self, context, department_id, is_active, confirm=False):
+        _positive_id(department_id, "DEPARTMENT_ID")
+        if type(is_active) is not bool or type(confirm) is not bool:
+            raise DomainError("INVALID_DEPARTMENT_STATUS")
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            row = tx.one("SELECT id, name, is_active FROM departments WHERE id = %s FOR UPDATE", (department_id,))
+            if row is None:
+                raise DomainError("DEPARTMENT_NOT_FOUND")
+            previous = bool(row["is_active"])
+            if previous == is_active:
+                return {"id": department_id, "is_active": is_active}
+            active_employees = int(self._active_employees(tx, department_id))
+            if not is_active and active_employees and not confirm:
+                raise DomainError("DEPARTMENT_HAS_ACTIVE_EMPLOYEES")
+            tx.execute("UPDATE departments SET is_active = %s WHERE id = %s", (is_active, department_id))
+            audit(
+                tx, actor.staff_id, "DEPARTMENT_STATUS_CHANGED", "departments", department_id,
+                before={"is_active": previous},
+                after={"is_active": is_active, "name": row["name"], "active_employees": active_employees},
+            )
+        return {"id": department_id, "is_active": is_active, "active_employees": active_employees}
 
     def set_location_active(self, context, location_id, is_active):
-        self._set_active(context, "LOCATION", location_id, is_active)
+        return self._set_active(context, "LOCATION", location_id, is_active)
 
     def set_scanner_active(self, context, scanner_id, is_active):
-        self._set_active(context, "SCANNER", scanner_id, is_active)
+        return self._set_active(context, "SCANNER", scanner_id, is_active)
 
     def set_meal_type_active(self, context, meal_type_id, is_active):
-        self._set_active(context, "MEAL_TYPE", meal_type_id, is_active)
+        return self._set_active(context, "MEAL_TYPE", meal_type_id, is_active)

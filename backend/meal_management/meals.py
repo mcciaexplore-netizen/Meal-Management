@@ -85,6 +85,19 @@ def check_qr(qr, now):
         raise DomainError("QR_EXPIRED")
 
 
+def _insert_void(tx, meal_id, staff_id, reason, voided_at):
+    try:
+        tx.insert(
+            "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) "
+            "VALUES (%s, %s, %s, %s)",
+            (meal_id, staff_id, reason, voided_at),
+        )
+    except Exception as error:
+        if getattr(error, "errno", None) == 1062:
+            raise DomainError("MEAL_ALREADY_REMOVED") from None
+        raise
+
+
 def check_meal_type(tx, meal_type_id):
     row = tx.one("SELECT id, is_active FROM meal_types WHERE id = %s FOR SHARE", (meal_type_id,))
     if not row or not row["is_active"]:
@@ -572,6 +585,7 @@ class MealService:
                 changed += updated
         return changed
 
+    @retry_transaction
     def void(self, context, meal_id, reason):
         positive_integer(meal_id, "MEAL_ID")
         reason = required_text(reason, "removal_reason", 255)
@@ -580,7 +594,7 @@ class MealService:
             meal = tx.one(
                 "SELECT m.id, m.serving_id, m.unit_number, m.served_at, s.kind "
                 "FROM meals m JOIN servings s ON s.id = m.serving_id "
-                "WHERE m.id = %s FOR UPDATE",
+                "WHERE m.id = %s FOR SHARE",
                 (meal_id,),
             )
             if meal is None:
@@ -591,11 +605,7 @@ class MealService:
             ) is not None:
                 raise DomainError("MEAL_ALREADY_REMOVED")
             voided_at = tx.now()
-            tx.insert(
-                "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) "
-                "VALUES (%s, %s, %s, %s)",
-                (meal_id, actor.staff_id, reason, voided_at),
-            )
+            _insert_void(tx, meal_id, actor.staff_id, reason, voided_at)
             audit(
                 tx,
                 actor.staff_id,
@@ -612,6 +622,7 @@ class MealService:
             )
         return voided_at
 
+    @retry_transaction
     def void_bulk(self, context, meal_ids, reason):
         identifiers = positive_identifiers(meal_ids, "MEAL_IDS")
         reason = required_text(reason, "removal_reason", 255)
@@ -621,7 +632,7 @@ class MealService:
             meals = tx.all(
                 "SELECT m.id, m.serving_id, m.unit_number, m.served_at, s.kind "
                 "FROM meals m JOIN servings s ON s.id = m.serving_id "
-                f"WHERE m.id IN ({placeholders}) ORDER BY m.id FOR UPDATE",
+                f"WHERE m.id IN ({placeholders}) ORDER BY m.id FOR SHARE",
                 identifiers,
             )
             if tuple(meal["id"] for meal in meals) != identifiers:
@@ -636,11 +647,7 @@ class MealService:
             voided_at = tx.now()
             for meal in meals:
                 meal_id = meal["id"]
-                tx.insert(
-                    "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (meal_id, actor.staff_id, reason, voided_at),
-                )
+                _insert_void(tx, meal_id, actor.staff_id, reason, voided_at)
                 audit(
                     tx,
                     actor.staff_id,

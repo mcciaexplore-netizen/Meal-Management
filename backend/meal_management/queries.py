@@ -50,7 +50,7 @@ class QueryService:
                 "SELECT s.id, s.display_name, s.email, s.is_active, "
                 + roles + " AS role_codes "
                 "FROM staff_accounts s LEFT JOIN staff_account_roles r ON r.staff_id = s.id "
-                "WHERE s.id > %s GROUP BY s.id, s.display_name, s.email, s.is_active "
+                "WHERE s.id > %s AND s.is_scanner = 0 GROUP BY s.id, s.display_name, s.email, s.is_active "
                 "ORDER BY s.id LIMIT %s",
                 (after_id, limit + 1),
             )
@@ -263,10 +263,19 @@ class QueryService:
                 "JOIN staff_account_roles r ON r.staff_id = s.id "
                 "WHERE s.is_active = 1 AND r.role_code IN ('ADMIN', 'WAITER') ORDER BY s.display_name"
             ) if admin else []
-        return {key: [_record(row) for row in rows] for key, rows in {
+            shared = tx.one(
+                "SELECT p.scanner_id, p.meal_type_id, d.location_id FROM scan_app_settings p "
+                "JOIN scanner_devices d ON d.id = p.scanner_id WHERE p.id = 1"
+            ) if admin else None
+        result = {key: [_record(row) for row in rows] for key, rows in {
             "departments": departments, "meal_types": meal_types, "locations": locations,
             "scanners": scanners, "waiters": waiters,
         }.items()}
+        if admin:
+            result["shared"] = {
+                key: (None if shared is None else shared[key]) for key in ("scanner_id", "meal_type_id", "location_id")
+            }
+        return result
 
     def visitor_authorizations(self, context, limit=50, after_id=0, status="pending"):
         _pagination(limit, after_id)

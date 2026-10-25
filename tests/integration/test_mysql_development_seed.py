@@ -6,7 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 from uuid import uuid4
 
-from mysql_support import IsolatedMySQLTestCase, MYSQL_TESTS_ENABLED
+from mysql_support import IsolatedMySQLTestCase, MYSQL_TESTS_ENABLED, RUNTIME_PRIVILEGE_TESTS
+
+DEVELOPMENT_ONLY = "Development test data is a development-only path; production disables it and meal_runtime has no grants for it"
 
 
 class DevelopmentSeedFixture:
@@ -29,6 +31,7 @@ class DevelopmentSeedFixture:
 
 
 @unittest.skipUnless(MYSQL_TESTS_ENABLED, "MySQL connection and disposable-schema changes are not enabled")
+@unittest.skipIf(RUNTIME_PRIVILEGE_TESTS, DEVELOPMENT_ONLY)
 class MySQLDevelopmentSeedLifecycleTests(DevelopmentSeedFixture, IsolatedMySQLTestCase):
     def test_real_seed_rerun_gallery_and_scan_scenarios(self):
         from meal_management.development_seed import EXPECTED_KEYS, MASTER_LABEL, SEED_VERSION, WAITERS
@@ -135,6 +138,7 @@ class MySQLDevelopmentSeedLifecycleTests(DevelopmentSeedFixture, IsolatedMySQLTe
 
 
 @unittest.skipUnless(MYSQL_TESTS_ENABLED, "MySQL connection and disposable-schema changes are not enabled")
+@unittest.skipIf(RUNTIME_PRIVILEGE_TESTS, DEVELOPMENT_ONLY)
 class MySQLDevelopmentSeedCollisionTests(DevelopmentSeedFixture, IsolatedMySQLTestCase):
     def test_unowned_namespace_collision_rolls_back_without_overwrite(self):
         from meal_management.development_seed import DEPARTMENT_NAME
@@ -156,6 +160,7 @@ class MySQLDevelopmentSeedCollisionTests(DevelopmentSeedFixture, IsolatedMySQLTe
 
 
 @unittest.skipUnless(MYSQL_TESTS_ENABLED, "MySQL connection and disposable-schema changes are not enabled")
+@unittest.skipIf(RUNTIME_PRIVILEGE_TESTS, DEVELOPMENT_ONLY)
 class MySQLDevelopmentSeedConcurrencyTests(DevelopmentSeedFixture, IsolatedMySQLTestCase):
     def test_two_admin_sessions_seed_once_without_duplicate_qrs_or_emails(self):
         self.initialize_seed_services()
@@ -178,6 +183,7 @@ class MySQLDevelopmentSeedConcurrencyTests(DevelopmentSeedFixture, IsolatedMySQL
 
 
 @unittest.skipUnless(MYSQL_TESTS_ENABLED, "MySQL connection and disposable-schema changes are not enabled")
+@unittest.skipIf(RUNTIME_PRIVILEGE_TESTS, DEVELOPMENT_ONLY)
 class MySQLDevelopmentSeedRollbackTests(DevelopmentSeedFixture, IsolatedMySQLTestCase):
     def test_mid_seed_failure_rolls_back_real_service_writes(self):
         from meal_management.employees import EmployeeService
