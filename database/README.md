@@ -8,6 +8,10 @@ Migration `008_employee_contact_details.sql` adds optional company and phone col
 
 Migration `009_master_qr_meal_allowances.sql` stores each visitor group's contact details and meal allowance against its master QR. Each committed scan consumes one allowance inside the meal transaction, and the final allowance marks the QR exhausted.
 
+Migration `010_scanner_phones.sql` adds `scanner_phones`: one row per administrator activation code, which becomes the phone's record when it is used, plus rows for phones activated with the emergency secret or before records existed. Codes are stored only as keyed hashes. Triggers forbid deletes, changes to a row's identity fields and expiry, re-activation, and un-revoking. The runtime account needs `INSERT` and `UPDATE` on this table. Code that requires migration 010 refuses readiness until it is applied, while earlier code still reports ready afterwards, so roll back by redeploying the earlier image.
+
+New migrations are MySQL-only. The PostgreSQL schema under `database/postgres` stops at its first migration and is no longer supported; do not run the application against PostgreSQL.
+
 `schema.sql` defines a fresh MySQL 8.4 schema in the database selected by the operator. It does not create, select, reset, or migrate a database. Applying it requires separate authorization. Do not apply it to an existing populated database. No existing data is deleted or transformed by the application on startup.
 
 The schema uses InnoDB, `utf8mb4`, foreign keys with restrictive deletion, and UTC `DATETIME(6)` values. Every application database connection sets its session time zone to `+00:00`. External datetime inputs must include a UTC offset and are converted to UTC before storage.

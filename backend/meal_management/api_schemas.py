@@ -1,4 +1,5 @@
-from datetime import datetime
+import re
+from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -247,8 +248,20 @@ class ScannerActivationBody(InputModel):
     @field_validator("activation_code")
     @classmethod
     def activation_code_size(cls, value):
-        if not 12 <= len(value.get_secret_value()) <= 256:
+        if not 8 <= len(value.get_secret_value()) <= 256:
             raise ValueError("Invalid activation code length")
+        return value
+
+
+class ScannerCodeInput(InputModel):
+    label: Annotated[str, Field(min_length=1, max_length=100)]
+    active_until: date
+
+    @field_validator("active_until", mode="before")
+    @classmethod
+    def calendar_date(cls, value):
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("Choose a calendar date")
         return value
 
 

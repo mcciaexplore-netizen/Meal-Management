@@ -102,6 +102,26 @@ docker compose --env-file .env.docker ps
 
 Pass `--env-file .env.docker` so that Compose can fill in `ADMIN_HOST` and `SCANNER_HOST` for Caddy and the health checks. Afterwards, check `https://<admin host>/health/ready` and `https://<scanner host>/health/ready`. Both must return `{"status":"ready"}`, which confirms MySQL 8.4 and all migrations.
 
+## Releases with a new migration
+
+Apply the migration before the new image serves traffic: code that needs a migration reports `/health/ready` as not ready until it exists, while the previous image keeps reporting ready afterwards. That makes the previous image the rollback path.
+
+1. Take an RDS snapshot.
+2. Build the new image on the server, keeping the previous one tagged, for example `docker tag meal-management:latest meal-management:previous`, then `docker compose --env-file .env.docker build`.
+3. Apply migrations as the master user with the new image, as in step 1 above.
+4. Grant the runtime account any new table privileges as the master user, then verify the complete set with `rds-runtime-account.py --verify-only`.
+5. `docker compose --env-file .env.docker up -d`, then check both `/health/ready` endpoints.
+
+To roll back, retag the previous image as `meal-management:latest` and run `docker compose --env-file .env.docker up -d`. Migrations stay applied.
+
+Migration 010 (scanner phones) needs this grant before step 5:
+
+```sql
+GRANT INSERT, UPDATE ON `meal_management`.`scanner_phones` TO 'meal_runtime'@'172.31.%';
+```
+
+Rolling back after 010 is safe for meals and reports, but the earlier image does not check scanner phone records, so revoked or expired phones with a signed cookie would scan again until the new image is redeployed.
+
 ## Changing hostnames
 
 Point the new DNS names at the Elastic IP, then rerun `make-env.py` with the new hostnames and the same `--out` file. That keeps the secrets. Then run `docker compose --env-file .env.docker up -d`, and Caddy obtains the new certificates. Activated scanner browsers must activate again on the new scanner hostname.

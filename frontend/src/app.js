@@ -3,6 +3,7 @@ import { escape } from "./core.js";
 import { closeModal, errorMessage, formAction, icon, loading, notify } from "./ui.js";
 import { dashboard, employees, masters, reports, emails, settings } from "./screens.js";
 import { developmentGallery } from "./development.js";
+import { scannerAccess } from "./scanner_access.js";
 import { loadApplication } from "./application.js";
 
 const root = document.getElementById("app");
@@ -12,6 +13,7 @@ const adminPages = new Map([
   ["master", ["Master QR", "qr", masters]],
   ["reports", ["Meal history", "chart", reports]],
   ["emails", ["Email queue", "mail", emails]],
+  ["scanner-access", ["Scanner access", "scan", scannerAccess]],
   ["settings", ["Office settings", "settings", settings]]
 ]);
 let user = null;

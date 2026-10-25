@@ -181,6 +181,10 @@ class ApiHarness:
         self.storage.put.return_value = StoredPhoto("b" * 64 + ".png", "image/png", 4)
         self.storage.read.return_value = (b"fake-private-photo", "image/png")
         self.limiter = Mock()
+        self.phones = Mock()
+        self.phones.authorize.return_value = {"id": 1, "active_until": None}
+        self.phones.activate_code.return_value = {"id": 2, "active_until": None}
+        self.phones.register_secret_activation.return_value = {"id": 3, "active_until": None}
         self.services = SimpleNamespace(
             staff=self.staff,
             meals=self.meals,
@@ -209,10 +213,10 @@ class ApiHarness:
             self.meals.employee_token, '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
         )
         if application == "scanner":
-            self.app = create_scanner_app(self.services, self.runtime, limiter=self.limiter)
+            self.app = create_scanner_app(self.services, self.runtime, limiter=self.limiter, phones=self.phones)
             self.runtime = self.app.state.runtime
         else:
-            self.app = create_app(self.services, self.runtime, self.queries, self.storage, self.limiter)
+            self.app = create_app(self.services, self.runtime, self.queries, self.storage, self.limiter, scanner_phones=self.phones)
         self.receipts = Mock()
         self.development_seed = Mock()
         self.development_seed.manifest.return_value = {"employees": [], "master": None, "waiters": []}
@@ -994,7 +998,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_employee_contact_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

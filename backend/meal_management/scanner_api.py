@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -18,9 +19,13 @@ from .runtime import RuntimeSettings
 from .scan_app import ScanAppService
 from .scan_receipts import ScanReceiptService
 from .scanner_access import ScannerBrowser, ScannerLimiter
+from .scanner_phones import ScannerPhoneService, normalize_code
 
 
-def create_app(services=None, runtime=None, scanner=None, limiter=None):
+COOKIE_MAX_AGE = 30 * 24 * 3600
+
+
+def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=None):
     runtime = (RuntimeSettings.from_env() if runtime is None else runtime).for_application("scanner")
     services = create_services() if services is None else services
     if runtime.environment == "production" and not services.database.settings.db_ssl_ca:
@@ -30,7 +35,10 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
     app.state.runtime = runtime
     app.state.scanner = ScanAppService(services.database, services.meals, ScanReceiptService(services.database)) if scanner is None else scanner
     app.state.scanner_limiter = ScannerLimiter(services.database, runtime) if limiter is None else limiter
+    app.state.scanner_phones = ScannerPhoneService(services.database, runtime.csrf_secret) if phones is None else phones
     scanner_browser = ScannerBrowser(runtime.csrf_secret, runtime.scanner_activation_secret)
+    phones_required = runtime.environment == "production"
+    adopt_legacy = runtime.scanner_activation_secret is not None
     scanner_cookie = "__Host-meal_scanner" if runtime.cookie_secure else "meal_scanner"
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(runtime.allowed_hosts))
     app.add_middleware(SecurityMiddleware, settings=runtime)
@@ -49,6 +57,9 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
                 address = request.client.host if request.client else "unknown"
                 app.state.scanner_limiter.consume(identity, address)
                 request.state.scanner_rate_checked = True
+        if phones_required and not getattr(request.state, "scanner_phone_checked", False):
+            app.state.scanner_phones.authorize(identity, adopt_legacy)
+            request.state.scanner_phone_checked = True
         return identity
 
     def same_origin(request):
@@ -59,14 +70,21 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
     def session_payload(cookie):
         return {"scope": scanner_browser.identity(cookie).hex(), "csrf_token": scanner_browser.csrf(cookie)}
 
-    def set_scanner_cookie(response, cookie):
+    def set_scanner_cookie(response, cookie, active_until=None):
+        max_age = COOKIE_MAX_AGE
+        if active_until is not None:
+            remaining = (active_until - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+            max_age = max(60, min(COOKIE_MAX_AGE, int(remaining)))
         response.set_cookie(scanner_cookie, cookie, httponly=True, secure=runtime.cookie_secure,
-                            samesite="strict", path="/", max_age=30 * 24 * 3600)
+                            samesite="strict", path="/", max_age=max_age)
 
     @app.exception_handler(DomainError)
     async def domain_error(request, error):
         headers = {"Retry-After": str(runtime.scanner_window_seconds)} if error.code == "SCANNER_RATE_LIMITED" else None
-        return JSONResponse(error_body(error.code, getattr(request.state, "request_id", None)), status_code=status_for(error.code), headers=headers)
+        response = JSONResponse(error_body(error.code, getattr(request.state, "request_id", None)), status_code=status_for(error.code), headers=headers)
+        if error.code == "SCANNER_ACTIVATION_REQUIRED" and request.cookies.get(scanner_cookie):
+            response.delete_cookie(scanner_cookie, path="/", secure=runtime.cookie_secure, httponly=True, samesite="strict")
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
@@ -106,7 +124,10 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
             response = JSONResponse(session_payload(cookie))
             set_scanner_cookie(response, cookie)
             return response
-        set_scanner_cookie(response, cookie)
+        active_until = None
+        if phones_required:
+            active_until = app.state.scanner_phones.authorize(scanner_browser.identity(cookie), adopt_legacy)["active_until"]
+        set_scanner_cookie(response, cookie, active_until)
         return session_payload(cookie)
 
     @app.post("/api/scanner/activate")
@@ -115,10 +136,18 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None):
         same_origin(request)
         address = request.client.host if request.client else "unknown"
         app.state.scanner_limiter.consume_activation(address)
-        scanner_browser.verify_activation(body.activation_code.get_secret_value())
+        supplied = body.activation_code.get_secret_value()
+        code = normalize_code(supplied)
         cookie = scanner_browser.issue()
+        if code is not None:
+            phone = app.state.scanner_phones.activate_code(code, scanner_browser.identity(cookie))
+        elif runtime.scanner_activation_secret is None:
+            raise DomainError("SCANNER_ACTIVATION_INVALID")
+        else:
+            scanner_browser.verify_activation(supplied)
+            phone = app.state.scanner_phones.register_secret_activation(scanner_browser.identity(cookie))
         response = JSONResponse(session_payload(cookie))
-        set_scanner_cookie(response, cookie)
+        set_scanner_cookie(response, cookie, phone["active_until"])
         return response
 
     @app.post("/api/scanner/read")

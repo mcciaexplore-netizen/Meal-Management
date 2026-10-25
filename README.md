@@ -138,6 +138,14 @@ The visitor form appears only after server validation. Opening it does not appro
 
 The scanner automatically receives its own signed, HTTP-only browser cookie and CSRF token. No staff account is authenticated. Retried operations are bound to that browser and the original request, while the backend selects all service settings. Browser and address rate limits use shared database buckets. `SCAN_APP_ENABLED` defaults to true in development and false in production; production requires explicit enabling. Anyone who can reach the enabled scanner can submit a valid meal QR, so decide its intended network reach before later hosting. This change does not expose the development server beyond loopback.
 
+## Scanner access
+
+Administrators manage scanner phones on the **Scanner access** page. **Generate code** asks for a label, such as the waiter's name or the counter, and an **Active until** date up to six months ahead. The phone stops working at the end of that day in India time (IST); the database stores the exact UTC instant. The page shows an 8-character code such as `ABCD-EFGH` once; it avoids 0, O, 1 and I, and only its keyed hash is stored. The code activates one phone and must be used within 24 hours. The waiter enters it on the scanner's **Activate this scanner** screen.
+
+The page lists active phones with their label, activation time and expiry, plus unused codes. **Revoke** stops a phone on its next request; **Cancel** voids an unused code. Generating, using, cancelling and revoking are recorded in the audit log. Activation attempts are rate-limited per address and across all addresses.
+
+`SCANNER_ACTIVATION_SECRET` remains an emergency fallback during the pilot. While it is set, it activates a phone for 30 days, and phones activated with it before this feature are registered on their next request and keep working until revoked. Remove the setting to retire it; only administrator codes then activate new phones.
+
 ## Scanning, retries, and uncertain results
 
 The scanner screen starts one request UUID for an intended serving. Repeated frames and network retries retain that UUID and the original input. Only an explicit new-serving action creates another UUID. Employee servings always have quantity one; employees can deliberately begin another serving on the same day with a new request.
