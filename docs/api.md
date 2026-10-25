@@ -9,6 +9,7 @@ The scanner has no staff login or service-station selectors. Its `/api/scanner` 
 | Method | Path | Access | Behavior |
 | --- | --- | --- | --- |
 | `GET` | `/api/scanner/session` | Public same-origin scanner bootstrap | Issue or renew a signed HTTP-only browser cookie; return `scope` and `csrf_token`, with no staff login or database write |
+| `POST` | `/api/scanner/activate` | Public same-origin scanner, rate-limited | Accept `activation_code`: an 8-character administrator code (case, spaces and dashes ignored) or, while configured, the emergency `SCANNER_ACTIVATION_SECRET`; issue the scanner cookie bound to a new scanner phone record |
 | `POST` | `/api/scanner/read` | Scanner cookie, scanner CSRF, exact origin | Accept only `request_id` and `token`; record one employee meal or consume one remaining master meal |
 | `GET` | `/api/scanner/requests/{request_id}/result` | Original scanner browser | Recover only that browser's original committed result without recording another meal |
 | `GET` | `/api/scanner/recovery` | Original scanner browser | Find that browser's last saved request ID when local recovery storage is missing; return no QR token or visitor details |
@@ -22,6 +23,12 @@ Employee and master reads return the canonical committed ScanResult. A master al
 Each UUID is first bound to a hashed browser identity and captured server settings. Another browser cannot submit or recover that UUID. Repeated successful calls return the original meal and serving IDs without consuming another allowance, including after the QR is exhausted. Only a deliberate new serving uses a new UUID. `/api/scanner/visitors` is no longer exposed; public callers cannot replace the administrator's stored visitor details.
 
 The browser retains only scope, request UUID, and quantity one across reloads. A stable pending marker detects changed or lost cookies even after reload and blocks a new meal until the earlier result is checked. QR values and visitor contact details are not stored in browser storage. In-memory and restored retries treat malformed rescans as unconfirmed, including when the original request is still delayed. When local storage has no marker, `/api/scanner/recovery` checks MySQL for the browser's most recent mapped request before new scans are enabled. This supports moving from the old port 8000 scanner to port 8001 without silently losing a committed request. A confirmed approval or rejection displays an animation for two seconds, then returns to the initial scanner screen with the camera stopped. Starting the camera or uploading the next QR deliberately begins another serving; an unchanged QR left in view cannot generate repeated meals. If the completed recovery marker cannot be cleared, the result remains visible with **Scanner reset paused** and a **Return to scanner** retry. Processing or connection errors keep the original request unresolved and never reset it as a new meal. Removing the browser cookie as well as its recovery storage removes the ownership proof; an administrator must check history in that case.
+
+### Scanner phones
+
+In production every scanner request is checked against its `scanner_phones` record: the phone must be activated, not revoked, and before its `active_until` time. Otherwise the scanner returns `SCANNER_ACTIVATION_REQUIRED` with 401, clears its cookie, and shows the activation screen. The cookie lifetime is capped at `active_until`. Activation codes are single use, expire 24 hours after generation, and are stored only as an HMAC keyed with `APP_CSRF_SECRET`; every rejected code returns the same `SCANNER_ACTIVATION_INVALID`. Activation attempts are limited to 5 per address and 30 across all addresses per `SCAN_WINDOW_SECONDS` window.
+
+While `SCANNER_ACTIVATION_SECRET` is configured it remains an emergency fallback: it activates a phone labelled "Emergency code" for 30 days, and a phone that was activated before scanner phone records existed is registered automatically on its next request as "Activated before codes", with no expiry until revoked. After the secret is removed, neither path is available and only administrator codes activate new phones. Development mode keeps issuing scanner cookies without activation and does not check phone records.
 
 `SCAN_APP_ENABLED` defaults to enabled in development and disabled in production. `SCANNER_DISABLED` returns 404, `SCANNER_NOT_CONFIGURED` returns a safe setup message with 503, and `SCANNER_BROWSER_REQUIRED` returns 401 for transparent browser-session recovery. Per-browser and per-address limits use shared MySQL buckets; `SCANNER_RATE_LIMITED` returns 429 with its own `Retry-After`. A validation failure is recorded through the shared scanner identity. Failure to record or commit never returns meal approval.
 
@@ -55,6 +62,9 @@ There is no public staff registration or first-admin endpoint. First-admin setup
 | `POST` | `/api/catalog/locations` | Admin | Create a serving location from `code` and `name` |
 | `POST` | `/api/catalog/meal-types` | Admin | Create a meal type from `code` and `name` |
 | `POST` | `/api/catalog/scanners` | Admin | Create a scanner from `code`, `name`, and `location_id` |
+| `GET` | `/api/scanner-phones` | Admin | List active scanner phones and unused codes (never the codes themselves), plus `today` and `latest_active_date` in India time |
+| `POST` | `/api/scanner-phones` | Admin | Generate a one-time activation code from `label` (1–100 characters) and `active_until` (a `YYYY-MM-DD` date from today up to six months ahead, India time). The response is the only place the code appears. The phone stops at the end of that day in IST, stored in UTC |
+| `POST` | `/api/scanner-phones/{phone_id}/revoke` | Admin | Revoke an active phone immediately, or cancel an unused code |
 | `GET` | `/api/staff` | Admin | Paginated staff metadata and assigned roles, without password hashes |
 | `POST` | `/api/staff` | Admin | Create a staff account from `display_name`, `email`, `password`, and `roles` |
 | `PATCH` | `/api/staff/{staff_id}/active` | Admin | Set `is_active`; deactivation revokes sessions |

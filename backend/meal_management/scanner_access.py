@@ -96,4 +96,7 @@ class ScannerLimiter:
         ])
 
     def consume_activation(self, address):
-        self._consume([(b"scanner-activation:" + str(address).encode(), 5)])
+        self._consume([
+            (b"scanner-activation:" + str(address).encode(), 5),
+            (b"scanner-activation-all", 30),
+        ])

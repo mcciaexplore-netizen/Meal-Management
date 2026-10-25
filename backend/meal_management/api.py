@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -28,6 +28,7 @@ from .models import ScanInput, ServerContext
 from .queries import QueryService
 from .runtime import RuntimeSettings
 from .scan_receipts import ScanReceiptService
+from .scanner_phones import ScannerPhoneService
 from .storage import storage_from_settings
 
 
@@ -36,7 +37,7 @@ Cursor = Annotated[int, Query(ge=0, le=2**64 - 1)]
 PathIdentifier = Annotated[int, ApiPath(gt=0, le=2**64 - 1)]
 
 
-def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None):
+def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None, scanner_phones=None):
     runtime = (RuntimeSettings.from_env() if runtime is None else runtime).for_application("admin")
     services = create_services() if services is None else services
     if runtime.environment == "production" and not services.database.settings.db_ssl_ca:
@@ -60,6 +61,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     app.state.storage = storage_from_settings(runtime) if storage is None else storage
     app.state.limiter = DatabaseLoginLimiter(services.database, runtime) if limiter is None else limiter
     app.state.scan_receipts = ScanReceiptService(services.database)
+    app.state.scanner_phones = ScannerPhoneService(services.database, runtime.csrf_secret) if scanner_phones is None else scanner_phones
     development_enabled = runtime.environment == "development" and runtime.email_backend == "preview" and not runtime.email_send_enabled
     app.state.development_seed = (
         DevelopmentSeedService(services.database, runtime, services.qr.vault, services.qr.renderer)
@@ -404,6 +406,18 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def visitor_revoke(authorization_id: PathIdentifier, ctx=Depends(admin)):
         services.approvals.revoke(ctx, authorization_id)
         return {"authorization_id": authorization_id, "revoked": True}
+
+    @app.get("/api/scanner-phones")
+    def scanner_phone_list(ctx=Depends(admin)):
+        return app.state.scanner_phones.list(ctx)
+
+    @app.post("/api/scanner-phones", status_code=201)
+    def scanner_phone_code(body: ScannerCodeInput, ctx=Depends(admin)):
+        return app.state.scanner_phones.create_code(ctx, body.label, body.active_until)
+
+    @app.post("/api/scanner-phones/{phone_id}/revoke")
+    def scanner_phone_revoke(phone_id: PathIdentifier, ctx=Depends(admin)):
+        return app.state.scanner_phones.revoke(ctx, phone_id)
 
     @app.post("/api/scan-app/read")
     def scan_read(body: ScanReadBody, ctx=Depends(waiter)):

@@ -68,7 +68,7 @@ async function openScanner() {
 function renderActivation() {
   const current = ++version;
   dispose();
-  root.innerHTML = `<main id="main" class="startup scanner-activation"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div><h1>Activate this scanner</h1><p>Enter the office scanner activation code once. This device can then scan securely from any internet connection.</p><form id="scanner-activation-form">${field("Activation code", "activation_code", "", "password", 'required minlength="12" maxlength="256" autocomplete="one-time-code" spellcheck="false"')}<div data-form-error></div><button class="button primary full" type="submit">Activate scanner</button></form></main>`;
+  root.innerHTML = `<main id="main" class="startup scanner-activation"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div><h1>Activate this scanner</h1><p>Enter the code from your office administrator, for example ABCD-EFGH. This phone can then scan until the date the administrator chose.</p><form id="scanner-activation-form">${field("Activation code", "activation_code", "", "text", 'required minlength="8" maxlength="256" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false"')}<div data-form-error></div><button class="button primary full" type="submit">Activate scanner</button></form></main>`;
   const form = root.querySelector("#scanner-activation-form");
   form.addEventListener("submit", async event => {
     event.preventDefault();

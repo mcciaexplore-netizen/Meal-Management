@@ -30,7 +30,7 @@ class MigrationParserTests(unittest.TestCase):
     def test_repository_migrations_have_stable_sequence(self):
         directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
         migrations = load_migrations(directory)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
         self.assertGreater(len(migrations[0].statements), 20)
         self.assertIn("scan_bound_at", "\n".join(migrations[1].statements))
         self.assertIn("last_seen_at", "\n".join(migrations[1].statements))
@@ -73,6 +73,25 @@ class MigrationParserTests(unittest.TestCase):
         self.assertNotIn("DELETE FROM", source)
         for statement in migration.statements[1:]:
             self.assertIn(statement, tuple(sql_statements(schema)))
+
+    def test_scanner_phone_migration_stores_hashes_and_guards_history(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[9]
+        source = "\n".join(migration.statements)
+        snapshot = tuple(sql_statements((directory.parent / "schema.sql").read_text()))
+        self.assertEqual((migration.version, migration.name), (10, "scanner_phones"))
+        self.assertIn("CREATE TABLE scanner_phones", source)
+        self.assertIn("code_hash BINARY(32) NULL", source)
+        self.assertIn("UNIQUE KEY uq_scanner_phones_code (code_hash)", source)
+        self.assertIn("UNIQUE KEY uq_scanner_phones_browser (browser_hash)", source)
+        self.assertNotRegex(source, r"\bcode VARCHAR|\bcode CHAR")
+        for statement in ("DELETE FROM", "UPDATE scanner_phones SET", "INSERT INTO", "DROP "):
+            self.assertNotIn(statement, source)
+        for action in ("UPDATE", "DELETE"):
+            trigger = next(item for item in migration.statements if f"BEFORE {action} ON scanner_phones" in item)
+            self.assertIn("SIGNAL SQLSTATE '45000'", trigger)
+        for statement in migration.statements[1:]:
+            self.assertIn(statement, snapshot)
 
     def test_rejects_migration_gap(self):
         with tempfile.TemporaryDirectory() as root:

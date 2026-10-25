@@ -391,3 +391,8 @@ dialog::backdrop { background: #102632a6; backdrop-filter: blur(3px); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.scanner-code { font-size: 34px; font-weight: 700; letter-spacing: 0.14em; text-align: center; padding: 18px 12px; margin: 14px 0; background: #f1f7f6; border: 1px solid #d3e6e2; border-radius: 6px; color: var(--teal-dark); user-select: all; }
+.scanner-code-details { display: grid; gap: 8px; margin: 0 0 16px; }
+.scanner-code-details div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.scanner-code-details dt { color: #7c8d95; }
+.scanner-code-details dd { margin: 0; font-weight: 600; text-align: right; }

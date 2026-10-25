@@ -143,3 +143,11 @@ class ScannerLimiterTests(unittest.TestCase):
         with self.assertRaisesRegex(DomainError, "SCANNER_RATE_LIMITED"):
             self.limiter.consume_activation("192.0.2.10")
         self.limiter.consume_activation("192.0.2.11")
+
+    def test_activation_attempts_are_also_limited_across_all_addresses(self):
+        for number in range(30):
+            self.limiter.consume_activation("198.51.100." + str(number))
+        with self.assertRaisesRegex(DomainError, "SCANNER_RATE_LIMITED"):
+            self.limiter.consume_activation("203.0.113.200")
+        self.db.clock += timedelta(seconds=60)
+        self.limiter.consume_activation("203.0.113.200")
