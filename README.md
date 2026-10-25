@@ -27,6 +27,7 @@ Local development uses private photo files and authenticated email previews. AWS
 | `tests/local` | Independent loopback process startup tests using fictional configuration and no database access |
 | `deploy` | Separate foreground admin/scanner startup scripts and an example process-supervision configuration |
 | `docs/deployment.md` | Local setup details, existing-database migration procedure, and later deployment decisions |
+| `docs/ec2-deployment.md` | Single-EC2 Docker Compose deployment with Caddy HTTPS, Amazon RDS for MySQL, S3 photos, and Gmail |
 | `docs/api.md` | HTTP endpoint and request-behavior reference |
 | `.env.example` | Example settings with blank secret values and integration tests disabled |
 

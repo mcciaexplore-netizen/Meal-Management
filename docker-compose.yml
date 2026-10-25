@@ -3,9 +3,10 @@
 #
 # Settings come from .env.docker (create it with deploy/docker/make-env.py; it
 # is git-ignored). ADMIN_HOST and SCANNER_HOST in that file must resolve to this
-# server, and ports 80 and 443 must be open.
+# server, and ports 80 and 443 must be open. The database CA bundle must exist at
+# var/private/db-ca.pem (see docs/ec2-deployment.md).
 #
-#   docker compose up -d --build
+#   docker compose --env-file .env.docker up -d --build
 services:
   admin:
     build: .
@@ -14,7 +15,10 @@ services:
     environment:
       MEAL_APPLICATION: admin
       HEALTHCHECK_HOST: ${ADMIN_HOST}
-      FORWARDED_ALLOW_IPS: 172.28.0.0/16
+      FORWARDED_ALLOW_IPS: 172.28.0.0/16,127.0.0.1
+      DB_SSL_CA: /run/db-ca.pem
+    volumes:
+      - ./var/private/db-ca.pem:/run/db-ca.pem:ro
     networks: [app]
     restart: unless-stopped
 
@@ -24,7 +28,10 @@ services:
     environment:
       MEAL_APPLICATION: scanner
       HEALTHCHECK_HOST: ${SCANNER_HOST}
-      FORWARDED_ALLOW_IPS: 172.28.0.0/16
+      FORWARDED_ALLOW_IPS: 172.28.0.0/16,127.0.0.1
+      DB_SSL_CA: /run/db-ca.pem
+    volumes:
+      - ./var/private/db-ca.pem:/run/db-ca.pem:ro
     networks: [app]
     depends_on: [admin]
     restart: unless-stopped
