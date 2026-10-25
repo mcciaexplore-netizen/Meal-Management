@@ -73,15 +73,15 @@ class CatalogTests(unittest.TestCase):
         self.audit.assert_not_called()
 
     def test_status_change_preserves_record_and_audits_previous_value(self):
-        self.tx.one.return_value = {"id": 1, "is_active": True}
+        self.tx.one.side_effect = [{"id": 1, "code": "LOBBY", "name": "Lobby", "is_active": True}, None]
         self.service.set_location_active(self.context, 1, False)
-        self.assertIn("FOR UPDATE", self.tx.one.call_args.args[0])
+        self.assertIn("FOR UPDATE", self.tx.one.call_args_list[0].args[0])
         self.tx.execute.assert_called_once_with(
             "UPDATE locations SET is_active = %s WHERE id = %s", (False, 1)
         )
         self.audit.assert_called_once_with(
             self.tx, 42, "LOCATION_STATUS_CHANGED", "locations", 1,
-            before={"is_active": True}, after={"is_active": False},
+            before={"is_active": True}, after={"is_active": False, "code": "LOBBY", "name": "Lobby"},
         )
 
     def test_no_change_does_not_rewrite_or_add_audit_event(self):

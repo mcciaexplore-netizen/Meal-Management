@@ -77,11 +77,14 @@ class SharedScannerMySQLTests(MealServicesFixture):
         original_profile = self.profile()
         self.shared()._reserve(browser, identifier)
         try:
-            with self.db.transaction() as tx:
-                tx.execute(
+            cursor = self.admin_connection.cursor()
+            try:
+                cursor.execute(
                     "UPDATE scan_app_settings SET scanner_id = %s, meal_type_id = %s WHERE id = 1",
                     (self.scanner_id, self.meal_type_id),
                 )
+            finally:
+                cursor.close()
             result = self.shared().read(browser, identifier, credential.token)
             self.assertTrue(result.approved)
             serving = self.rows("SELECT scanner_id, meal_type_id FROM servings WHERE id = %s", (result.serving_id,))[0]
@@ -93,11 +96,14 @@ class SharedScannerMySQLTests(MealServicesFixture):
             self.assertEqual(current["scanner_id"], self.scanner_id)
             self.assertEqual(current["meal_type_id"], self.meal_type_id)
         finally:
-            with self.db.transaction() as tx:
-                tx.execute(
+            cursor = self.admin_connection.cursor()
+            try:
+                cursor.execute(
                     "UPDATE scan_app_settings SET scanner_id = %s, meal_type_id = %s WHERE id = 1",
                     (original_profile["scanner_id"], original_profile["meal_type_id"]),
                 )
+            finally:
+                cursor.close()
 
     def test_two_browsers_racing_for_uuid_cannot_share_ownership_or_create_two_meals(self):
         from meal_management.errors import DomainError

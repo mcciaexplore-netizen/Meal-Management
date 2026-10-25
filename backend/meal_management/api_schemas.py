@@ -265,6 +265,25 @@ class ScannerCodeInput(InputModel):
         return value
 
 
+class CatalogUpdateInput(InputModel):
+    code: Annotated[str, Field(min_length=1, max_length=64)]
+    name: Name
+
+
+class CatalogActiveInput(InputModel):
+    is_active: StrictBool
+    confirm: StrictBool = False
+
+
+class StaffUpdateInput(InputModel):
+    display_name: Name
+    email: Annotated[str, Field(min_length=3, max_length=254)]
+
+
+class StaffRolesInput(InputModel):
+    roles: Annotated[list[Literal["ADMIN", "WAITER", "AUDITOR"]], Field(min_length=1, max_length=3)]
+
+
 class DepartmentInput(InputModel):
     name: Annotated[str, Field(min_length=1, max_length=100)]
 

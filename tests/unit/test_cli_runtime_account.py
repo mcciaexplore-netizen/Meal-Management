@@ -70,6 +70,7 @@ class CliRuntimeAccountTests(unittest.TestCase):
         module = SimpleNamespace(
             target_confirmation=validated, create_aiven_runtime_account=creator,
             INSERT_TABLES=("employees", "meals", "audit_events"), UPDATE_TABLES=("employees", "email_queue"),
+            DELETE_TABLES=("staff_account_roles",),
         )
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.dict(sys.modules, {"meal_management.runtime_account": module}))

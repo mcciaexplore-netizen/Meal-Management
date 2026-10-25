@@ -13,9 +13,10 @@ the RDS master user); the meal_runtime password comes from the application's
         meal-management:latest python /run/rds-runtime-account.py --runtime-env /run/app.env
 
 The grants are the same as create-aiven-runtime (meal_management.runtime_account):
-SELECT on the database plus table-specific INSERT and UPDATE, with no DELETE,
-schema, account-management or GRANT OPTION privileges. The account requires
-TLS and is limited to the VPC address range given by --host-scope.
+SELECT on the database plus table-specific INSERT, UPDATE and DELETE (DELETE only
+on staff_account_roles, for role changes), with no schema, account-management or
+GRANT OPTION privileges. The account requires TLS and is limited to the VPC
+address range given by --host-scope.
 Pass --verify-only to re-check an existing account without changing anything.
 No password is ever printed.
 """
@@ -29,7 +30,7 @@ import mysql.connector
 
 from meal_management.config import Settings
 from meal_management.migrations import load_migrations
-from meal_management.runtime_account import INSERT_TABLES, UPDATE_TABLES
+from meal_management.runtime_account import DELETE_TABLES, INSERT_TABLES, UPDATE_TABLES
 
 ACCOUNT = "meal_runtime"
 PROJECT_ROOT = Path("/app")
@@ -64,7 +65,7 @@ def account_rows(cursor):
 
 def expected_grants(database):
     expected = {("*.*", "USAGE"), ("`" + database + "`.*", "SELECT")}
-    for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES)):
+    for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES), ("DELETE", DELETE_TABLES)):
         expected.update(("`" + database + "`.`" + table + "`", privilege) for table in tables)
     return expected
 
@@ -122,7 +123,7 @@ def main():
             (ACCOUNT, arguments.host_scope, runtime["DB_PASSWORD"]),
         )
         cursor.execute("GRANT SELECT ON `" + database + "`.* TO %s@%s", (ACCOUNT, arguments.host_scope))
-        for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES)):
+        for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES), ("DELETE", DELETE_TABLES)):
             for table in tables:
                 cursor.execute(
                     "GRANT " + privilege + " ON `" + database + "`.`" + table + "` TO %s@%s",
@@ -158,7 +159,7 @@ def main():
         ("Verified" if arguments.verify_only else "Created and verified") + " " + current
         + ": REQUIRE SSL, TLS " + cipher + ", SELECT on " + database + ".*, INSERT on "
         + str(len(INSERT_TABLES)) + " tables, UPDATE on " + str(len(UPDATE_TABLES))
-        + " tables, nothing else."
+        + " tables, DELETE on " + ", ".join(DELETE_TABLES) + ", nothing else."
     )
 
 

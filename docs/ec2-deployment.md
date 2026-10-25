@@ -73,9 +73,9 @@ ONEOFF="--rm --user $(id -u):$(id -g) -v $PWD/var/private/db-ca.pem:/run/db-ca.p
    ```
 
 2. **Create `meal_runtime`** with the same privileges as `create-aiven-runtime`:
-   - `SELECT` on the database, plus the table-specific `INSERT` and `UPDATE` grants listed in `meal_management.runtime_account`;
+   - `SELECT` on the database, plus the table-specific `INSERT`, `UPDATE` and `DELETE` grants listed in `meal_management.runtime_account` (`DELETE` only on `staff_account_roles`);
    - `REQUIRE SSL`, with the account limited to the VPC range;
-   - no `DELETE`, schema, account or grant privileges.
+   - no schema, account or grant privileges.
 
    The script refuses an existing account and checks the result by logging in as `meal_runtime`. Run it again with `--verify-only` at any time.
 
@@ -114,11 +114,16 @@ Apply the migration before the new image serves traffic: code that needs a migra
 
 To roll back, retag the previous image as `meal-management:latest` and run `docker compose --env-file .env.docker up -d`. Migrations stay applied.
 
-Migration 010 (scanner phones) needs this grant before step 5:
+Migrations 010 (scanner phones) and 011 (settings guards), together with the settings and role-change release, need these grants before step 5:
 
 ```sql
 GRANT INSERT, UPDATE ON `meal_management`.`scanner_phones` TO 'meal_runtime'@'172.31.%';
+GRANT UPDATE ON `meal_management`.`departments` TO 'meal_runtime'@'172.31.%';
+GRANT UPDATE ON `meal_management`.`meal_types` TO 'meal_runtime'@'172.31.%';
+GRANT DELETE ON `meal_management`.`staff_account_roles` TO 'meal_runtime'@'172.31.%';
 ```
+
+`rds-runtime-account.py --verify-only` from the new image then confirms the complete set, including the single `DELETE` grant.
 
 Rolling back after 010 is safe for meals and reports, but the earlier image does not check scanner phone records, so revoked or expired phones with a signed cookie would scan again until the new image is redeployed.
 

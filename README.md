@@ -138,6 +138,17 @@ The visitor form appears only after server validation. Opening it does not appro
 
 The scanner automatically receives its own signed, HTTP-only browser cookie and CSRF token. No staff account is authenticated. Retried operations are bound to that browser and the original request, while the backend selects all service settings. Browser and address rate limits use shared database buckets. `SCAN_APP_ENABLED` defaults to true in development and false in production; production requires explicit enabling. Anyone who can reach the enabled scanner can submit a valid meal QR, so decide its intended network reach before later hosting. This change does not expose the development server beyond loopback.
 
+## Editing and deactivating office settings
+
+**Office settings** lets administrators edit and deactivate departments, meal types, serving locations, scanning counters and staff accounts. Nothing is deleted. Each list has **Active** and **Inactive** views; inactive entries have **Reactivate**.
+
+- **Edit** changes the name, and the code where one exists. A code (or department name, or staff email) that is already used is refused with a message.
+- Deactivated entries are no longer offered for new choices: employee forms and imports, the counter's location, waiter choices. They stay in history, reports and the audit log. Scans for an inactive meal type, counter or location are refused with a plain message.
+- Deactivating a department that still has active employees shows how many and asks for confirmation. Those employees keep their department, QR codes and meals, and stay editable.
+- The Meal Scanner's built-in location, counter and meal type can be renamed but not recoded or deactivated, and its built-in account is hidden and cannot be changed. Migration 011 enforces this in the database as well. The last active administrator cannot be deactivated or lose the administrator role.
+- Staff edits cover display name, email and roles. Changing a person's email changes their sign-in and ends their active sessions.
+- Every edit, deactivation, reactivation and role change is written to the audit log.
+
 ## Scanner access
 
 Administrators manage scanner phones on the **Scanner access** page. **Generate code** asks for a label, such as the waiter's name or the counter, and an **Active until** date up to six months ahead. The phone stops working at the end of that day in India time (IST); the database stores the exact UTC instant. The page shows an 8-character code such as `ABCD-EFGH` once; it avoids 0, O, 1 and I, and only its keyed hash is stored. The code activates one phone and must be used within 24 hours. The waiter enters it on the scanner's **Activate this scanner** screen.

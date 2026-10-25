@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -227,6 +227,36 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def scanner_create(body: ScannerInput, ctx=Depends(admin)):
         return {"id": services.catalog.create_scanner(ctx, body.code, body.name, body.location_id)}
 
+    @app.patch("/api/catalog/departments/{department_id}")
+    def department_update(department_id: PathIdentifier, body: DepartmentInput, ctx=Depends(admin)):
+        return services.catalog.update_department(ctx, department_id, body.name)
+
+    @app.get("/api/catalog/departments/{department_id}/usage")
+    def department_usage(department_id: PathIdentifier, ctx=Depends(admin)):
+        return services.catalog.department_usage(ctx, department_id)
+
+    @app.patch("/api/catalog/departments/{department_id}/active")
+    def department_active(department_id: PathIdentifier, body: CatalogActiveInput, ctx=Depends(admin)):
+        return services.catalog.set_department_active(ctx, department_id, body.is_active, body.confirm)
+
+    catalog_kinds = {
+        "locations": ("update_location", "set_location_active"),
+        "meal-types": ("update_meal_type", "set_meal_type_active"),
+        "scanners": ("update_scanner", "set_scanner_active"),
+    }
+
+    @app.patch("/api/catalog/{kind}/{item_id}")
+    def catalog_update(kind: Literal["locations", "meal-types", "scanners"], item_id: PathIdentifier,
+                       body: CatalogUpdateInput, ctx=Depends(admin)):
+        return getattr(services.catalog, catalog_kinds[kind][0])(ctx, item_id, body.code, body.name)
+
+    @app.patch("/api/catalog/{kind}/{item_id}/active")
+    def catalog_active(kind: Literal["locations", "meal-types", "scanners"], item_id: PathIdentifier,
+                       body: CatalogActiveInput, ctx=Depends(admin)):
+        if body.confirm:
+            raise DomainError("INVALID_INPUT")
+        return getattr(services.catalog, catalog_kinds[kind][1])(ctx, item_id, body.is_active)
+
     @app.get("/api/staff")
     def staff_list(limit: Limit = 50, after_id: Cursor = 0, ctx=Depends(admin)):
         return app.state.queries.staff(ctx, limit=limit, after_id=after_id)
@@ -234,6 +264,15 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     @app.post("/api/staff", status_code=201)
     def staff_create(body: StaffInput, ctx=Depends(admin)):
         return {"staff_id": services.staff.create_staff(ctx, body.display_name, body.email, body.password.get_secret_value(), body.roles)}
+
+    @app.patch("/api/staff/{staff_id}")
+    def staff_update(staff_id: PathIdentifier, body: StaffUpdateInput, ctx=Depends(admin)):
+        return services.staff.update(ctx, staff_id, body.display_name, body.email)
+
+    @app.patch("/api/staff/{staff_id}/roles")
+    def staff_roles(staff_id: PathIdentifier, body: StaffRolesInput, ctx=Depends(admin)):
+        services.staff.set_roles(ctx, staff_id, body.roles)
+        return {"staff_id": staff_id, "roles": sorted(set(body.roles))}
 
     @app.patch("/api/staff/{staff_id}/active")
     def staff_active(staff_id: PathIdentifier, body: ActiveInput, ctx=Depends(admin)):

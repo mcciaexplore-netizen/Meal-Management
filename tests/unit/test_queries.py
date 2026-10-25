@@ -196,7 +196,8 @@ class QueryServiceTests(unittest.TestCase):
 
     def test_admin_catalog_contains_waiters_and_inactive_configuration(self):
         result = self.service.catalog(self.context)
-        self.assertEqual(set(result), {"departments", "meal_types", "locations", "scanners", "waiters"})
+        self.assertEqual(set(result), {"departments", "meal_types", "locations", "scanners", "waiters", "shared"})
+        self.assertEqual(set(result["shared"]), {"scanner_id", "meal_type_id", "location_id"})
         self.assertEqual(self.tx.all.call_count, 5)
         self.assertIn("r.role_code IN ('ADMIN', 'WAITER')", self.tx.all.call_args.args[0])
         self.assertIn("SELECT DISTINCT", self.tx.all.call_args.args[0])

@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import re
+import secrets
 import unittest
 import uuid
 from pathlib import Path
@@ -56,9 +57,12 @@ def schema_statements(source):
 
 
 POSTGRES_TESTS = os.environ.get("MEAL_TEST_ENGINE") == "postgres"
+RUNTIME_PRIVILEGE_TESTS = os.environ.get("MEAL_TEST_RUNTIME_PRIVILEGES") == "1"
 
 
 class IsolatedMySQLTestCase(unittest.TestCase):
+    runtime_privileges = False
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -109,8 +113,52 @@ class IsolatedMySQLTestCase(unittest.TestCase):
                 cursor.execute(statement)
         finally:
             cursor.close()
+        cls.admin_settings = cls.settings
+        cls.restricted = RUNTIME_PRIVILEGE_TESTS or cls.runtime_privileges
+        if cls.restricted:
+            cls.settings = cls.runtime_privilege_settings()
+            environment["DB_USER"] = cls.settings.db_user
+            environment["DB_PASSWORD"] = cls.settings.db_password
         cls.db = Database(cls.settings)
         cls.test_environment = environment
+
+    @classmethod
+    def runtime_privilege_settings(cls):
+        from dataclasses import replace
+
+        from meal_management import runtime_account
+
+        user = "mrt_" + uuid.uuid4().hex[:12]
+        password = secrets.token_urlsafe(24) + "aA1!"
+        database = "`" + cls.database_name + "`"
+        cursor = cls.admin_connection.cursor()
+        try:
+            cursor.execute("CREATE USER %s@%s IDENTIFIED BY %s", (user, "%", password))
+            cls.addClassCleanup(cls.drop_runtime_user, user)
+            cursor.execute(
+                "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s", (cls.database_name,)
+            )
+            existing = {table for (table,) in cursor.fetchall()}
+            for table in sorted(existing):
+                cursor.execute("GRANT SELECT ON " + database + ".`" + table + "` TO %s@%s", (user, "%"))
+            for privilege, tables in (
+                ("INSERT", runtime_account.INSERT_TABLES),
+                ("UPDATE", runtime_account.UPDATE_TABLES),
+                ("DELETE", runtime_account.DELETE_TABLES),
+            ):
+                for table in sorted(set(tables) & existing):
+                    cursor.execute("GRANT " + privilege + " ON " + database + ".`" + table + "` TO %s@%s", (user, "%"))
+        finally:
+            cursor.close()
+        return replace(cls.settings, db_user=user, db_password=password)
+
+    @classmethod
+    def drop_runtime_user(cls, user):
+        cursor = cls.admin_connection.cursor()
+        try:
+            cursor.execute("DROP USER IF EXISTS %s@%s", (user, "%"))
+        finally:
+            cursor.close()
 
     @classmethod
     def setUpPostgres(cls):

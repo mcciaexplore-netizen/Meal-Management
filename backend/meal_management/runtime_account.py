@@ -23,8 +23,9 @@ UPDATE_TABLES = (
     "employees", "staff_accounts", "staff_sessions", "locations", "scanner_devices",
     "qr_credentials", "email_queue", "serving_requests", "visitor_authorizations",
     "scan_attempts", "login_rate_limits", "scan_app_requests", "employee_email_batches",
-    "system_locks", "master_qr_allocations", "scanner_phones",
+    "system_locks", "master_qr_allocations", "scanner_phones", "departments", "meal_types",
 )
+DELETE_TABLES = ("staff_account_roles",)
 STAGES = (
     "PREFLIGHT", "PRIVATE_CREDENTIALS", "CREATE_ACCOUNT", "GRANTS",
     "VERIFY_ACCOUNT", "PUBLISH_CREDENTIALS",
@@ -104,7 +105,7 @@ def _check_server(tx, settings, migrations, *, new_account=False):
 
 def _expected_grants():
     expected = {("*.*", "USAGE"), ("`defaultdb`.*", "SELECT")}
-    for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES)):
+    for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES), ("DELETE", DELETE_TABLES)):
         expected.update(("`defaultdb`.`" + table + "`", privilege) for table in tables)
     return expected
 
@@ -123,7 +124,7 @@ def _check_grants(rows):
         if match is None:
             raise DomainError("RUNTIME_ACCOUNT_GRANTS_MISMATCH")
         privileges = match[1].split(", ")
-        if any(privilege not in {"USAGE", "SELECT", "INSERT", "UPDATE"} for privilege in privileges):
+        if any(privilege not in {"USAGE", "SELECT", "INSERT", "UPDATE", "DELETE"} for privilege in privileges):
             raise DomainError("RUNTIME_ACCOUNT_GRANTS_MISMATCH")
         actual.update((match[2], privilege) for privilege in privileges)
     if actual != _expected_grants():
@@ -166,8 +167,8 @@ def create_aiven_runtime_account(settings, runtime, migration_directory, output_
     if confirmation != expected:
         raise DomainError("RUNTIME_ACCOUNT_TARGET_NOT_CONFIRMED")
     migrations = load_migrations(migration_directory)
-    if [migration.version for migration in migrations] != [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
-        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_TEN")
+    if [migration.version for migration in migrations] != [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_ELEVEN")
     output, pending = _paths(output_path)
     connection = None
     runtime_connection = None
@@ -192,7 +193,7 @@ def create_aiven_runtime_account(settings, runtime, migration_directory, output_
         tx.execute("CREATE USER %s@%s IDENTIFIED BY %s REQUIRE SSL", (*ACCOUNT, candidate.db_password))
         stage = "GRANTS"
         tx.execute("GRANT SELECT ON `defaultdb`.* TO %s@%s", ACCOUNT)
-        for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES)):
+        for privilege, tables in (("INSERT", INSERT_TABLES), ("UPDATE", UPDATE_TABLES), ("DELETE", DELETE_TABLES)):
             for table in tables:
                 tx.execute("GRANT " + privilege + " ON `defaultdb`.`" + table + "` TO %s@%s", ACCOUNT)
         connection.commit()
