@@ -15,7 +15,7 @@ services:
     environment:
       MEAL_APPLICATION: admin
       HEALTHCHECK_HOST: ${ADMIN_HOST}
-      FORWARDED_ALLOW_IPS: 172.28.0.0/16
+      FORWARDED_ALLOW_IPS: 172.28.0.0/16,127.0.0.1
       DB_SSL_CA: /run/db-ca.pem
     volumes:
       - ./var/private/db-ca.pem:/run/db-ca.pem:ro
@@ -28,7 +28,7 @@ services:
     environment:
       MEAL_APPLICATION: scanner
       HEALTHCHECK_HOST: ${SCANNER_HOST}
-      FORWARDED_ALLOW_IPS: 172.28.0.0/16
+      FORWARDED_ALLOW_IPS: 172.28.0.0/16,127.0.0.1
       DB_SSL_CA: /run/db-ca.pem
     volumes:
       - ./var/private/db-ca.pem:/run/db-ca.pem:ro
