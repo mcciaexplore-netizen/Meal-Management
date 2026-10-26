@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealRemovalInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -486,15 +486,6 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def meal_history(start: datetime, end: datetime, limit: Limit = 50, after_id: Cursor = 0,
                      employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
         return app.state.queries.meal_history(ctx, start, end, limit=limit, after_id=after_id, employee_id=employee_id)
-
-    @app.post("/api/meals/bulk-remove")
-    def meal_bulk_remove(body: BulkMealRemovalInput, ctx=Depends(admin)):
-        return services.meals.void_bulk(ctx, body.meal_ids, body.reason)
-
-    @app.delete("/api/meals/{meal_id}")
-    def meal_remove(meal_id: PathIdentifier, body: RemovalInput, ctx=Depends(admin)):
-        services.meals.void(ctx, meal_id, body.reason)
-        return {"meal_id": meal_id, "removed": True}
 
     @app.get("/api/reports/totals")
     def totals(start: datetime, end: datetime, ctx=Depends(admin)):

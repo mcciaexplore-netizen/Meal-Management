@@ -149,6 +149,10 @@ The scanner automatically receives its own signed, HTTP-only browser cookie and 
 - Staff edits cover display name, email and roles. Changing a person's email changes their sign-in and ends their active sessions.
 - Every edit, deactivation, reactivation and role change is written to the audit log.
 
+## Meal records are permanent
+
+Once a meal is recorded it cannot be removed: meal history has no Remove action, Office settings offers bulk removal for employees only, and there is no API for removing meals. The runtime database account cannot add meal removal records. Removing an employee keeps all of their meal history. Meals removed before this change stay excluded from history and totals.
+
 ## Scanner access
 
 Administrators manage scanner phones on the **Scanner access** page. **Generate code** asks for a label, such as the waiter's name or the counter, and an **Active until** date up to six months ahead. The phone stops working at the end of that day in India time (IST); the database stores the exact UTC instant. The page shows an 8-character code such as `ABCD-EFGH` once; it avoids 0, O, 1 and I, and only its keyed hash is stored. The code activates one phone and must be used within 24 hours. The waiter enters it on the scanner's **Activate this scanner** screen.

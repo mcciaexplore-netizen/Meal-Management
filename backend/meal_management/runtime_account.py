@@ -17,7 +17,7 @@ INSERT_TABLES = (
     "locations", "scanner_devices", "meal_types", "qr_credentials", "email_queue",
     "audit_events", "serving_requests", "visitor_authorizations", "servings", "meals",
     "scan_attempts", "scan_app_requests", "employee_email_batches", "login_rate_limits",
-    "employee_archives", "meal_voids", "master_qr_allocations", "scanner_phones",
+    "employee_archives", "master_qr_allocations", "scanner_phones",
 )
 UPDATE_TABLES = (
     "employees", "staff_accounts", "staff_sessions", "locations", "scanner_devices",
