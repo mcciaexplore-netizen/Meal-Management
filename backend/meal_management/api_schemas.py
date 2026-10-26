@@ -49,6 +49,7 @@ class EmployeeInput(InputModel):
     department_id: Identifier
     selfie_object_key: Annotated[str, Field(min_length=1, max_length=512)] | None = None
     expires_at: datetime | None = None
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)] | None = None
 
     @field_validator("phone")
     @classmethod
@@ -86,6 +87,7 @@ class BulkEmployeeInput(InputModel):
     company_name: Name
     phone: Annotated[str, Field(min_length=7, max_length=32)]
     department_id: Identifier
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)] | None = None
 
     @field_validator("phone")
     @classmethod
@@ -222,6 +224,7 @@ class ScanBody(ScanReadBody):
 class ScannerReadBody(InputModel):
     request_id: UUID
     token: SecretStr
+    meal_type_id: Identifier
 
     @field_validator("token")
     @classmethod
@@ -271,6 +274,38 @@ class StaffUpdateInput(InputModel):
 
 class StaffRolesInput(InputModel):
     roles: Annotated[list[Literal["ADMIN", "WAITER", "AUDITOR"]], Field(min_length=1, max_length=3)]
+
+
+class MealTypeIdsInput(InputModel):
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
+
+
+class MealTypeCorrectionInput(InputModel):
+    meal_type_id: Identifier
+    reason: Annotated[str, Field(min_length=1, max_length=255)]
+
+
+class ShiftStartInput(InputModel):
+    waiter_name: Name
+    latitude: Annotated[float, Field(ge=-90, le=90)]
+    longitude: Annotated[float, Field(ge=-180, le=180)]
+    accuracy_m: Annotated[float, Field(ge=0, le=1_000_000)]
+    consent: StrictBool
+    notice_version: Annotated[str, Field(min_length=1, max_length=32)]
+    selfie: Annotated[str, Field(min_length=1, max_length=1_400_000)]
+
+
+class CanteenLocationInput(InputModel):
+    latitude: Annotated[float, Field(ge=-90, le=90)] | None = None
+    longitude: Annotated[float, Field(ge=-180, le=180)] | None = None
+    radius_m: Annotated[StrictInt, Field(ge=10, le=50000)] | None = None
+
+    @model_validator(mode="after")
+    def complete(self):
+        values = (self.latitude, self.longitude, self.radius_m)
+        if any(value is None for value in values) and any(value is not None for value in values):
+            raise ValueError("Give latitude, longitude and radius together, or clear all three")
+        return self
 
 
 class DepartmentInput(InputModel):

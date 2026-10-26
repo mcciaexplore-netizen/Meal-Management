@@ -186,6 +186,9 @@ class ApiHarness:
         self.phones.authorize.return_value = {"id": 1, "active_until": None}
         self.phones.activate_code.return_value = {"id": 2, "active_until": None}
         self.phones.register_secret_activation.return_value = {"id": 3, "active_until": None}
+        self.shifts = Mock()
+        self.shifts.require.return_value = 11
+        self.shifts.current.return_value = None
         self.services = SimpleNamespace(
             staff=self.staff,
             meals=self.meals,
@@ -214,10 +217,10 @@ class ApiHarness:
             self.meals.employee_token, '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
         )
         if application == "scanner":
-            self.app = create_scanner_app(self.services, self.runtime, limiter=self.limiter, phones=self.phones)
+            self.app = create_scanner_app(self.services, self.runtime, limiter=self.limiter, phones=self.phones, shifts=self.shifts)
             self.runtime = self.app.state.runtime
         else:
-            self.app = create_app(self.services, self.runtime, self.queries, self.storage, self.limiter, scanner_phones=self.phones)
+            self.app = create_app(self.services, self.runtime, self.queries, self.storage, self.limiter, scanner_phones=self.phones, waiter_shifts=self.shifts)
         self.receipts = Mock()
         self.development_seed = Mock()
         self.development_seed.manifest.return_value = {"employees": [], "master": None, "waiters": []}
@@ -909,7 +912,7 @@ class ValidationAndReportApiTests(ApiTestCase):
         args = self.harness.queries.meal_history.call_args
         self.assertIsNotNone(args.args[1].utcoffset())
         self.assertEqual(args.args[1].astimezone(timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc))
-        self.assertEqual(args.kwargs, {"limit": 10, "after_id": 12, "employee_id": 7})
+        self.assertEqual(args.kwargs, {"limit": 10, "after_id": 12, "employee_id": 7, "meal_type_id": None})
 
     def test_naive_or_reversed_report_dates_are_rejected_by_service_validation(self):
         for start, end, code in (
@@ -989,7 +992,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_employee_contact_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

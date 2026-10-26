@@ -35,7 +35,7 @@ class PublicScannerApiTests(ApiTestCase):
 
     def post(self, path="/api/scanner/read", body=None, client=None):
         client = client or self.client
-        values = {"request_id": self.request_id, "token": self.token} if body is None else body
+        values = {"request_id": self.request_id, "token": self.token, "meal_type_id": 5} if body is None else body
         return client.post(path, json=values, headers=self.headers(client))
 
     def details(self):
@@ -146,7 +146,8 @@ class PublicScannerApiTests(ApiTestCase):
         self.assertTrue(response.json()["approved"])
         self.assertEqual(response.json()["meal_ids"], [31])
         arguments = self.scanner.read.call_args.args
-        self.assertEqual(len(arguments), 3)
+        self.assertEqual(len(arguments), 4)
+        self.assertEqual(arguments[3], 5)
         self.assertIsInstance(arguments[0], bytes)
         self.assertEqual(len(arguments[0]), 32)
         self.assertEqual(str(arguments[1]), self.request_id)
@@ -170,9 +171,10 @@ class PublicScannerApiTests(ApiTestCase):
 
     def test_client_cannot_override_identity_or_service_settings(self):
         for extra in ({"staff_id": 1}, {"waiter_id": 1}, {"roles": ["ADMIN"]}, {"scanner_code": "OTHER"},
-                      {"location_id": 5}, {"meal_type_id": 1}, {"quantity": 2}, {"authorization_id": 3}):
+                      {"location_id": 5}, {"quantity": 2}, {"authorization_id": 3}, {"meal_type_id": 0},
+                      {"meal_type_id": "LUNCH"}):
             with self.subTest(extra=extra):
-                response = self.post(body={"request_id": self.request_id, "token": self.token, **extra})
+                response = self.post(body={"request_id": self.request_id, "token": self.token, "meal_type_id": 5, **extra})
                 self.assert_error(response, 422, "INVALID_INPUT")
         self.scanner.read.assert_not_called()
 
@@ -203,7 +205,7 @@ class PublicScannerApiTests(ApiTestCase):
     def test_missing_or_tampered_browser_cookie_cannot_submit(self):
         headers = self.headers()
         self.client.cookies.clear()
-        body = {"request_id": self.request_id, "token": self.token}
+        body = {"request_id": self.request_id, "token": self.token, "meal_type_id": 5}
         self.assert_error(self.client.post("/api/scanner/read", json=body, headers=headers), 401, "SCANNER_BROWSER_REQUIRED")
         self.client.cookies.set("meal_scanner", secrets.token_urlsafe(32))
         self.assert_error(self.client.post("/api/scanner/read", json=body, headers=headers), 401, "SCANNER_BROWSER_REQUIRED")
@@ -214,13 +216,13 @@ class PublicScannerApiTests(ApiTestCase):
         admin = ApiHarness(self.harness.runtime.for_application("admin"))
         self.addCleanup(admin.client.close)
         headers = {**admin.headers(), "Origin": self.harness.runtime.app_origin}
-        response = self.client.post("/api/scanner/read", json={"request_id": self.request_id, "token": self.token},
+        response = self.client.post("/api/scanner/read", json={"request_id": self.request_id, "token": self.token, "meal_type_id": 5},
                                     headers=headers)
         self.assert_error(response, 403, "CSRF_REJECTED")
         self.scanner.read.assert_not_called()
 
     def test_cross_origin_submission_is_rejected(self):
-        response = self.client.post("/api/scanner/read", json={"request_id": self.request_id, "token": self.token},
+        response = self.client.post("/api/scanner/read", json={"request_id": self.request_id, "token": self.token, "meal_type_id": 5},
                                    headers={**self.headers(), "Origin": "https://external.example.test"})
         self.assert_error(response, 403, "ORIGIN_REJECTED")
         self.scanner.read.assert_not_called()
@@ -249,7 +251,7 @@ class PublicScannerApiTests(ApiTestCase):
     def test_limits_apply_once_before_each_valid_or_invalid_submission(self):
         self.post()
         self.assertEqual(self.limiter.consume.call_count, 1)
-        self.post(body={"request_id": "invalid", "token": self.token})
+        self.post(body={"request_id": "invalid", "token": self.token, "meal_type_id": 5})
         self.assertEqual(self.limiter.consume.call_count, 2)
 
     def test_scanner_limit_has_its_own_retry_after(self):
@@ -408,6 +410,7 @@ class SeparateApplicationTests(ApiTestCase):
             "/", "/assets", "/health/live", "/health/ready", "/api/scanner/session",
             "/api/scanner/activate",
             "/api/scanner/read", "/api/scanner/visitors", "/api/scanner/requests/{request_id}/result",
+            "/api/scanner/meal-types", "/api/scanner/shift", "/api/scanner/shift/end",
             "/api/scanner/recovery",
         }))
 
@@ -416,7 +419,7 @@ class SeparateApplicationTests(ApiTestCase):
         self.assert_error(response, 403, "ORIGIN_REJECTED")
         self.assertNotIn("set-cookie", response.headers)
         session = self.scanner.client.get("/api/scanner/session").json()
-        response = self.scanner.client.post("/api/scanner/read", json={"request_id": str(uuid4()), "token": secrets.token_urlsafe(32)}, headers={
+        response = self.scanner.client.post("/api/scanner/read", json={"request_id": str(uuid4()), "token": secrets.token_urlsafe(32), "meal_type_id": 5}, headers={
             "Origin": self.admin.runtime.app_origin, "X-CSRF-Token": session["csrf_token"],
         })
         self.assert_error(response, 403, "ORIGIN_REJECTED")

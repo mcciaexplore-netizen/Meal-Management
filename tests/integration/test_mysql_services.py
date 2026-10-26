@@ -34,7 +34,7 @@ class MealServicesFixture(IsolatedMySQLTestCase):
         cls.qr = QrService(cls.db, cls.vault, QrRenderer())
         cls.employees = EmployeeService(cls.db, cls.qr)
         cls.department_id = cls.employees.create_department(cls.admin_context, "Integration Department")
-        cls.meals = MealService(cls.db)
+        cls.meals = MealService(cls.db, lock_hours=0)
         cls.approvals = ApprovalService(cls.db)
         with cls.db.transaction() as tx:
             cls.location_id = tx.insert(

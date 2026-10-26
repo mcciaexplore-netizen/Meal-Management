@@ -33,6 +33,17 @@ def _selfie_key(value):
     return value
 
 
+def _meal_type_ids(values):
+    if values is None:
+        return None
+    if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= 50:
+        raise DomainError("INVALID_MEAL_TYPE_IDS")
+    identifiers = [_positive_id(value, "meal_type_id") for value in values]
+    if len(set(identifiers)) != len(identifiers):
+        raise DomainError("INVALID_MEAL_TYPE_IDS")
+    return sorted(identifiers)
+
+
 def _employee_ids(values):
     if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= 100:
         raise DomainError("INVALID_EMPLOYEE_IDS")
@@ -90,7 +101,9 @@ class EmployeeService:
         phone=None,
         selfie_object_key=None,
         expires_at=None,
+        meal_type_ids=None,
     ):
+        meal_type_ids = _meal_type_ids(meal_type_ids)
         employee_code = required_text(employee_code, "employee_code", 32)
         full_name = required_text(full_name, "full_name", 150)
         email = normalize_email(email)
@@ -103,10 +116,11 @@ class EmployeeService:
                 tx, actor, employee_code, full_name, email, department_id,
                 company_name=company_name, phone=phone,
                 selfie_object_key=selfie_object_key, expires_at=expires_at,
+                meal_type_ids=meal_type_ids,
             )
         return result
 
-    def _register(self, tx, actor, employee_code, full_name, email, department_id, *, company_name=None, phone=None, selfie_object_key=None, expires_at=None, bulk_batch_id=None):
+    def _register(self, tx, actor, employee_code, full_name, email, department_id, *, company_name=None, phone=None, selfie_object_key=None, expires_at=None, bulk_batch_id=None, meal_type_ids=None):
         self._department(tx, department_id)
         now = tx.now()
         try:
@@ -121,6 +135,7 @@ class EmployeeService:
             if getattr(exc, "errno", None) == 1062:
                 raise DomainError("EMPLOYEE_CODE_EXISTS") from None
             raise
+        granted = self._grant_meal_types(tx, employee_id, meal_type_ids, now)
         issued = self.qr_service._issue(tx, actor.staff_id, "EMPLOYEE", employee_id, expires_at)
         email_id = self.qr_service.email_queue.enqueue_employee(
             tx, issued.qr_id, {"id": employee_id, "full_name": full_name, "email": email},
@@ -132,10 +147,63 @@ class EmployeeService:
                 "employee_code": employee_code, "full_name": full_name, "email": email,
                 "company_name": company_name, "phone": phone,
                 "department_id": department_id, "selfie_object_key": selfie_object_key,
-                "qr_id": issued.qr_id, "email_id": email_id,
+                "qr_id": issued.qr_id, "email_id": email_id, "meal_type_ids": granted,
             },
         )
         return Registration(employee_id, issued.qr_id, email_id)
+
+    def _grant_meal_types(self, tx, employee_id, meal_type_ids, now):
+        if meal_type_ids is None:
+            rows = tx.all("SELECT id FROM meal_types WHERE is_active = 1 ORDER BY id")
+            meal_type_ids = [row["id"] for row in rows]
+        else:
+            placeholders = ", ".join(["%s"] * len(meal_type_ids))
+            rows = tx.all(
+                f"SELECT id FROM meal_types WHERE is_active = 1 AND id IN ({placeholders}) FOR SHARE",
+                tuple(meal_type_ids),
+            )
+            if len(rows) != len(meal_type_ids):
+                raise DomainError("MEAL_TYPE_UNAVAILABLE")
+        for meal_type_id in meal_type_ids:
+            tx.execute(
+                "INSERT INTO employee_meal_types (employee_id, meal_type_id, created_at) VALUES (%s, %s, %s)",
+                (employee_id, meal_type_id, now),
+            )
+        return list(meal_type_ids)
+
+    def set_meal_types(self, context, employee_id, meal_type_ids):
+        _positive_id(employee_id, "employee_id")
+        meal_type_ids = _meal_type_ids(meal_type_ids)
+        if meal_type_ids is None:
+            raise DomainError("INVALID_MEAL_TYPE_IDS")
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            employee = tx.one("SELECT id FROM employees WHERE id = %s FOR UPDATE", (employee_id,))
+            if employee is None or tx.one(
+                "SELECT employee_id FROM employee_archives WHERE employee_id = %s FOR SHARE", (employee_id,),
+            ) is not None:
+                raise DomainError("EMPLOYEE_NOT_FOUND")
+            current = [row["meal_type_id"] for row in tx.all(
+                "SELECT meal_type_id FROM employee_meal_types WHERE employee_id = %s ORDER BY meal_type_id", (employee_id,),
+            )]
+            added = sorted(set(meal_type_ids) - set(current))
+            removed = sorted(set(current) - set(meal_type_ids))
+            if added:
+                placeholders = ", ".join(["%s"] * len(added))
+                if len(tx.all(f"SELECT id FROM meal_types WHERE is_active = 1 AND id IN ({placeholders}) FOR SHARE", tuple(added))) != len(added):
+                    raise DomainError("MEAL_TYPE_UNAVAILABLE")
+            now = tx.now()
+            for meal_type_id in removed:
+                tx.execute("DELETE FROM employee_meal_types WHERE employee_id = %s AND meal_type_id = %s", (employee_id, meal_type_id))
+            for meal_type_id in added:
+                tx.execute(
+                    "INSERT INTO employee_meal_types (employee_id, meal_type_id, created_at) VALUES (%s, %s, %s)",
+                    (employee_id, meal_type_id, now),
+                )
+            if added or removed:
+                audit(tx, actor.staff_id, "EMPLOYEE_MEAL_TYPES_CHANGED", "employees", employee_id,
+                      before={"meal_type_ids": current}, after={"meal_type_ids": sorted(meal_type_ids)})
+        return {"employee_id": employee_id, "meal_type_ids": sorted(meal_type_ids)}
 
     def _bulk_replay(self, tx, batch, fingerprint, expected_count):
         if not hmac.compare_digest(bytes(batch["request_hash"]), fingerprint):
@@ -160,16 +228,20 @@ class EmployeeService:
             raise DomainError("INVALID_EMPLOYEE_BATCH")
         normalized = []
         for employee in employees:
-            if not isinstance(employee, dict) or set(employee) != {"employee_code", "full_name", "email", "company_name", "phone", "department_id"}:
+            keys = {"employee_code", "full_name", "email", "company_name", "phone", "department_id"}
+            if not isinstance(employee, dict) or set(employee) not in (keys, keys | {"meal_type_ids"}):
                 raise DomainError("INVALID_EMPLOYEE_BATCH")
-            normalized.append({
+            item = {
                 "employee_code": required_text(employee["employee_code"], "employee_code", 32),
                 "full_name": required_text(employee["full_name"], "full_name", 150),
                 "email": normalize_email(employee["email"]),
                 "company_name": required_text(employee["company_name"], "company_name", 150),
                 "phone": normalize_phone(employee["phone"], "EMPLOYEE_PHONE"),
                 "department_id": _positive_id(employee["department_id"], "department_id"),
-            })
+            }
+            if employee.get("meal_type_ids") is not None:
+                item["meal_type_ids"] = _meal_type_ids(employee["meal_type_ids"])
+            normalized.append(item)
         if len({row["employee_code"].casefold() for row in normalized}) != len(normalized):
             raise DomainError("EMPLOYEE_CODE_EXISTS")
         fingerprint = payload_digest({"employees": normalized})

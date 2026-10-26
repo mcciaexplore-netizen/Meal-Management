@@ -10,19 +10,40 @@ The scanner has no staff login or service-station selectors. Its `/api/scanner` 
 | --- | --- | --- | --- |
 | `GET` | `/api/scanner/session` | Public same-origin scanner bootstrap | Issue or renew a signed HTTP-only browser cookie; return `scope` and `csrf_token`, with no staff login or database write |
 | `POST` | `/api/scanner/activate` | Public same-origin scanner, rate-limited | Accept `activation_code`: an 8-character administrator code (case, spaces and dashes ignored) or, while configured, the emergency `SCANNER_ACTIVATION_SECRET`; issue the scanner cookie bound to a new scanner phone record |
-| `POST` | `/api/scanner/read` | Scanner cookie, scanner CSRF, exact origin | Accept only `request_id` and `token`; record one employee meal or consume one remaining master meal |
+| `POST` | `/api/scanner/read` | Scanner cookie, scanner CSRF, exact origin, signed-in shift in production | Accept only `request_id`, `token` and `meal_type_id`; record one employee meal or consume one remaining master meal |
+| `GET` | `/api/scanner/meal-types` | Activated scanner browser | Active meal types for the scanner's meal type picker |
+| `GET` | `/api/scanner/shift` | Activated scanner browser | `{required, shift, notice_version}`: whether shifts are required and the phone's open shift |
+| `POST` | `/api/scanner/shift` | Activated scanner browser, scanner CSRF | Start a shift: `waiter_name`, `selfie` (base64 JPEG), `latitude`, `longitude`, `accuracy_m`, `consent: true`, `notice_version` |
+| `POST` | `/api/scanner/shift/end` | Activated scanner browser, scanner CSRF | End the phone's open shift (`SIGNED_OUT`) |
 | `GET` | `/api/scanner/requests/{request_id}/result` | Original scanner browser | Recover only that browser's original committed result without recording another meal |
 | `GET` | `/api/scanner/recovery` | Original scanner browser | Find that browser's last saved request ID when local recovery storage is missing; return no QR token or visitor details |
 
 The scanner's transport manages bootstrap automatically. It sends the scanner-specific `csrf_token` as `X-CSRF-Token`; staff CSRF tokens are not interchangeable. Cross-site bootstrap requests are rejected before issuing cookies. Production cookies use the `__Host-meal_scanner` name; development HTTP uses `meal_scanner`. Cookies are HTTP-only, SameSite Strict, path `/`, and have a 30-day browser lifetime renewed at bootstrap. `scope` is a nonsecret hash used to name browser-local recovery markers; it is not an authentication credential and cannot replace the cookie.
 
-The backend chooses its shared scanner account, location/counter, and default `Meal` type from `scan_app_settings`. Requests cannot choose or override staff identity, role, scanner, location, meal type, quantity, or administrator authorization. The dedicated scanner account has no password and cannot sign in, obtain staff sessions, or acquire administrator roles. The public routes expose no employee metadata, QR export, private photo, catalog administration, or unrestricted reports.
+The backend chooses its shared scanner account and location/counter from `scan_app_settings`; the waiter chooses the meal type. Requests cannot choose or override staff identity, role, scanner, location, quantity, or administrator authorization. The dedicated scanner account has no password and cannot sign in, obtain staff sessions, or acquire administrator roles. The public routes expose no employee metadata, QR export, private photo, catalog administration, or unrestricted reports.
 
 Employee and master reads return the canonical committed ScanResult. A master allowance of five permits five successful servings with distinct request UUIDs, one meal each. Each serving snapshots the group's stored company, contact name, email, and phone into meal history. The fifth committed meal exhausts that QR; later new requests return `QR_EXPIRED`, displayed as “QR has expired. Please contact the administrator.” Allowance consumption, the serving, its meal, and the completed scan result commit together. Concurrent scans lock the same allowance and cannot consume its final meal twice. Existing master QRs without group allocations are retained for history and are rejected by the public scanner; create a new group QR in the admin application.
 
 Each UUID is first bound to a hashed browser identity and captured server settings. Another browser cannot submit or recover that UUID. Repeated successful calls return the original meal and serving IDs without consuming another allowance, including after the QR is exhausted. Only a deliberate new serving uses a new UUID. `/api/scanner/visitors` is no longer exposed; public callers cannot replace the administrator's stored visitor details.
 
 The browser retains only scope, request UUID, and quantity one across reloads. A stable pending marker detects changed or lost cookies even after reload and blocks a new meal until the earlier result is checked. QR values and visitor contact details are not stored in browser storage. In-memory and restored retries treat malformed rescans as unconfirmed, including when the original request is still delayed. When local storage has no marker, `/api/scanner/recovery` checks MySQL for the browser's most recent mapped request before new scans are enabled. This supports moving from the old port 8000 scanner to port 8001 without silently losing a committed request. A confirmed approval or rejection displays an animation for two seconds, then returns to the initial scanner screen with the camera stopped. Starting the camera or uploading the next QR deliberately begins another serving; an unchanged QR left in view cannot generate repeated meals. If the completed recovery marker cannot be cleared, the result remains visible with **Scanner reset paused** and a **Return to scanner** retry. Processing or connection errors keep the original request unresolved and never reset it as a new meal. Removing the browser cookie as well as its recovery storage removes the ownership proof; an administrator must check history in that case.
+
+### Meal types
+
+`POST /api/scanner/read` requires `meal_type_id`; a retry of the same `request_id` keeps the type it started with. Employee scans are refused with `MEAL_TYPE_NOT_ELIGIBLE` for types not granted to the employee, and with `MEAL_TYPE_ALREADY_RECORDED` (plus `previous_served_at` in UTC) when the same effective type was recorded within `MEAL_TYPE_LOCK_HOURS`. Administrators use `PATCH /api/employees/{id}/meal-types` (`meal_type_ids`), `POST /api/meals/{id}/meal-type` (`meal_type_id`, `reason`), and `GET /api/reports/meals?meal_type_id=`.
+
+### Waiter shifts
+
+In production `POST /api/scanner/read` returns `SHIFT_SIGN_IN_REQUIRED` (403) unless the phone has an open, unexpired shift, and every scan attempt and serving stores `waiter_shift_id`. Starting a shift needs `consent: true` and the current `notice_version`, otherwise `SHIFT_CONSENT_REQUIRED` (403). The selfie is at most 1,000,000 bytes after decoding, and the sign-in request body may be up to 1,500,000 bytes; every other scanner request keeps the 64 KiB limit. A new sign-in ends the phone's open shift as `REPLACED`. Shifts expire `WAITER_SHIFT_HOURS` after sign-in. The scanner's `Permissions-Policy` allows `geolocation=(self)` and `camera=(self)`.
+
+Administrator routes:
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/waiter-shifts?status=all\|active\|ended\|flagged&limit=&after_id=` | Shifts, newest first, with `status` `ACTIVE`, `EXPIRED` or `ENDED` |
+| `GET` | `/api/waiter-shifts/{id}/selfie` | The private selfie; `SHIFT_SELFIE_EXPIRED` (404) after the 90-day deletion |
+| `POST` | `/api/waiter-shifts/{id}/end` | End an active shift now (`ENDED_BY_ADMIN`); `SHIFT_ALREADY_ENDED` (409) otherwise |
+| `GET`, `PUT` | `/api/waiter-shift-settings` | Canteen `latitude`, `longitude` and `radius_m` (10 to 50,000), all together or all `null` |
 
 ### Scanner phones
 

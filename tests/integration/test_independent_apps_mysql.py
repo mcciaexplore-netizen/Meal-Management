@@ -50,8 +50,9 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             phone=visitor["phone"],
             meal_limit=1,
         )
-        first_body = {"request_id": str(uuid4()), "token": employee_token}
-        master_body = {"request_id": str(uuid4()), "token": master.token}
+        first_body = {"request_id": str(uuid4()), "token": employee_token, "meal_type_id": self.meal_type_id}
+        master_body = {"request_id": str(uuid4()), "token": master.token, "meal_type_id": self.meal_type_id}
+        lunch_id = self.scalar("SELECT id FROM meal_types WHERE code = 'LUNCH'")
         baseline = self.scalar("SELECT COALESCE(MAX(id), 0) FROM meals")
         start = datetime.now(timezone.utc) - timedelta(minutes=1)
         with self.client("scanner", runtime) as scanner:
@@ -62,7 +63,10 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             duplicate = scanner.post("/api/scanner/read", json=first_body, headers=headers)
             self.assertTrue(duplicate.json()["duplicate"])
             self.assertEqual(duplicate.json()["meal_ids"], first.json()["meal_ids"])
-            second = scanner.post("/api/scanner/read", json={**first_body, "request_id": str(uuid4())}, headers=headers)
+            locked = scanner.post("/api/scanner/read", json={**first_body, "request_id": str(uuid4())}, headers=headers)
+            self.assertEqual(locked.json()["code"], "MEAL_TYPE_ALREADY_RECORDED")
+            self.assertTrue(locked.json()["previous_served_at"].endswith("Z"))
+            second = scanner.post("/api/scanner/read", json={**first_body, "request_id": str(uuid4()), "meal_type_id": lunch_id}, headers=headers)
             self.assertTrue(second.json()["approved"])
             self.assertNotEqual(second.json()["meal_ids"], first.json()["meal_ids"])
             recorded = scanner.post("/api/scanner/read", json=master_body, headers=headers)

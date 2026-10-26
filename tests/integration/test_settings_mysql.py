@@ -123,10 +123,8 @@ class SettingsMySQLTests(MealServicesFixture):
         for call in (
             lambda: self.catalog.set_scanner_active(self.admin_context, shared["scanner_id"], False),
             lambda: self.catalog.set_location_active(self.admin_context, shared["location_id"], False),
-            lambda: self.catalog.set_meal_type_active(self.admin_context, shared["meal_type_id"], False),
             lambda: self.catalog.update_scanner(self.admin_context, shared["scanner_id"], "RENAMED", "Front counter"),
             lambda: self.catalog.update_location(self.admin_context, shared["location_id"], "RENAMED", "Meal Scanner"),
-            lambda: self.catalog.update_meal_type(self.admin_context, shared["meal_type_id"], "RENAMED", "Meal"),
         ):
             with self.assertRaisesRegex(DomainError, "SHARED_SCANNER_SETTING_PROTECTED"):
                 call()
@@ -135,7 +133,6 @@ class SettingsMySQLTests(MealServicesFixture):
             ("UPDATE scanner_devices SET code = 'X' WHERE id = %s", shared["scanner_id"]),
             ("UPDATE scanner_devices SET location_id = %s WHERE id = %s", None),
             ("UPDATE locations SET is_active = 0 WHERE id = %s", shared["location_id"]),
-            ("UPDATE meal_types SET code = 'X' WHERE id = %s", shared["meal_type_id"]),
             ("UPDATE staff_accounts SET is_active = 0 WHERE is_scanner = 1 AND id > %s", 0),
             ("UPDATE staff_accounts SET email = 'x@example.test' WHERE is_scanner = 1 AND id > %s", 0),
         ):

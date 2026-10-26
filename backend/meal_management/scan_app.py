@@ -32,16 +32,15 @@ class ScanAppService:
 
     def _profile(self, tx):
         profile = tx.one(
-            "SELECT p.staff_id, p.scanner_id, p.meal_type_id, p.is_enabled, d.code AS scanner_code, "
+            "SELECT p.staff_id, p.scanner_id, p.is_enabled, d.code AS scanner_code, "
             "s.is_active AS staff_active, s.is_scanner, d.is_active AS scanner_active, "
-            "l.is_active AS location_active, m.is_active AS meal_type_active "
+            "l.is_active AS location_active "
             "FROM scan_app_settings p JOIN staff_accounts s ON s.id = p.staff_id "
             "JOIN scanner_devices d ON d.id = p.scanner_id "
-            "JOIN locations l ON l.id = d.location_id "
-            "JOIN meal_types m ON m.id = p.meal_type_id WHERE p.id = 1 FOR SHARE"
+            "JOIN locations l ON l.id = d.location_id WHERE p.id = 1 FOR SHARE"
         )
         if profile is None or not all(profile[key] for key in (
-            "is_enabled", "staff_active", "is_scanner", "scanner_active", "location_active", "meal_type_active",
+            "is_enabled", "staff_active", "is_scanner", "scanner_active", "location_active",
         )):
             raise DomainError("SCANNER_NOT_CONFIGURED")
         return profile
@@ -57,9 +56,11 @@ class ScanAppService:
         return row
 
     @retry_transaction
-    def _reserve(self, browser_hash, request_id):
+    def _reserve(self, browser_hash, request_id, meal_type_id):
         browser_hash = _browser_hash(browser_hash)
         identifier = request_uuid(request_id)
+        if type(meal_type_id) is not int or not 1 <= meal_type_id <= 2**64 - 1:
+            raise DomainError("INVALID_MEAL_TYPE_ID")
         with self._transaction() as tx:
             row = self._mapping(tx, identifier, browser_hash, locking=True)
             if row is None:
@@ -67,7 +68,7 @@ class ScanAppService:
                 row = {
                     "request_id": identifier.bytes, "browser_hash": browser_hash,
                     "staff_id": profile["staff_id"], "scanner_id": profile["scanner_id"],
-                    "meal_type_id": profile["meal_type_id"], "scanner_code": profile["scanner_code"],
+                    "meal_type_id": meal_type_id, "scanner_code": profile["scanner_code"],
                 }
                 try:
                     with savepoint(tx):
@@ -101,9 +102,15 @@ class ScanAppService:
             scanner_code=row["scanner_code"], quantity=1, visitor_details=visitor_details,
         )
 
-    def read(self, browser_hash, request_id, token):
-        identifier, row = self._reserve(browser_hash, request_id)
-        return self.meals.record(ScanAppContext(row["staff_id"]), self._scan(identifier, row, token))
+    def read(self, browser_hash, request_id, token, meal_type_id, phone_id=None, waiter_shift_id=None):
+        identifier, row = self._reserve(browser_hash, request_id, meal_type_id)
+        context = ScanAppContext(row["staff_id"], phone_id, waiter_shift_id)
+        return self.meals.record(context, self._scan(identifier, row, token))
+
+    def meal_types(self):
+        with self._transaction() as tx:
+            rows = tx.all("SELECT id, code, name FROM meal_types WHERE is_active = 1 ORDER BY name, id")
+        return {"meal_types": [dict(row) for row in rows]}
 
     def result(self, browser_hash, request_id):
         identifier, row = self._owned(browser_hash, request_id)

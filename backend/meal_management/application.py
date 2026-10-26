@@ -36,7 +36,7 @@ def create_services(settings=None):
         staff=StaffService(database),
         employees=EmployeeService(database, qr),
         qr=qr,
-        meals=MealService(database),
+        meals=MealService(database, lock_hours=settings.meal_type_lock_hours),
         approvals=ApprovalService(database),
         reports=ReportService(database),
         catalog=CatalogService(database),

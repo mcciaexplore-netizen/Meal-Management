@@ -187,6 +187,7 @@ class EmployeeQrServiceTests(unittest.TestCase):
         self.now = datetime(2026, 9, 9, 12, 0)
         self.tx = Mock()
         self.tx.now.return_value = self.now
+        self.tx.all.return_value = []
         self.db = TransactionDatabase(self.tx)
         self.vault = Mock()
         self.vault.encrypt.return_value = b"encrypted-value"

@@ -17,6 +17,7 @@ class Settings:
     db_connect_timeout: int = 10
     db_ssl_ca: str | None = None
     db_engine: str = "mysql"
+    meal_type_lock_hours: int = 12
 
     @classmethod
     def from_env(cls, mapping=None):
@@ -37,6 +38,12 @@ class Settings:
             timeout = int(env.get("DB_CONNECT_TIMEOUT", "10"))
         except (ValueError, TypeError):
             raise ConfigurationError("INVALID_DATABASE_CONFIGURATION") from None
+        try:
+            lock_hours = int(env.get("MEAL_TYPE_LOCK_HOURS") or "12")
+        except (ValueError, TypeError):
+            raise ConfigurationError("INVALID_SETTING_MEAL_TYPE_LOCK_HOURS") from None
+        if not 0 <= lock_hours <= 48:
+            raise ConfigurationError("INVALID_SETTING_MEAL_TYPE_LOCK_HOURS")
         if not 1 <= port <= 65535 or not 1 <= timeout <= 120:
             raise ConfigurationError("INVALID_DATABASE_CONFIGURATION")
         keys = tuple(key.strip() for key in env["QR_ENCRYPTION_KEYS"].split(","))
@@ -55,4 +62,5 @@ class Settings:
             db_connect_timeout=timeout,
             db_ssl_ca=env.get("DB_SSL_CA") or None,
             db_engine=engine,
+            meal_type_lock_hours=lock_hours,
         )

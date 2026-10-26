@@ -91,5 +91,5 @@ class RuntimePrivilegeTests(unittest.TestCase):
                          {("INSERT", "login_rate_limits"), ("UPDATE", "login_rate_limits")})
 
     def test_delete_is_limited_to_staff_role_replacement(self):
-        self.assertEqual(tuple(runtime_account.DELETE_TABLES), ("staff_account_roles",))
+        self.assertEqual(tuple(runtime_account.DELETE_TABLES), ("staff_account_roles", "employee_meal_types"))
         self.assertTrue({"scanner_phones", "departments", "meal_types"} <= set(runtime_account.UPDATE_TABLES))

@@ -8,6 +8,7 @@ import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
 import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
+import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds } from "./meal_types.js";
 
 const active = rows => (rows ?? []).filter(row => row.is_active !== false && row.is_active !== 0);
 const rowId = row => row.id ?? row.qr_id ?? row.authorization_id;
@@ -28,7 +29,7 @@ export async function dashboard(target, context) {
 }
 
 function employeeForm(catalog, employee = {}) {
-  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments, employee.department_id), employee.department_id)}</div>`;
+  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments, employee.department_id), employee.department_id)}</div>${mealTypeCheckboxes(catalog.meal_types, employee.meal_type_ids ?? null)}`;
 }
 
 export async function employees(target, context) {
@@ -64,7 +65,8 @@ export async function employees(target, context) {
       photoInput.setBusy(true);
       try {
         const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
-        const result = await api("/employees", { method: "POST", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), company_name: data.get("company_name"), phone: data.get("phone"), department_id: departmentId } });
+        const mealTypeIds = selectedMealTypeIds(data.getAll("meal_type_ids"));
+        const result = await api("/employees", { method: "POST", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), company_name: data.get("company_name"), phone: data.get("phone"), department_id: departmentId, meal_type_ids: mealTypeIds } });
         const stillOpen = dialog.contains(form);
         photoInput.dispose();
         if (stillOpen) closeModal();
@@ -102,8 +104,10 @@ export async function employeeDetail(id, context, onChange) {
     const noQr = qrResponse.error?.status === 404 || ["QR_NOT_FOUND", "ACTIVE_QR_NOT_FOUND"].includes(qrResponse.error?.code);
     dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div><div class="detail-section danger-zone"><h3>Remove employee</h3><p class="muted small">Removes the employee from administration, revokes their QR, and preserves historical audit records.</p><button class="button danger-outline" id="employee-remove">Remove employee</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
     formAction(dialog.querySelector("#employee-edit"), async data => {
+      const mealTypeIds = selectedMealTypeIds(data.getAll("meal_type_ids"));
       const departmentId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
       await api(`/employees/${id}`, { method: "PATCH", body: { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), company_name: data.get("company_name"), phone: data.get("phone"), department_id: departmentId } });
+      if (!sameMealTypes(employee.meal_type_ids ?? [], mealTypeIds)) await api(`/employees/${id}/meal-types`, { method: "PATCH", body: { meal_type_ids: mealTypeIds } });
       notify("Employee updated.");
       await onChange();
     });
@@ -246,10 +250,16 @@ function approvalTable(rows) {
   return table(["Visitor", "Meals", "Waiter", "Expires"], rows.map(row => `<tr><td><strong>${escape(row.visitor_name)}</strong><span class="cell-subtitle">${escape(row.visitor_organization ?? "")}</span></td><td>${escape(row.quantity)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(timestamp(row.expires_at))}</td></tr>`), "Visitor authorizations");
 }
 
-export function mealTable(rows) {
+export function mealTypeCell(row) {
+  const name = escape(row.meal_type_name ?? row.meal_type_code ?? row.meal_type_id);
+  return Number(row.correction_count) > 0 ? `${name}<span class="cell-subtitle">Corrected · recorded as ${escape(row.recorded_meal_type_name ?? "another type")}</span>` : name;
+}
+
+export function mealTable(rows, correctable = false) {
   if (!rows.length) return empty("No meals in this period", "Try a different date range or record a serving.", "plate");
   const headers = ["Meal", "Employee / visitor", "Company", "Email", "Phone", "Category", "Service", "Waiter", "Location", "Date & time"];
-  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.employee_company_name ?? row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.employee_email ?? row.visitor_email ?? "—")}</td><td>${escape(row.employee_phone ?? row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${escape(row.meal_type_name ?? row.meal_type_code ?? row.meal_type_id)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td></tr>`), "Meal records");
+  if (correctable) headers.push("");
+  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.employee_company_name ?? row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.employee_email ?? row.visitor_email ?? "—")}</td><td>${escape(row.employee_phone ?? row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${mealTypeCell(row)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td>${correctable ? `<td>${action("meal-type-correct", row.meal_id ?? row.id, "Change meal type")}</td>` : ""}</tr>`), "Meal records");
 }
 
 function scanTable(rows) {
@@ -261,7 +271,7 @@ export async function reports(target, context) {
   const month = new Date();
   month.setDate(1);
   let view = location.hash.includes("view=rejected") ? "rejected" : "meals";
-  target.innerHTML = `${heading("HISTORY & ACCOUNTABILITY", "Meal history", "Filter individual meal records and review rejected scan attempts.")}<form id="report-filters" class="panel filter-bar"><label>From<input name="start" type="date" value="${dateInput(month)}" required></label><label>Through<input name="end" type="date" value="${dateInput()}" required></label><label>Employee ID <span class="optional">Optional</span><input name="employee_id" type="number" min="1" step="1" placeholder="All employees and visitors"></label><button class="button primary" type="submit">Apply filters</button><div data-form-error></div></form><p class="field-help">Dates include the full local day. Totals cover all employees and visitors in the selected dates.</p><div id="report-totals">${stats()}</div><section class="panel"><div class="tabs" role="tablist" aria-label="Report type"><button role="tab" data-report="meals">Meal records</button><button role="tab" data-report="rejected">Rejected scans</button></div><div id="report-results">${loading()}</div><div class="pagination" id="report-pagination"></div></section>`;
+  target.innerHTML = `${heading("HISTORY & ACCOUNTABILITY", "Meal history", "Filter individual meal records and review rejected scan attempts.")}<form id="report-filters" class="panel filter-bar"><label>From<input name="start" type="date" value="${dateInput(month)}" required></label><label>Through<input name="end" type="date" value="${dateInput()}" required></label><label>Employee ID <span class="optional">Optional</span><input name="employee_id" type="number" min="1" step="1" placeholder="All employees and visitors"></label><label>Meal type<select name="meal_type_id"><option value="">All meal types</option>${(context.catalog.meal_types ?? []).map(row => `<option value="${escape(row.id)}">${escape(row.name)}${row.is_active ? "" : " (inactive)"}</option>`).join("")}</select></label><button class="button primary" type="submit">Apply filters</button><div data-form-error></div></form><p class="field-help">Dates include the full local day. Totals cover all employees and visitors in the selected dates.</p><div id="report-totals">${stats()}</div><section class="panel"><div class="tabs" role="tablist" aria-label="Report type"><button role="tab" data-report="meals">Meal records</button><button role="tab" data-report="rejected">Rejected scans</button></div><div id="report-results">${loading()}</div><div class="pagination" id="report-pagination"></div></section>`;
   let rows = [];
   let cursor = null;
   let loadVersion = 0;
@@ -272,13 +282,26 @@ export async function reports(target, context) {
     const employeeId = data.get("employee_id") ? positive(data.get("employee_id"), "employee ID") : null;
     target.querySelectorAll("[data-report]").forEach(button => { button.setAttribute("aria-selected", button.dataset.report === view ? "true" : "false"); button.classList.toggle("active", button.dataset.report === view); });
     const endpoint = view === "meals" ? "/reports/meals" : "/reports/scans";
-    const params = { ...range, limit: 40, after_id: append ? cursor : null, employee_id: view === "meals" ? employeeId : null, outcome: view === "rejected" ? "REJECTED" : null };
+    const params = { ...range, limit: 40, after_id: append ? cursor : null, employee_id: view === "meals" ? employeeId : null, meal_type_id: view === "meals" && data.get("meal_type_id") ? positive(data.get("meal_type_id"), "meal type") : null, outcome: view === "rejected" ? "REJECTED" : null };
     const [result, totals] = await Promise.all([api(`${endpoint}?${query(params)}`), append ? Promise.resolve(null) : api(`/reports/totals?${query(range)}`)]);
     if (!context.isCurrent() || version !== loadVersion) return;
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
     if (totals) target.querySelector("#report-totals").innerHTML = stats(totals.totals);
-    target.querySelector("#report-results").innerHTML = view === "meals" ? mealTable(rows) : scanTable(rows);
+    target.querySelector("#report-results").innerHTML = view === "meals" ? mealTable(rows, true) : scanTable(rows);
+    target.querySelectorAll('[data-action="meal-type-correct"]').forEach(button => button.onclick = () => {
+      const meal = rows.find(row => Number(row.meal_id ?? row.id) === Number(button.dataset.id));
+      const choices = activeMealTypes(context.catalog.meal_types).filter(row => Number(row.id) !== Number(meal.meal_type_id));
+      const dialog = modal("Change meal type", `<p class="muted">Meal ${escape(meal.meal_id ?? meal.id)} is recorded as <strong>${escape(meal.meal_type_name)}</strong>. The original stays in the audit log; nothing is deleted.</p><form>${selectField("Correct meal type", "meal_type_id", choices)}${field("Reason", "reason", "", "text", 'required maxlength="255" autocomplete="off"')}${formEnd("Change meal type")}</form>`);
+      formAction(dialog.querySelector("form"), async data => {
+        const reason = String(data.get("reason") ?? "").trim();
+        if (!reason) throw new Error("Enter the reason for the correction.");
+        await api(`/meals/${positive(button.dataset.id, "meal ID")}/meal-type`, { method: "POST", body: { meal_type_id: positive(data.get("meal_type_id"), "meal type"), reason } });
+        closeModal();
+        notify("Meal type changed. The original is kept in the audit log.");
+        await load();
+      });
+    });
     target.querySelector("#report-pagination").innerHTML = `<span>${rows.length} records shown</span>${cursor ? '<button class="button" id="more-reports">Load more</button>' : ""}`;
     target.querySelector("#more-reports")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
   }

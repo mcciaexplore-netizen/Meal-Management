@@ -126,7 +126,7 @@ class ScannerPhoneScannerApiTests(ApiTestCase):
     def read(self, harness):
         session = harness.client.get("/api/scanner/session")
         headers = {"Origin": harness.runtime.scanner_origin, "X-CSRF-Token": session.json().get("csrf_token", "")}
-        return harness.client.post("/api/scanner/read", json={"request_id": str(uuid4()), "token": "t" * 43}, headers=headers)
+        return harness.client.post("/api/scanner/read", json={"request_id": str(uuid4()), "token": "t" * 43, "meal_type_id": 5}, headers=headers)
 
     def test_admin_code_activates_this_phone_and_binds_its_browser_identity(self):
         harness = self.production()
@@ -172,7 +172,7 @@ class ScannerPhoneScannerApiTests(ApiTestCase):
         csrf = harness.client.get("/api/scanner/session").json()["csrf_token"]
         harness.phones.authorize.side_effect = DomainError("SCANNER_ACTIVATION_REQUIRED")
         response = harness.client.post(
-            "/api/scanner/read", json={"request_id": str(uuid4()), "token": "t" * 43},
+            "/api/scanner/read", json={"request_id": str(uuid4()), "token": "t" * 43, "meal_type_id": 5},
             headers={"Origin": harness.runtime.scanner_origin, "X-CSRF-Token": csrf},
         )
         self.assert_error(response, 401, "SCANNER_ACTIVATION_REQUIRED")

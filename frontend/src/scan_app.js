@@ -8,6 +8,8 @@ import { ScanAppOperation } from "./scan_app_operation.js";
 import { chooseScannerRecovery } from "./scanner_recovery.js";
 import { scheduleScanResultReset } from "./scan_result_reset.js";
 import { mountScannerInstall } from "./scanner_install.js";
+import { chooseMealType, mealTypeOptions, mealTypeRejection } from "./meal_types.js";
+import { locationError, requestPosition, shiftEndTime, shiftState, shrinkSelfie, signInForm, signInPayload } from "./shift_signin.js";
 
 mountScannerInstall({ root: document.getElementById("scanner-install"), window, navigator });
 const root = document.getElementById("scan-app");
@@ -31,6 +33,73 @@ export function scanOutcomeMessage(code) {
   return messages[code] ?? String(code).replaceAll("_", " ").toLowerCase();
 }
 
+let mealTypes = [];
+let selectedMealType = null;
+let shiftsRequired = false;
+let currentShift = null;
+let lastWaiterName = "";
+
+function needsSignIn() {
+  return shiftsRequired && !shiftState(currentShift).active;
+}
+
+function renderSignIn(message = "") {
+  const current = ++version;
+  dispose();
+  dispose = () => {};
+  root.innerHTML = signInForm(lastWaiterName);
+  const form = root.querySelector("#shift-signin-form");
+  const target = form.querySelector("[data-form-error]");
+  const selfieInput = root.querySelector("#shift-selfie");
+  const preview = root.querySelector("#selfie-preview");
+  let selfie = null;
+  if (message) target.innerHTML = `<div class="alert" role="status">${escape(message)}</div>`;
+  selfieInput.onchange = async () => {
+    target.innerHTML = "";
+    try {
+      const shrunk = await shrinkSelfie(selfieInput.files[0]);
+      if (current !== version) return;
+      selfie = shrunk.base64;
+      preview.src = shrunk.preview;
+      preview.hidden = false;
+    } catch (error) {
+      if (current === version) target.innerHTML = errorMessage(error);
+    } finally { selfieInput.value = ""; }
+  };
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = form.querySelector('[type="submit"]');
+    if (button.disabled) return;
+    target.innerHTML = "";
+    const values = { name: form.elements.waiter_name.value, consent: form.elements.consent.checked, selfie };
+    try {
+      signInPayload({ ...values, position: { coords: { latitude: 0, longitude: 0, accuracy: 0 } } });
+      button.disabled = true;
+      button.textContent = "Finding location…";
+      let position;
+      try { position = await requestPosition(); }
+      catch (error) { throw new Error(locationError(error)); }
+      button.textContent = "Signing in…";
+      const shift = await transport.request("/shift", { method: "POST", body: signInPayload({ ...values, position }) });
+      if (current !== version) return;
+      lastWaiterName = values.name.trim();
+      currentShift = shift;
+      selectedMealType = null;
+      renderScanner();
+    } catch (error) {
+      if (current === version) target.innerHTML = errorMessage(error);
+    } finally {
+      if (current === version) { button.disabled = false; button.textContent = "Sign in"; }
+    }
+  });
+}
+
+async function loadMealTypes() {
+  const data = await transport.request("/meal-types");
+  mealTypes = Array.isArray(data?.meal_types) ? data.meal_types : [];
+  selectedMealType = selectedMealType ? chooseMealType(mealTypes, selectedMealType.id) : null;
+}
+
 async function openScanner() {
   const current = ++version;
   dispose();
@@ -42,6 +111,10 @@ async function openScanner() {
     if (activeMarker && activeMarker.scope !== session.scope) throw new Error("The previous serving belongs to another browser session. Ask the office administrator to confirm it before serving another meal.");
     if (flow?.request && servingScope !== session.scope) throw new Error("The previous serving belongs to another browser session. Ask the office administrator to confirm it before serving another meal.");
     servingScope = session.scope;
+    await loadMealTypes();
+    const shiftStatus = await transport.request("/shift");
+    shiftsRequired = shiftStatus?.required === true;
+    currentShift = shiftStatus?.shift ?? null;
     const localMarker = activeMarker?.request ?? loadScannerMarker(storage, servingScope);
     const recovery = await chooseScannerRecovery({
       localMarker,
@@ -53,7 +126,8 @@ async function openScanner() {
     if (recovery.fromServer) markerSaved = saveScannerMarker(storage, servingScope, recovery.request);
     if (!flow) flow = new ScanAppOperation();
     if (!flow.request && recovery.request) flow.restore(recovery.request);
-    renderScanner();
+    if (needsSignIn()) renderSignIn();
+    else renderScanner();
   } catch (error) {
     if (current !== version) return;
     if (error.code === "SCANNER_ACTIVATION_REQUIRED") {
@@ -96,7 +170,7 @@ function renderScanner() {
   dispose();
   const current = ++version;
   const active = () => current === version;
-  root.innerHTML = `<div class="scan-app-shell"><header class="scan-app-header"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div></header><main id="main" class="scan-only-main"><section class="scan-view" id="capture-view"><div class="scan-only-camera"><video id="scan-video" playsinline muted aria-label="Live QR camera"></video><div class="scan-camera-placeholder" id="scan-camera-placeholder">${icon("scan")}<h1>Scan a meal QR</h1><p>Hold the QR inside the frame.</p></div><div class="scan-camera-frame" id="scan-camera-frame" hidden></div><span class="scan-live-label" id="camera-state">Camera off</span></div><div class="scan-only-controls"><button class="button primary" id="camera-start">Start camera</button><button class="button" id="camera-stop" disabled>Stop</button><button class="button" id="camera-switch" disabled>Switch</button></div><div class="scan-upload"><label class="button" for="qr-upload">Upload QR image</label><input id="qr-upload" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><p>PNG, JPG, WebP, or SVG · images stay on this device</p></div></section><section id="scanner-outcome" class="scan-only-outcome" aria-live="assertive" aria-atomic="true"></section><div id="scanner-message" class="scan-only-message" role="alert" hidden></div><div class="scan-bottom-actions"><button class="button" id="check-serving" hidden>Check previous result</button></div></main></div>`;
+  root.innerHTML = `<div class="scan-app-shell"><header class="scan-app-header"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div>${currentShift ? `<div class="scan-shift"><span>${escape(currentShift.waiter_name)} · until ${escape(shiftEndTime(currentShift))}</span><button class="button" id="shift-sign-out">Sign out</button></div>` : ""}</header><div class="scan-shift-banner" id="shift-banner" role="alert" hidden><span id="shift-banner-text"></span><button class="button primary" id="shift-sign-in-again">Sign in again</button></div><main id="main" class="scan-only-main"><section class="scan-meal-type" aria-label="Meal type"><label for="meal-type">Meal type</label><select id="meal-type">${mealTypeOptions(mealTypes, selectedMealType)}</select><p class="scan-meal-current" id="meal-current" aria-live="polite">${selectedMealType ? escape(selectedMealType.name) : "Choose a meal type to start scanning"}</p></section><section class="scan-view" id="capture-view"><div class="scan-only-camera"><video id="scan-video" playsinline muted aria-label="Live QR camera"></video><div class="scan-camera-placeholder" id="scan-camera-placeholder">${icon("scan")}<h1>Scan a meal QR</h1><p>Hold the QR inside the frame.</p></div><div class="scan-camera-frame" id="scan-camera-frame" hidden></div><span class="scan-live-label" id="camera-state">Camera off</span></div><div class="scan-only-controls"><button class="button primary" id="camera-start">Start camera</button><button class="button" id="camera-stop" disabled>Stop</button><button class="button" id="camera-switch" disabled>Switch</button></div><div class="scan-upload"><label class="button" for="qr-upload">Upload QR image</label><input id="qr-upload" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><p>PNG, JPG, WebP, or SVG · images stay on this device</p></div></section><section id="scanner-outcome" class="scan-only-outcome" aria-live="assertive" aria-atomic="true"></section><div id="scanner-message" class="scan-only-message" role="alert" hidden></div><div class="scan-bottom-actions"><button class="button" id="check-serving" hidden>Check previous result</button></div></main></div>`;
   const video = root.querySelector("#scan-video");
   const canvas = document.createElement("canvas");
   const cameraStart = root.querySelector("#camera-start");
@@ -115,8 +189,11 @@ function renderScanner() {
   let detector = null;
   let camera;
 
+  const mealSelect = root.querySelector("#meal-type");
+  const mealCurrent = root.querySelector("#meal-current");
+
   function canAcquire() {
-    return active() && !busy && !decoding && !flow.result && !flow.inFlight && !flow.request?.token;
+    return active() && Boolean(selectedMealType) && !busy && !decoding && !flow.result && !flow.inFlight && !flow.request?.token;
   }
 
   function controls(state = camera?.state ?? "stopped") {
@@ -130,6 +207,8 @@ function renderScanner() {
     root.querySelector("#scan-camera-frame").hidden = state !== "active";
     root.querySelector("#camera-state").textContent = state === "active" ? "Scanning" : state === "starting" ? "Starting camera…" : "Camera off";
     checkServing.disabled = busy;
+    mealSelect.disabled = busy || flow.inFlight || Boolean(flow.request && !flow.result);
+    mealCurrent.classList.toggle("unselected", !selectedMealType);
   }
 
   camera = new CameraSession({ video, mediaDevices: navigator.mediaDevices, secureContext: window.isSecureContext, onState: controls });
@@ -143,7 +222,7 @@ function renderScanner() {
     if (!saved) showMessage("Keep this page open until the result is confirmed. This browser cannot retain the current serving after a reload.");
   }
 
-  const sendRead = body => transport.request("/read", { method: "POST", body }, servingScope);
+  const sendRead = body => transport.request("/read", { method: "POST", body: { ...body, meal_type_id: Number(selectedMealType?.id) } }, servingScope);
 
   function finished(result, recovered = false) {
     stop();
@@ -151,7 +230,7 @@ function renderScanner() {
     capture.hidden = true;
     checkServing.hidden = true;
     clearMessage();
-    outcome.innerHTML = result.approved ? `<div class="scan-final accepted">${icon("check")}<h1>Accepted · 1 meal</h1>${result.duplicate || recovered ? '<p>Already recorded. Do not serve again.</p>' : ""}<span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>` : `<div class="scan-final rejected">${icon("close")}<h1>Meal rejected</h1><p>${escape(scanOutcomeMessage(result.code))}</p><span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>`;
+    outcome.innerHTML = result.approved ? `<div class="scan-final accepted">${icon("check")}<h1>Accepted · 1 meal</h1>${result.duplicate || recovered ? '<p>Already recorded. Do not serve again.</p>' : ""}<span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>` : `<div class="scan-final rejected">${icon("close")}<h1>Meal rejected</h1><p>${escape(mealTypeRejection(result.code, result, selectedMealType?.name) ?? scanOutcomeMessage(result.code))}</p><span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>`;
     controls();
     cancelResultReset();
     cancelResultReset = scheduleScanResultReset({
@@ -190,6 +269,12 @@ function renderScanner() {
   }
 
   function failedRequest(error) {
+    if (error.code === "SHIFT_SIGN_IN_REQUIRED") {
+      currentShift = null;
+      selectedMealType = null;
+      renderSignIn("Your shift has ended. Sign in again to keep scanning.");
+      return;
+    }
     if (["IDEMPOTENCY_KEY_REUSED", "REQUEST_MISMATCH"].includes(error.code)) {
       flow.forgetCredential();
       unconfirmed("The original serving must be confirmed before you continue.");
@@ -277,6 +362,12 @@ function renderScanner() {
     finally { decoding = false; upload.value = ""; if (active()) controls(); }
   }
 
+  mealSelect.onchange = () => {
+    selectedMealType = chooseMealType(mealTypes, mealSelect.value);
+    mealCurrent.textContent = selectedMealType ? selectedMealType.name : "Choose a meal type to start scanning";
+    if (!selectedMealType) stop();
+    controls();
+  };
   cameraStart.onclick = () => start();
   cameraStop.onclick = stop;
   cameraSwitch.onclick = () => start(true);
@@ -296,7 +387,31 @@ function renderScanner() {
   window.addEventListener("pagehide", stop);
   window.addEventListener("beforeunload", beforeUnload);
   document.addEventListener("visibilitychange", hide);
+  const shiftBanner = root.querySelector("#shift-banner");
+  const updateShift = () => {
+    if (!shiftsRequired || !active()) return;
+    const state = shiftState(currentShift);
+    if (!state.active) {
+      currentShift = null;
+      selectedMealType = null;
+      renderSignIn("Your shift has ended. Sign in again to keep scanning.");
+      return;
+    }
+    shiftBanner.hidden = !state.warning;
+    root.querySelector("#shift-banner-text").textContent = `Your shift ends in ${state.minutesLeft} minute${state.minutesLeft === 1 ? "" : "s"}.`;
+  };
+  const shiftTimer = shiftsRequired ? setInterval(updateShift, 15000) : null;
+  root.querySelector("#shift-sign-in-again").onclick = () => renderSignIn();
+  root.querySelector("#shift-sign-out")?.addEventListener("click", async event => {
+    event.target.disabled = true;
+    try { await transport.request("/shift/end", { method: "POST" }); }
+    catch (error) { showMessage(error.message); event.target.disabled = false; return; }
+    currentShift = null;
+    selectedMealType = null;
+    renderSignIn();
+  });
   dispose = () => {
+    if (shiftTimer) clearInterval(shiftTimer);
     stop();
     cancelResultReset();
     camera.dispose();
@@ -306,6 +421,7 @@ function renderScanner() {
     document.removeEventListener("visibilitychange", hide);
   };
   controls();
+  updateShift();
   if (flow.result) finished(flow.result, true);
   else if (flow.request) { unconfirmed(); recover(); }
 }

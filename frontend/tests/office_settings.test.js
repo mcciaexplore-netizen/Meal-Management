@@ -16,7 +16,7 @@ test("entries are split into active and inactive lists", () => {
 test("the shared Meal Scanner entries are recognised for each kind", () => {
   assert.equal(isSharedRow("scanners", { id: 3 }, shared), true);
   assert.equal(isSharedRow("locations", { id: "4" }, shared), true);
-  assert.equal(isSharedRow("meal-types", { id: 5 }, shared), true);
+  assert.equal(isSharedRow("meal-types", { id: 5 }, shared), false);
   assert.equal(isSharedRow("scanners", { id: 4 }, shared), false);
   assert.equal(isSharedRow("departments", { id: 3 }, shared), false);
   assert.equal(isSharedRow("scanners", { id: 3 }, {}), false);

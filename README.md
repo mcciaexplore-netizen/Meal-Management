@@ -149,6 +149,27 @@ The scanner automatically receives its own signed, HTTP-only browser cookie and 
 - Staff edits cover display name, email and roles. Changing a person's email changes their sign-in and ends their active sessions.
 - Every edit, deactivation, reactivation and role change is written to the audit log.
 
+## Meal types, eligibility and the meal-type lock
+
+Meal types (Breakfast, Lunch, High Tea and Dinner are seeded) are managed in **Office settings**: add, edit, deactivate; nothing is deleted. The old single "Meal" type (`SCANNER-MEAL`) is deactivated, and meals recorded with it keep it.
+
+- **Scanner:** when the scanner opens or a new shift starts, no meal type is selected and scanning is disabled until the waiter picks one. The choice is shown in large text and stays selected for the following scans until the waiter changes it. A retry keeps the meal type its request started with.
+- **Eligibility:** each employee's QR is valid only for the meal types ticked on their record (registration, editing, or the optional `meal_types` CSV column such as `LUNCH;DINNER`). Existing employees were given all active meal types. Other types are refused: "Not eligible for Dinner."
+- **Lock:** once a meal type is recorded for an employee, the same type is refused for `MEAL_TYPE_LOCK_HOURS` (default 12; 0 turns it off): "Breakfast already recorded at 08:15 (India time)." Other types still work, simultaneous scans are serialized on the employee, and network retries return the original meal.
+- **Corrections:** an administrator can change a recorded meal's type with a required reason (**Change meal type** in Meal history). The original serving is kept, the correction is stored separately and audited, and reports, history and the lock use the corrected type from the original serving time.
+- **Visitors:** visitor master QRs are recorded under the selected meal type, without eligibility checks or the lock; their allowance still applies.
+- **Reports:** Meal history filters by meal type and marks corrected meals; totals are broken down by meal type.
+
+## Waiter shifts
+
+In production, each waiter signs in on the scanner phone at the start of every shift before scanning. Sign-in asks for their name, a selfie from the front camera, and the phone's location. The screen shows a short notice on what is recorded and why; the waiter must tick **I agree**, and the consent time and notice version are stored with the shift. Sign-in is refused if location permission is refused. Poor accuracy never blocks it; the accuracy is recorded and shown.
+
+- A shift lasts `WAITER_SHIFT_HOURS` (default 3, from 1 to 12) and then ends automatically. **Sign out** ends it early. Ten minutes before the end, a banner offers **Sign in again**. A new sign-in on the same phone replaces the open shift. Each new shift starts with no meal type selected.
+- Every scan attempt and serving records the shift it was made under.
+- Administrators see **Waiter shifts**: the selfie, name, phone, times, a map link for the location, its accuracy, and whether it was inside the canteen radius. **End shift now** ends an active shift; the phone then asks for a new sign-in. The canteen location and radius are set on the same page. Sign-ins outside the radius are flagged for review, not refused. Without a canteen location, nothing is flagged.
+- Selfies are stored privately under the `shift-selfies/` prefix and deleted after 90 days by an S3 lifecycle rule; the shift record stays, and the page shows "Selfie expired". Shift records cannot be edited or deleted.
+- Development mode does not ask for shifts.
+
 ## Meal records are permanent
 
 Once a meal is recorded it cannot be removed: meal history has no Remove action, Office settings offers bulk removal for employees only, and there is no API for removing meals. The runtime database account cannot add meal removal records. Removing an employee keeps all of their meal history. Meals removed before this change stay excluded from history and totals.

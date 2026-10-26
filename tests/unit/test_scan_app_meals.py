@@ -77,6 +77,8 @@ class ScanAppMealTests(unittest.TestCase):
         if employee:
             rows.append({"id": 21, "is_active": True})
         rows.append(qr)
+        if employee:
+            rows.extend([{"employee_id": 21}, None])
         return rows
 
     def test_master_read_validates_then_waits_without_meal_or_proof_binding(self):
@@ -125,7 +127,7 @@ class ScanAppMealTests(unittest.TestCase):
     def test_employee_cannot_receive_visitor_details(self):
         scan = replace(self.scan, visitor_details=self.details)
         self.receipt.update(visitor_details=self.details, visitor_hash=payload_digest(self.details))
-        self.tx.one.side_effect = self.pending_rows(employee=True) + [{"id": 12}]
+        self.tx.one.side_effect = self.pending_rows(employee=True)[:-2] + [{"id": 12}]
         result = self.service._process(self.context, scan, self.receipt)
         self.assertEqual(result.code, "VISITOR_DETAILS_NOT_APPLICABLE")
         self.tx.insert.assert_not_called()

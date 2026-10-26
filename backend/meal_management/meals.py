@@ -15,6 +15,18 @@ class AttemptRejection(DomainError):
     pass
 
 
+class MealTypeLocked(DomainError):
+    def __init__(self, served_at):
+        super().__init__("MEAL_TYPE_ALREADY_RECORDED")
+        self.served_at = served_at.replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
+
+
+EFFECTIVE_MEAL_TYPE = (
+    "COALESCE((SELECT c.to_meal_type_id FROM meal_type_corrections c "
+    "WHERE c.meal_id = m.id ORDER BY c.id DESC LIMIT 1), s.meal_type_id)"
+)
+
+
 def request_uuid(value):
     try:
         result = value if isinstance(value, UUID) else UUID(str(value))
@@ -175,9 +187,60 @@ class ApprovalService:
 
 
 class MealService:
-    def __init__(self, db, transaction_attempts=3):
+    def __init__(self, db, transaction_attempts=3, lock_hours=12):
         self.db = db
         self.transaction_attempts = positive_integer(transaction_attempts, "TRANSACTION_ATTEMPTS", 10)
+        if type(lock_hours) is not int or not 0 <= lock_hours <= 48:
+            raise DomainError("INVALID_MEAL_TYPE_LOCK")
+        self.lock = timedelta(hours=lock_hours)
+
+    def _check_employee_meal_type(self, tx, employee_id, meal_type_id, now):
+        if tx.one(
+            "SELECT employee_id FROM employee_meal_types WHERE employee_id = %s AND meal_type_id = %s",
+            (employee_id, meal_type_id),
+        ) is None:
+            raise DomainError("MEAL_TYPE_NOT_ELIGIBLE")
+        if not self.lock:
+            return
+        recorded = tx.one(
+            "SELECT s.served_at FROM servings s JOIN meals m ON m.serving_id = s.id "
+            "WHERE s.employee_id = %s AND s.served_at > %s "
+            "AND NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id) "
+            "AND " + EFFECTIVE_MEAL_TYPE + " = %s ORDER BY s.served_at DESC LIMIT 1",
+            (employee_id, now - self.lock, meal_type_id),
+        )
+        if recorded is not None:
+            raise MealTypeLocked(recorded["served_at"])
+
+    @retry_transaction
+    def correct_meal_type(self, context, meal_id, meal_type_id, reason):
+        positive_integer(meal_id, "MEAL_ID")
+        positive_integer(meal_type_id, "MEAL_TYPE_ID")
+        reason = required_text(reason, "correction_reason", 255)
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            meal = tx.one(
+                "SELECT m.id, s.id AS serving_id, s.employee_id, s.kind, " + EFFECTIVE_MEAL_TYPE + " AS meal_type_id "
+                "FROM meals m JOIN servings s ON s.id = m.serving_id WHERE m.id = %s",
+                (meal_id,),
+            )
+            if meal is None:
+                raise DomainError("MEAL_NOT_FOUND")
+            if meal["employee_id"] is not None:
+                tx.one("SELECT id FROM employees WHERE id = %s FOR UPDATE", (meal["employee_id"],))
+            check_meal_type(tx, meal_type_id)
+            if meal["meal_type_id"] == meal_type_id:
+                raise DomainError("MEAL_TYPE_UNCHANGED")
+            now = tx.now()
+            correction_id = tx.insert(
+                "INSERT INTO meal_type_corrections (meal_id, from_meal_type_id, to_meal_type_id, reason, "
+                "corrected_by_staff_id, corrected_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (meal_id, meal["meal_type_id"], meal_type_id, reason, actor.staff_id, now),
+            )
+            audit(tx, actor.staff_id, "MEAL_TYPE_CORRECTED", "meals", meal_id,
+                  before={"meal_type_id": meal["meal_type_id"]},
+                  after={"meal_type_id": meal_type_id, "reason": reason, "correction_id": correction_id})
+        return {"meal_id": meal_id, "meal_type_id": meal_type_id, "corrected_at": now}
 
     @retry_transaction
     def record_invalid(self, context, scanner_code=None):
@@ -291,11 +354,12 @@ class MealService:
             now = tx.now()
             attempt_id = tx.insert(
                 "INSERT INTO scan_attempts (request_id, payload_hash, token_hash, staff_id, scanner_id, "
-                "location_id, reported_scanner_code, outcome, rejection_code, received_at, completed_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "location_id, reported_scanner_code, outcome, rejection_code, received_at, completed_at, waiter_shift_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (linked_id, fingerprint, digest, actor.staff_id if actor else None,
                  scanner["id"] if scanner else None, scanner["location_id"] if scanner else None,
-                 code, "REJECTED" if error else "RECEIVED", error, now, now if error else None),
+                 code, "REJECTED" if error else "RECEIVED", error, now, now if error else None,
+                 getattr(context, "waiter_shift_id", None)),
             )
         return {"attempt_id": attempt_id, "request_id": linked_id,
                 "request_text": str(identifier) if identifier else None,
@@ -304,7 +368,8 @@ class MealService:
                 "scanner_id": scanner["id"] if scanner else None,
                 "location_id": scanner["location_id"] if scanner else None,
                 "visitor_details": visitor_details, "visitor_hash": visitor_hash, "reading": reading,
-                "public_scanner": isinstance(context, ScanAppContext)}
+                "public_scanner": isinstance(context, ScanAppContext),
+                "waiter_shift_id": getattr(context, "waiter_shift_id", None)}
 
     def _finish_attempt(self, tx, receipt, code, serving_id=None, qr_id=None):
         changed = tx.execute(
@@ -407,7 +472,8 @@ class MealService:
                             )
                         qr = tx.one("SELECT id FROM qr_credentials WHERE token_hash = %s", (receipt["digest"],))
                         self._finish_attempt(tx, receipt, error.code, qr_id=qr["id"] if qr else None)
-                        result = ScanResult(False, error.code, receipt["request_text"])
+                        result = ScanResult(False, error.code, receipt["request_text"],
+                                            previous_served_at=getattr(error, "served_at", None))
         return result
 
     def _create_serving(self, tx, actor, scan, receipt):
@@ -434,6 +500,7 @@ class MealService:
                 raise DomainError("AUTHORIZATION_NOT_APPLICABLE")
             if receipt.get("visitor_details") is not None:
                 raise DomainError("VISITOR_DETAILS_NOT_APPLICABLE")
+            self._check_employee_meal_type(tx, employee_id, scan.meal_type_id, now)
             self._bind_scan(tx, scan, receipt)
         elif qr["kind"] == "MASTER":
             allocation = tx.one(
@@ -495,6 +562,9 @@ class MealService:
             receipt["request_id"], qr["id"], qr["kind"], employee_id, scan.meal_type_id, scan.quantity,
             actor.staff_id, scanner["id"], scanner["location_id"], scan.authorization_id, now,
         ]
+        if receipt.get("waiter_shift_id") is not None:
+            serving_columns += ", waiter_shift_id"
+            serving_values.append(receipt["waiter_shift_id"])
         if serving_visitor is not None:
             visitor = serving_visitor
             serving_columns += ", visitor_company_name, visitor_name, visitor_email, visitor_phone"

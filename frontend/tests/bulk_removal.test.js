@@ -28,5 +28,6 @@ test("Office settings offers audited employee batches but no meal removal", asyn
   assert.match(source, /maximum of 100 records/);
   assert.match(source, /complete batch succeeds or fails together/);
   assert.doesNotMatch(source, /bulk-remove-meals|\/meals\/bulk-remove|meal-remove|method: "DELETE", body: \{ reason \} \}\);\n\s*closeModal\(\);\n\s*notify\("Meal/);
-  assert.doesNotMatch(source, /\/meals\/\$\{/);
+  assert.doesNotMatch(source, /\/meals\/\$\{[^`]*`, \{ method: "DELETE"/);
+  assert.match(source, /\/meals\/\$\{positive\(button\.dataset\.id, "meal ID"\)\}\/meal-type`, \{ method: "POST"/);
 });

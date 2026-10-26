@@ -11,6 +11,8 @@ class ServerContext:
 @dataclass(frozen=True)
 class ScanAppContext:
     staff_id: int
+    phone_id: int | None = None
+    waiter_shift_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -38,3 +40,4 @@ class ScanResult:
     serving_id: int | None = None
     meal_ids: tuple[int, ...] = ()
     duplicate: bool = False
+    previous_served_at: str | None = None

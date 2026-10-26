@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api_common import database_readiness, scan_response
-from .api_schemas import ScannerActivationBody, ScannerReadBody
+from .api_schemas import ScannerActivationBody, ScannerReadBody, ShiftStartInput
 from .application import create_services
 from .errors import ConfigurationError, DomainError
 from .http_security import SecurityMiddleware, error_body, status_for
@@ -20,12 +20,14 @@ from .scan_app import ScanAppService
 from .scan_receipts import ScanReceiptService
 from .scanner_access import ScannerBrowser, ScannerLimiter
 from .scanner_phones import ScannerPhoneService, normalize_code
+from .storage import storage_from_settings
+from .waiter_shifts import NOTICE_VERSION, WaiterShiftService
 
 
 COOKIE_MAX_AGE = 30 * 24 * 3600
 
 
-def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=None):
+def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=None, shifts=None):
     runtime = (RuntimeSettings.from_env() if runtime is None else runtime).for_application("scanner")
     services = create_services() if services is None else services
     if runtime.environment == "production" and not services.database.settings.db_ssl_ca:
@@ -36,6 +38,10 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=N
     app.state.scanner = ScanAppService(services.database, services.meals, ScanReceiptService(services.database)) if scanner is None else scanner
     app.state.scanner_limiter = ScannerLimiter(services.database, runtime) if limiter is None else limiter
     app.state.scanner_phones = ScannerPhoneService(services.database, runtime.csrf_secret) if phones is None else phones
+    app.state.waiter_shifts = (
+        WaiterShiftService(services.database, storage_from_settings(runtime), runtime.waiter_shift_hours)
+        if shifts is None else shifts
+    )
     scanner_browser = ScannerBrowser(runtime.csrf_secret, runtime.scanner_activation_secret)
     phones_required = runtime.environment == "production"
     adopt_legacy = runtime.scanner_activation_secret is not None
@@ -58,9 +64,16 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=N
                 app.state.scanner_limiter.consume(identity, address)
                 request.state.scanner_rate_checked = True
         if phones_required and not getattr(request.state, "scanner_phone_checked", False):
-            app.state.scanner_phones.authorize(identity, adopt_legacy)
+            phone = app.state.scanner_phones.authorize(identity, adopt_legacy)
+            request.state.scanner_phone_id = phone.get("id") if isinstance(phone, dict) else None
             request.state.scanner_phone_checked = True
         return identity
+
+    def shift_context(request: Request, browser_hash=Depends(browser_context)):
+        request.state.waiter_shift_id = None
+        if phones_required:
+            request.state.waiter_shift_id = app.state.waiter_shifts.require(request.state.scanner_phone_id)
+        return browser_hash
 
     def same_origin(request):
         origin = request.headers.get("origin")
@@ -151,8 +164,38 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=N
         return response
 
     @app.post("/api/scanner/read")
-    def read(body: ScannerReadBody, browser_hash=Depends(browser_context)):
-        return scan_response(app.state.scanner.read(browser_hash, body.request_id, body.token.get_secret_value()))
+    def read(body: ScannerReadBody, request: Request, browser_hash=Depends(shift_context)):
+        return scan_response(app.state.scanner.read(
+            browser_hash, body.request_id, body.token.get_secret_value(), body.meal_type_id,
+            phone_id=getattr(request.state, "scanner_phone_id", None),
+            waiter_shift_id=getattr(request.state, "waiter_shift_id", None),
+        ))
+
+    @app.get("/api/scanner/shift")
+    def shift_current(request: Request, browser_hash=Depends(browser_context)):
+        if not phones_required:
+            return {"required": False, "shift": None}
+        return {"required": True, "shift": app.state.waiter_shifts.current(request.state.scanner_phone_id),
+                "notice_version": NOTICE_VERSION}
+
+    @app.post("/api/scanner/shift", status_code=201)
+    def shift_start(body: ShiftStartInput, request: Request, browser_hash=Depends(browser_context)):
+        if not phones_required:
+            raise DomainError("SHIFTS_NOT_REQUIRED")
+        return app.state.waiter_shifts.start(
+            request.state.scanner_phone_id, body.waiter_name, body.selfie, body.latitude, body.longitude,
+            body.accuracy_m, body.consent, body.notice_version,
+        )
+
+    @app.post("/api/scanner/shift/end")
+    def shift_end(request: Request, browser_hash=Depends(browser_context)):
+        if not phones_required:
+            return {"ended": False}
+        return app.state.waiter_shifts.end(request.state.scanner_phone_id)
+
+    @app.get("/api/scanner/meal-types")
+    def meal_types(browser_hash=Depends(browser_context)):
+        return app.state.scanner.meal_types()
 
     @app.get("/api/scanner/requests/{request_id}/result")
     def result(request_id: UUID, browser_hash=Depends(browser_context)):

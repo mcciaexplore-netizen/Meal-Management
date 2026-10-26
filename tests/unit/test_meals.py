@@ -373,7 +373,8 @@ class ServingCreationTests(unittest.TestCase):
 
     def test_employee_serving_records_exactly_one_meal_with_actor_and_time(self):
         qr = {"id": 12, "kind": "EMPLOYEE", "employee_id": 21, "revoked_at": None, "expires_at": None}
-        self.tx.one.side_effect = [self.scanner, {"id": 1, "is_active": True}, qr, {"id": 21, "is_active": True}, qr]
+        self.tx.one.side_effect = [self.scanner, {"id": 1, "is_active": True}, qr, {"id": 21, "is_active": True}, qr,
+                                   {"employee_id": 21}, None]
         self.tx.insert.side_effect = [77, 91]
         result = self.service._create_serving(
             self.tx, self.actor, ScanInput(self.identifier, generate_token(), 1, "SCANNER"), self.receipt

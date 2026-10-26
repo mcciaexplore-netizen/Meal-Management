@@ -1,4 +1,5 @@
 import { randomIdentifier } from "./core.js";
+import { mealTypeIdsFromCodes } from "./meal_types.js";
 
 export const employeeCsvHeaders = ["employee_code", "full_name", "email", "company_name", "phone", "department_id"];
 const maximumBytes = 65536;
@@ -54,9 +55,10 @@ function csvRows(text) {
   return rows;
 }
 
-export function parseEmployeeCsv(text, departments, { recovering = false } = {}) {
+export function parseEmployeeCsv(text, departments, { recovering = false, mealTypes = [] } = {}) {
   const [headers, ...rows] = csvRows(text);
-  if (!headers || headers.length !== employeeCsvHeaders.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name))) throw new Error(`Use exactly these CSV headers: ${employeeCsvHeaders.join(",")}.`);
+  const optional = headers?.includes("meal_types") ? ["meal_types"] : [];
+  if (!headers || headers.length !== employeeCsvHeaders.length + optional.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name)) || headers.some(name => !employeeCsvHeaders.includes(name) && !optional.includes(name))) throw new Error(`Use exactly these CSV headers: ${employeeCsvHeaders.join(",")}, optionally followed by meal_types.`);
   if (!rows.length || rows.length > 100) throw new Error("Import between 1 and 100 employees at a time.");
   const codes = new Set();
   const activeDepartments = new Set((departments ?? []).filter(row => row.is_active !== false && row.is_active !== 0).map(row => row.id));
@@ -78,7 +80,11 @@ export function parseEmployeeCsv(text, departments, { recovering = false } = {})
     const code = fields.employee_code.normalize("NFKC").toLowerCase();
     if (codes.has(code)) fail("employee_code is repeated in this import.");
     codes.add(code);
-    return { employee_code: fields.employee_code, full_name: fields.full_name, email, company_name: fields.company_name, phone, department_id: departmentId };
+    const employee = { employee_code: fields.employee_code, full_name: fields.full_name, email, company_name: fields.company_name, phone, department_id: departmentId };
+    let mealTypeIds = null;
+    try { mealTypeIds = mealTypeIdsFromCodes(fields.meal_types, mealTypes); } catch (error) { fail(error.message); }
+    if (mealTypeIds) employee.meal_type_ids = mealTypeIds;
+    return employee;
   });
 }
 
