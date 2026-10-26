@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 import secrets
 import tempfile
 import unittest
@@ -43,6 +44,11 @@ class ShiftRuleTests(unittest.TestCase):
         for value in (None, "", "not base64!", "YWJj\n", 12, "A" * ((MAX_SELFIE_BYTES * 4) // 3 + 8)):
             with self.subTest(value=str(value)[:20]), self.assertRaisesRegex(DomainError, "INVALID_SHIFT_SELFIE"):
                 decode_selfie(value)
+
+    def test_scanner_and_server_use_the_same_notice_version(self):
+        source = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "shift_signin.js").read_text()
+        versions = re.findall(r'^export const NOTICE_VERSION = "([^"]+)";$', source, re.MULTILINE)
+        self.assertEqual(versions, [NOTICE_VERSION])
 
     def test_shift_hours_are_bounded(self):
         self.assertEqual(RuntimeSettings.from_env(environment()).waiter_shift_hours, 3)

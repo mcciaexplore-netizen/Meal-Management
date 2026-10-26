@@ -154,7 +154,18 @@ After 012, earlier images refuse every scan with `SCANNER_NOT_CONFIGURED`, becau
 UPDATE meal_types SET is_active = TRUE WHERE code = 'SCANNER-MEAL';
 ```
 
-Earlier images then scan again and record `SCANNER-MEAL`; they do not check eligibility, the meal-type lock or shifts. Before redeploying the new image, deactivate it again with `UPDATE meal_types SET is_active = FALSE WHERE code = 'SCANNER-MEAL';`.
+Earlier images then scan again and record `SCANNER-MEAL`; they do not check eligibility, the meal-type lock or shifts, and employees they register get no meal types.
+
+Only after such a rollback, run this as the master user before the new image serves traffic again, in this order. Redeploying does not rerun migration 012. The first statement removes `SCANNER-MEAL` from the scanner's choices and from new employees' defaults. The second gives every active meal type to employees with none, such as those registered during the rollback, who would otherwise be refused for every meal type:
+
+```sql
+UPDATE meal_types SET is_active = FALSE WHERE code = 'SCANNER-MEAL';
+INSERT INTO employee_meal_types (employee_id, meal_type_id, created_at)
+SELECT e.id, t.id, UTC_TIMESTAMP(6)
+FROM employees e CROSS JOIN meal_types t
+WHERE t.is_active = TRUE
+  AND NOT EXISTS (SELECT 1 FROM employee_meal_types x WHERE x.employee_id = e.id);
+```
 
 ## Changing hostnames
 
