@@ -896,26 +896,40 @@ class ValidationAndReportApiTests(ApiTestCase):
         self.harness.services.employees.register.assert_not_called()
 
     def test_pagination_values_are_validated(self):
-        for query in ("limit=0", "limit=1001", "limit=-1", "after_id=-1", "limit=abc"):
+        for query in ("limit=0", "limit=1001", "limit=-1", "before=-1", "before=12", "before=1.0", "before=1.2.3", "limit=abc"):
             with self.subTest(query=query):
                 self.assert_error(self.client.get("/api/employees?" + query), 422, "INVALID_INPUT")
         self.harness.queries.list_employees.assert_not_called()
 
     def test_employee_filters_and_cursor_are_forwarded(self):
-        response = self.client.get("/api/employees", params={"limit": 20, "after_id": 7, "q": "Asha", "active": "false"})
+        response = self.client.get("/api/employees", params={"limit": 20, "before": "1788948000250000.7", "q": "Asha", "active": "false"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.harness.queries.list_employees.call_args.kwargs, {"limit": 20, "after_id": 7, "q": "Asha", "active": False})
+        self.assertEqual(self.harness.queries.list_employees.call_args.kwargs,
+                         {"limit": 20, "before": "1788948000250000.7", "q": "Asha", "active": False})
+
+    def test_list_routes_send_tabs_with_the_old_paging_code_to_refresh(self):
+        routes = ("/api/staff", "/api/employees", "/api/master-qrs", "/api/visitor-authorizations?status=all",
+                  "/api/waiter-shifts", "/api/email-queue",
+                  "/api/reports/meals?start=2026-09-01T00:00:00Z&end=2026-09-02T00:00:00Z",
+                  "/api/reports/scans?start=2026-09-01T00:00:00Z&end=2026-09-02T00:00:00Z")
+        for route in routes:
+            with self.subTest(route=route):
+                response = self.client.get(route + ("&" if "?" in route else "?") + "after_id=12")
+                self.assert_error(response, 409, "CLIENT_REFRESH_REQUIRED")
+                self.assertIn("Refresh the page", response.json()["error"]["message"])
+        self.harness.queries.list_employees.assert_not_called()
+        self.harness.queries.meal_history.assert_not_called()
 
     def test_report_date_filters_preserve_timezone_information(self):
         response = self.client.get("/api/reports/meals", params={
             "start": "2026-09-01T05:30:00+05:30", "end": "2026-09-02T05:30:00+05:30",
-            "employee_id": 7, "limit": 10, "after_id": 12,
+            "employee_id": 7, "limit": 10, "before": "1788948000250000.12",
         })
         self.assertEqual(response.status_code, 200)
         args = self.harness.queries.meal_history.call_args
         self.assertIsNotNone(args.args[1].utcoffset())
         self.assertEqual(args.args[1].astimezone(timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc))
-        self.assertEqual(args.kwargs, {"limit": 10, "after_id": 12, "employee_id": 7, "meal_type_id": None})
+        self.assertEqual(args.kwargs, {"limit": 10, "before": "1788948000250000.12", "employee_id": 7, "meal_type_id": None})
 
     def test_naive_or_reversed_report_dates_are_rejected_by_service_validation(self):
         for start, end, code in (
@@ -943,9 +957,10 @@ class ValidationAndReportApiTests(ApiTestCase):
         self.assertEqual(response.json()["totals"]["meal_count"], 5)
 
     def test_email_status_is_paginated_and_filtered(self):
-        response = self.client.get("/api/email-queue", params={"limit": 10, "after_id": 3, "employee_id": 7})
+        response = self.client.get("/api/email-queue", params={"limit": 10, "before": "1788948000250000.3", "employee_id": 7})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.harness.queries.email_status.call_args.kwargs, {"limit": 10, "after_id": 3, "employee_id": 7, "delivery_scope": "all"})
+        self.assertEqual(self.harness.queries.email_status.call_args.kwargs,
+                         {"limit": 10, "before": "1788948000250000.3", "employee_id": 7, "delivery_scope": "all"})
         self.assertNotIn("payload_ciphertext", response.text)
 
     def test_sensitive_errors_include_security_headers(self):
@@ -978,7 +993,7 @@ class HealthApiTests(ApiTestCase):
 
     def test_report_cursor_rejects_unsigned_bigint_overflow(self):
         self.harness.login()
-        response = self.client.get("/api/employees", params={"after_id": str(2**64)})
+        response = self.client.get("/api/employees", params={"before": "1." + "9" * 21})
         self.assert_error(response, 422, "INVALID_INPUT")
         self.harness.queries.list_employees.assert_not_called()
 

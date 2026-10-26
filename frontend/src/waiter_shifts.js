@@ -75,7 +75,7 @@ export async function waiterShifts(target, context) {
     }, () => notify("Location permission was refused or unavailable.", "error"), { enableHighAccuracy: true, timeout: 20000 });
   };
   async function load(append = false) {
-    const data = await api(`/waiter-shifts?status=${view}&limit=50${append && cursor ? `&after_id=${encodeURIComponent(cursor)}` : ""}`);
+    const data = await api(`/waiter-shifts?status=${view}&limit=50${append && cursor ? `&before=${encodeURIComponent(cursor)}` : ""}`);
     if (!context.isCurrent()) return;
     rows = append ? rows.concat(data.items ?? []) : (data.items ?? []);
     cursor = data.next_cursor;

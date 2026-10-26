@@ -26,16 +26,20 @@ class QueryServiceTests(unittest.TestCase):
         self.addCleanup(self.auth.stop)
 
     def test_employee_list_uses_keyset_pagination_and_extra_row(self):
-        self.tx.all.return_value = [{"id": 11, "is_active": 1}, {"id": 12}, {"id": 13}]
-        result = self.service.list_employees(self.context, limit=2, after_id=10)
-        self.assertEqual([item["id"] for item in result["items"]], [11, 12])
-        self.assertEqual(result["next_cursor"], 12)
+        cursor_time = datetime(2026, 9, 9, 10, 0, 0, 250000)
+        self.tx.all.return_value = [
+            {"id": 13, "is_active": 1, "created_at": self.now}, {"id": 12, "created_at": cursor_time},
+            {"id": 11, "created_at": cursor_time},
+        ]
+        result = self.service.list_employees(self.context, limit=2, before="1788948000000000.20")
+        self.assertEqual([item["id"] for item in result["items"]], [13, 12])
+        self.assertEqual(result["next_cursor"], "1788948000250000.12")
         self.assertIs(result["items"][0]["is_active"], True)
         sql, params = self.tx.all.call_args.args
-        self.assertIn("e.id > %s", sql)
+        self.assertIn("(e.created_at < %s OR (e.created_at = %s AND e.id < %s))", sql)
         self.assertIn("NOT EXISTS (SELECT 1 FROM employee_archives", sql)
-        self.assertIn("ORDER BY e.id LIMIT %s", sql)
-        self.assertEqual(params, [10, 3])
+        self.assertIn("ORDER BY e.created_at DESC, e.id DESC LIMIT %s", sql)
+        self.assertEqual(params, [datetime(2026, 9, 9, 10), datetime(2026, 9, 9, 10), 20, 3])
 
     def test_staff_list_excludes_password_hash_and_parses_roles(self):
         self.tx.all.return_value = [{"id": 7, "role_codes": "ADMIN,WAITER", "is_active": 1}]
@@ -110,7 +114,8 @@ class QueryServiceTests(unittest.TestCase):
         self.assertNotIn("private-marker", repr(result))
         self.assertNotIn("payload_ciphertext", sql)
         self.assertIn("c.employee_id = %s", sql)
-        self.assertEqual(params, [0, 17, 51])
+        self.assertIn("ORDER BY q.created_at DESC, q.id DESC LIMIT %s", sql)
+        self.assertEqual(params, [17, 51])
 
     def test_meal_history_returns_individual_meals_and_utc_uuids(self):
         identifier = uuid4()
@@ -123,7 +128,8 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("m.served_at >= %s", sql)
         self.assertIn("m.served_at < %s", sql)
         self.assertIn("NOT EXISTS (SELECT 1 FROM meal_voids", sql)
-        self.assertEqual(params, [self.now, self.now + timedelta(days=1), 0, 17, 51])
+        self.assertIn("ORDER BY m.served_at DESC, m.id DESC LIMIT %s", sql)
+        self.assertEqual(params, [self.now, self.now + timedelta(days=1), 17, 51])
 
     def test_reports_normalize_non_utc_offsets(self):
         offset = timezone(timedelta(hours=5, minutes=30))
@@ -207,7 +213,8 @@ class QueryServiceTests(unittest.TestCase):
         self.service.visitor_authorizations(self.context)
         sql, params = self.tx.all.call_args.args
         self.assertIn("a.waiter_id = %s", sql)
-        self.assertEqual(params, [0, 8, self.now, 51])
+        self.assertIn("ORDER BY a.authorized_at DESC, a.id DESC LIMIT %s", sql)
+        self.assertEqual(params, [8, self.now, 51])
         self.assertNotIn("token", sql)
 
     def test_admin_can_list_all_authorization_statuses(self):
@@ -215,7 +222,7 @@ class QueryServiceTests(unittest.TestCase):
         sql, params = self.tx.all.call_args.args
         self.assertNotIn("a.waiter_id = %s", sql)
         self.assertNotIn("a.expires_at > %s", sql)
-        self.assertEqual(params, [0, 51])
+        self.assertEqual(params, [51])
 
     def test_unrestricted_queries_require_admin_role(self):
         operations = [
@@ -242,8 +249,12 @@ class QueryServiceTests(unittest.TestCase):
         operations = [
             lambda: self.service.list_employees(self.context, limit=True),
             lambda: self.service.list_employees(self.context, limit=1001),
-            lambda: self.service.list_employees(self.context, after_id=-1),
-            lambda: self.service.list_employees(self.context, after_id=2**64),
+            lambda: self.service.list_employees(self.context, before="-1.5"),
+            lambda: self.service.list_employees(self.context, before="1.0"),
+            lambda: self.service.list_employees(self.context, before="1." + str(2**64)),
+            lambda: self.service.list_employees(self.context, before="1." + "1" * 21),
+            lambda: self.service.list_employees(self.context, before=12),
+            lambda: self.service.meal_history(self.context, self.start, self.end, before="abc"),
             lambda: self.service.list_employees(self.context, active="true"),
             lambda: self.service.employee(self.context, False),
             lambda: self.service.email_status(self.context, employee_id=0),

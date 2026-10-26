@@ -98,10 +98,11 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
 
         with self.client("admin", runtime) as admin:
             admin.cookies.set(runtime.session_cookie, self.admin_context.session_token)
-            filters = {"start": start.isoformat(), "end": (start + timedelta(days=1)).isoformat(), "after_id": baseline}
-            history = admin.get("/api/reports/meals", params=filters)
+            filters = {"start": start.isoformat(), "end": (start + timedelta(days=1)).isoformat()}
+            history = admin.get("/api/reports/meals", params={**filters, "limit": 1000})
             self.assertEqual(history.status_code, 200)
-            rows = history.json()["items"]
+            rows = [row for row in history.json()["items"] if row["meal_id"] > baseline]
+            self.assertEqual([row["meal_id"] for row in rows], sorted((row["meal_id"] for row in rows), reverse=True))
             self.assertEqual({row["meal_id"] for row in rows}, expected_ids)
             self.assertEqual(len(rows), 3)
             for row in rows:

@@ -6,6 +6,7 @@ from datetime import timedelta
 from .auth import audit, require_actor
 from .database import retry_transaction
 from .errors import DomainError
+from .paging import newest_first, next_cursor, parse_cursor
 from .security import required_text
 
 
@@ -183,15 +184,16 @@ class WaiterShiftService:
                   after={"waiter_name": row["waiter_name"], "phone_id": row["phone_id"]})
         return {"id": shift_id, "ended": True}
 
-    def list(self, context, status="all", limit=50, after_id=0):
+    def list(self, context, status="all", limit=50, before=None):
         if status not in {"all", "active", "ended", "flagged"}:
             raise DomainError("INVALID_SHIFT_FILTER")
-        if type(limit) is not int or not 1 <= limit <= 200 or type(after_id) is not int or after_id < 0:
+        if type(limit) is not int or not 1 <= limit <= 200:
             raise DomainError("INVALID_SHIFT_PAGE")
+        cursor = parse_cursor(before)
         with self.database.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             now = tx.now()
-            filters, params = ["(%s = 0 OR w.id < %s)"], [after_id, after_id]
+            filters, params = ["1 = 1"], []
             if status == "active":
                 filters.append("w.ended_at IS NULL AND w.expires_at > %s")
                 params.append(now)
@@ -200,13 +202,16 @@ class WaiterShiftService:
                 params.append(now)
             elif status == "flagged":
                 filters.append("w.flagged = 1")
+            condition, values, order = newest_first("w.started_at", "w.id", cursor)
+            if condition is not None:
+                filters.append(condition)
+                params.extend(values)
             rows = tx.all(
                 "SELECT w.*, p.label AS phone_label FROM waiter_shifts w JOIN scanner_phones p ON p.id = w.phone_id "
-                "WHERE " + " AND ".join(filters) + " ORDER BY w.id DESC LIMIT %s",
+                "WHERE " + " AND ".join(filters) + order,
                 (*params, limit + 1),
             )
-        items = [_summary(row, now) for row in rows[:limit]]
-        return {"items": items, "next_cursor": items[-1]["id"] if len(rows) > limit else None}
+        return {"items": [_summary(row, now) for row in rows[:limit]], "next_cursor": next_cursor(rows, limit, "started_at")}
 
     def selfie(self, context, shift_id):
         shift_id = _id(shift_id, "SHIFT_ID")

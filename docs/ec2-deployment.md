@@ -196,6 +196,10 @@ WHERE t.is_active = TRUE
   AND NOT EXISTS (SELECT 1 FROM master_qr_meal_types x WHERE x.qr_id = a.qr_id);
 ```
 
+### Newest-first lists
+
+This release changes the list paging parameter from `after_id` to `before` and needs no migration, grant or database change; roll back by retagging the previous image. Pages and scripts load with `Cache-Control: no-store` and `no-cache`, so browsers fetch the new JavaScript on the next page load; a tab opened before the deploy shows "Meal Office was updated. Refresh the page to continue." when it next loads more rows.
+
 ## Resetting test data
 
 `manage.py reset-test-data` removes every test record before go-live and keeps staff accounts and roles, meal types, departments, locations, counters, the shared scanner settings, the canteen location and radius, `schema_migrations`, database grants and `QR_ENCRYPTION_KEYS`. It empties employees and their QRs and meal types, visitor master QRs with their allocations and per-type allowances, meals, servings, requests, scan attempts and receipts, meal type corrections, meal removals, waiter shifts, email drafts and batches, removed-employee records, development seed records, visitor authorizations, staff sessions, login rate limits and the audit log. Every scanner phone and unused code is revoked unless listed in `--keep-phones`; the rows are kept because they cannot be deleted.

@@ -25,6 +25,7 @@ from .email_actions import EmailActions
 from .errors import ConfigurationError, DomainError
 from .http_security import DatabaseLoginLimiter, SecurityMiddleware, csrf_token, error_body, status_for
 from .models import ScanInput, ServerContext
+from .paging import CURSOR_PATTERN
 from .queries import QueryService
 from .runtime import RuntimeSettings
 from .scan_receipts import ScanReceiptService
@@ -34,7 +35,7 @@ from .storage import storage_from_settings
 
 
 Limit = Annotated[int, Query(ge=1, le=1000)]
-Cursor = Annotated[int, Query(ge=0, le=2**64 - 1)]
+Cursor = Annotated[str | None, Query(pattern=CURSOR_PATTERN, max_length=40)]
 PathIdentifier = Annotated[int, ApiPath(gt=0, le=2**64 - 1)]
 
 
@@ -262,9 +263,13 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
             raise DomainError("INVALID_INPUT")
         return getattr(services.catalog, catalog_kinds[kind][1])(ctx, item_id, body.is_active)
 
-    @app.get("/api/staff")
-    def staff_list(limit: Limit = 50, after_id: Cursor = 0, ctx=Depends(admin)):
-        return app.state.queries.staff(ctx, limit=limit, after_id=after_id)
+    def current_cursor(request: Request):
+        if "after_id" in request.query_params:
+            raise DomainError("CLIENT_REFRESH_REQUIRED")
+
+    @app.get("/api/staff", dependencies=[Depends(current_cursor)])
+    def staff_list(limit: Limit = 50, before: Cursor = None, ctx=Depends(admin)):
+        return app.state.queries.staff(ctx, limit=limit, before=before)
 
     @app.post("/api/staff", status_code=201)
     def staff_create(body: StaffInput, ctx=Depends(admin)):
@@ -284,10 +289,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         services.staff.set_active(ctx, staff_id, body.is_active)
         return {"staff_id": staff_id, "is_active": body.is_active}
 
-    @app.get("/api/employees")
-    def employees(limit: Limit = 50, after_id: Cursor = 0, q: Annotated[str | None, Query(max_length=150)] = None,
+    @app.get("/api/employees", dependencies=[Depends(current_cursor)])
+    def employees(limit: Limit = 50, before: Cursor = None, q: Annotated[str | None, Query(max_length=150)] = None,
                   active: bool | None = None, ctx=Depends(admin)):
-        return app.state.queries.list_employees(ctx, limit=limit, after_id=after_id, q=q, active=active)
+        return app.state.queries.list_employees(ctx, limit=limit, before=before, q=q, active=active)
 
     @app.post("/api/employees", status_code=201)
     def employee_create(body: EmployeeInput, ctx=Depends(admin)):
@@ -411,9 +416,9 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         data, content_type = app.state.storage.read(employee["selfie_object_key"])
         return Response(data, media_type=content_type)
 
-    @app.get("/api/master-qrs")
-    def master_list(limit: Limit = 50, after_id: Cursor = 0, ctx=Depends(admin)):
-        return app.state.queries.master_qrs(ctx, limit=limit, after_id=after_id)
+    @app.get("/api/master-qrs", dependencies=[Depends(current_cursor)])
+    def master_list(limit: Limit = 50, before: Cursor = None, ctx=Depends(admin)):
+        return app.state.queries.master_qrs(ctx, limit=limit, before=before)
 
     @app.post("/api/master-qrs", status_code=201)
     def master_create(body: MasterQrInput, ctx=Depends(admin)):
@@ -450,19 +455,19 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         authorization_id = services.approvals.authorize(ctx, master_token=credential.token, **values)
         return {"authorization_id": authorization_id, "request_id": str(body.request_id)}
 
-    @app.get("/api/visitor-authorizations")
-    def visitor_list(limit: Limit = 50, after_id: Cursor = 0, status: Literal["pending", "all"] = "pending", ctx=Depends(authenticated)):
-        return app.state.queries.visitor_authorizations(ctx, limit=limit, after_id=after_id, status=status)
+    @app.get("/api/visitor-authorizations", dependencies=[Depends(current_cursor)])
+    def visitor_list(limit: Limit = 50, before: Cursor = None, status: Literal["pending", "all"] = "pending", ctx=Depends(authenticated)):
+        return app.state.queries.visitor_authorizations(ctx, limit=limit, before=before, status=status)
 
     @app.post("/api/visitor-authorizations/{authorization_id}/revoke")
     def visitor_revoke(authorization_id: PathIdentifier, ctx=Depends(admin)):
         services.approvals.revoke(ctx, authorization_id)
         return {"authorization_id": authorization_id, "revoked": True}
 
-    @app.get("/api/waiter-shifts")
-    def waiter_shift_list(limit: Annotated[int, Query(ge=1, le=200)] = 50, after_id: Cursor = 0,
+    @app.get("/api/waiter-shifts", dependencies=[Depends(current_cursor)])
+    def waiter_shift_list(limit: Annotated[int, Query(ge=1, le=200)] = 50, before: Cursor = None,
                           status: Literal["all", "active", "ended", "flagged"] = "all", ctx=Depends(admin)):
-        return app.state.waiter_shifts.list(ctx, status=status, limit=limit, after_id=after_id)
+        return app.state.waiter_shifts.list(ctx, status=status, limit=limit, before=before)
 
     @app.get("/api/waiter-shifts/{shift_id}/selfie")
     def waiter_shift_selfie(shift_id: PathIdentifier, ctx=Depends(admin)):
@@ -517,21 +522,21 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         data, content_type = app.state.storage.read(key)
         return Response(data, media_type=content_type)
 
-    @app.get("/api/reports/meals")
-    def meal_history(start: datetime, end: datetime, limit: Limit = 50, after_id: Cursor = 0,
+    @app.get("/api/reports/meals", dependencies=[Depends(current_cursor)])
+    def meal_history(start: datetime, end: datetime, limit: Limit = 50, before: Cursor = None,
                      employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
                      meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
-        return app.state.queries.meal_history(ctx, start, end, limit=limit, after_id=after_id, employee_id=employee_id,
+        return app.state.queries.meal_history(ctx, start, end, limit=limit, before=before, employee_id=employee_id,
                                               meal_type_id=meal_type_id)
 
     @app.get("/api/reports/totals")
     def totals(start: datetime, end: datetime, ctx=Depends(admin)):
         return services.reports.meal_report(ctx, start, end)
 
-    @app.get("/api/reports/scans")
-    def scans(start: datetime, end: datetime, limit: Limit = 50, after_id: Cursor = 0,
+    @app.get("/api/reports/scans", dependencies=[Depends(current_cursor)])
+    def scans(start: datetime, end: datetime, limit: Limit = 50, before: Cursor = None,
               outcome: Literal["RECEIVED", "SUCCESS", "REJECTED", "AWAITING_DETAILS"] | None = None, ctx=Depends(admin)):
-        return app.state.queries.scans(ctx, start, end, limit=limit, after_id=after_id, outcome=outcome)
+        return app.state.queries.scans(ctx, start, end, limit=limit, before=before, outcome=outcome)
 
     @app.get("/api/email-settings")
     def email_settings(ctx=Depends(admin)):
@@ -543,11 +548,11 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
             **app.state.email_lifecycle.snapshot(),
         }
 
-    @app.get("/api/email-queue")
-    def emails(limit: Limit = 50, after_id: Cursor = 0, employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
+    @app.get("/api/email-queue", dependencies=[Depends(current_cursor)])
+    def emails(limit: Limit = 50, before: Cursor = None, employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
                bulk_batch_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
         filters = {} if bulk_batch_id is None else {"bulk_batch_id": bulk_batch_id}
-        return app.state.queries.email_status(ctx, limit=limit, after_id=after_id, employee_id=employee_id,
+        return app.state.queries.email_status(ctx, limit=limit, before=before, employee_id=employee_id,
                                              delivery_scope="all" if employee_id is not None else "bulk", **filters)
 
     @app.post("/api/email-queue/approve")

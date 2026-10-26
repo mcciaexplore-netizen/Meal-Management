@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { afterEach, test } from "node:test";
 import { allPages, api, clearCredentials, onUnauthorized } from "../src/api.js";
 import { qrCard, qrStatus } from "../src/ui.js";
@@ -70,10 +71,21 @@ test("approval selection loads subsequent pages", async () => {
   const paths = [];
   globalThis.fetch = async path => {
     paths.push(path);
-    return Response.json(paths.length === 1 ? { items: [{ id: 1 }], next_cursor: 1 } : { items: [{ id: 2 }], next_cursor: null });
+    return Response.json(paths.length === 1 ? { items: [{ id: 2 }], next_cursor: "1792995312123456.2" } : { items: [{ id: 1 }], next_cursor: null });
   };
-  assert.deepEqual(await allPages("/visitor-authorizations?status=pending"), [{ id: 1 }, { id: 2 }]);
-  assert.match(paths[1], /status=pending&limit=100&after_id=1$/);
+  assert.deepEqual(await allPages("/visitor-authorizations?status=pending"), [{ id: 2 }, { id: 1 }]);
+  assert.match(paths[1], /status=pending&limit=100&before=1792995312123456\.2$/);
+  assert.doesNotMatch(paths.join(" "), /after_id/);
+});
+
+test("every list screen pages with the before cursor and meal records keep the category on one line", async () => {
+  const sources = await Promise.all(["screens.js", "waiter_shifts.js", "api.js"].map(name => readFile(new URL(`../src/${name}`, import.meta.url), "utf8")));
+  for (const source of sources) assert.doesNotMatch(source, /after_id/);
+  const [screens, shifts] = sources;
+  assert.equal((screens.match(/before: append \? /g) ?? []).length, 5);
+  assert.match(shifts, /&before=\$\{encodeURIComponent\(cursor\)\}/);
+  assert.match(screens, /<td class="nowrap">\$\{badge\(row\.kind === "MASTER" \? "Visitor" : "Employee"\)\}<\/td>/);
+  assert.match(screens, /<td class="mono">\$\{escape\(row\.meal_id \?\? row\.id\)\}<\/td>/);
 });
 
 test("pagination detects a repeated server cursor", async () => {
