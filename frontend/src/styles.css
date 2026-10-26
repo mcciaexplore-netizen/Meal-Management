@@ -111,6 +111,8 @@ tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #fbfcfc; }
 td strong { font-weight: 600; }
 .cell-subtitle { display: block; color: #73858e; font-size: 11px; margin-top: 5px; }
+.meal-type-line { display: block; white-space: nowrap; }
+.meal-type-line + .meal-type-line { margin-top: 3px; }
 .badge { display: inline-flex; padding: 5px 8px; border-radius: 4px; font-size: 10px; font-weight: 650; background: #edf1f3; color: #5a6b75; line-height: 1.25; overflow-wrap: anywhere; }
 .badge.positive { background: #e9f5ed; color: #296744; }
 .badge.danger { background: #fceded; color: #ab393d; }

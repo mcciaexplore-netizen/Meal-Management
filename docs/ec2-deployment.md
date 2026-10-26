@@ -154,7 +154,47 @@ After 012, earlier images refuse every scan with `SCANNER_NOT_CONFIGURED`, becau
 UPDATE meal_types SET is_active = TRUE WHERE code = 'SCANNER-MEAL';
 ```
 
-Earlier images then scan again and record `SCANNER-MEAL`; they do not check eligibility, the meal-type lock or shifts. Before redeploying the new image, deactivate it again with `UPDATE meal_types SET is_active = FALSE WHERE code = 'SCANNER-MEAL';`.
+Earlier images then scan again and record `SCANNER-MEAL`; they do not check eligibility, the meal-type lock or shifts, and employees they register get no meal types.
+
+Only after such a rollback, run this as the master user before the new image serves traffic again, in this order. Redeploying does not rerun migration 012. The first statement removes `SCANNER-MEAL` from the scanner's choices and from new employees' defaults. The second gives every active meal type to employees with none, such as those registered during the rollback, who would otherwise be refused for every meal type:
+
+```sql
+UPDATE meal_types SET is_active = FALSE WHERE code = 'SCANNER-MEAL';
+INSERT INTO employee_meal_types (employee_id, meal_type_id, created_at)
+SELECT e.id, t.id, UTC_TIMESTAMP(6)
+FROM employees e CROSS JOIN meal_types t
+WHERE t.is_active = TRUE
+  AND NOT EXISTS (SELECT 1 FROM employee_meal_types x WHERE x.employee_id = e.id);
+```
+
+### Visitor QR meal types (migration 014)
+
+Before step 5, grant:
+
+```sql
+GRANT INSERT, UPDATE ON `meal_management`.`master_qr_meal_types` TO 'meal_runtime'@'172.31.%';
+```
+
+The migration gives every existing visitor QR its remaining count for each active meal type, so a QR with 3 meals left can afterwards serve up to 3 meals of each type.
+
+Rolling back past 014 needs no SQL. Earlier images ignore `master_qr_meal_types` and read the visitor QR's summary on `master_qr_allocations`, which always holds the largest remaining count across its meal types. They then serve up to that many meals of any type and count them only on the summary. Visitor QRs they create get no meal types.
+
+Only after such a rollback, run this as the master user before the new image serves traffic again. If the rollback also went past 012, run the two statements above first, so the new rows do not include `SCANNER-MEAL`. The first statement lowers each meal type's remaining count to the QR's remaining summary, so meals served by the earlier image are not served again. The second gives QRs created during the rollback their remaining count for each active meal type, as the migration did:
+
+<!-- visitor-redeploy -->
+```sql
+UPDATE master_qr_meal_types t JOIN master_qr_allocations a ON a.qr_id = t.qr_id
+SET t.exhausted_at = CASE
+        WHEN GREATEST(t.meals_used, t.meal_limit - (a.meal_limit - a.meals_used)) >= t.meal_limit
+        THEN COALESCE(t.exhausted_at, UTC_TIMESTAMP(6)) ELSE NULL END,
+    t.meals_used = LEAST(t.meal_limit, GREATEST(t.meals_used, t.meal_limit - (a.meal_limit - a.meals_used)))
+WHERE GREATEST(t.meals_used, t.meal_limit - (a.meal_limit - a.meals_used)) > t.meals_used;
+INSERT INTO master_qr_meal_types (qr_id, meal_type_id, meal_limit, meals_used, exhausted_at, created_at)
+SELECT a.qr_id, t.id, a.meal_limit, a.meals_used, a.exhausted_at, UTC_TIMESTAMP(6)
+FROM master_qr_allocations a CROSS JOIN meal_types t
+WHERE t.is_active = TRUE
+  AND NOT EXISTS (SELECT 1 FROM master_qr_meal_types x WHERE x.qr_id = a.qr_id);
+```
 
 ## Changing hostnames
 

@@ -212,6 +212,37 @@ class MealService:
         if recorded is not None:
             raise MealTypeLocked(recorded["served_at"])
 
+    def _use_master_meal_type(self, tx, qr_id, meal_type_id, now):
+        allowance = tx.one(
+            "SELECT meal_limit, meals_used, exhausted_at FROM master_qr_meal_types "
+            "WHERE qr_id = %s AND meal_type_id = %s FOR UPDATE",
+            (qr_id, meal_type_id),
+        )
+        if allowance is None:
+            raise DomainError("MASTER_MEAL_TYPE_NOT_ALLOWED")
+        if allowance["exhausted_at"] is not None or allowance["meals_used"] >= allowance["meal_limit"]:
+            raise DomainError("MASTER_MEAL_TYPE_USED_UP")
+        changed = tx.execute(
+            "UPDATE master_qr_meal_types SET "
+            "exhausted_at = CASE WHEN meals_used + 1 = meal_limit THEN %s ELSE NULL END, "
+            "meals_used = meals_used + 1 "
+            "WHERE qr_id = %s AND meal_type_id = %s AND meals_used < meal_limit AND exhausted_at IS NULL",
+            (now, qr_id, meal_type_id),
+        )
+        if changed != 1:
+            raise DomainError("MASTER_MEAL_TYPE_USED_UP")
+        remaining = tx.one(
+            "SELECT MAX(meal_limit - meals_used) AS remaining FROM master_qr_meal_types WHERE qr_id = %s",
+            (qr_id,),
+        )["remaining"]
+        tx.execute(
+            "UPDATE master_qr_allocations SET "
+            "exhausted_at = CASE WHEN %s = 0 THEN %s ELSE NULL END, "
+            "meals_used = meal_limit - %s "
+            "WHERE qr_id = %s AND exhausted_at IS NULL",
+            (remaining, now, remaining, qr_id),
+        )
+
     @retry_transaction
     def correct_meal_type(self, context, meal_id, meal_type_id, reason):
         positive_integer(meal_id, "MEAL_ID")
@@ -515,15 +546,7 @@ class MealService:
                     raise DomainError("MASTER_ALLOCATION_SCOPE_MISMATCH")
                 if allocation["exhausted_at"] is not None or allocation["meals_used"] >= allocation["meal_limit"]:
                     raise DomainError("QR_EXPIRED")
-                changed = tx.execute(
-                    "UPDATE master_qr_allocations SET "
-                    "exhausted_at = CASE WHEN meals_used + 1 = meal_limit THEN %s ELSE NULL END, "
-                    "meals_used = meals_used + 1 "
-                    "WHERE qr_id = %s AND meals_used < meal_limit AND exhausted_at IS NULL",
-                    (now, qr["id"]),
-                )
-                if changed != 1:
-                    raise DomainError("QR_EXPIRED")
+                self._use_master_meal_type(tx, qr["id"], scan.meal_type_id, now)
                 serving_visitor = {
                     "company_name": allocation["company_name"],
                     "name": allocation["contact_name"],

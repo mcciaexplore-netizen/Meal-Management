@@ -128,6 +128,7 @@ class MasterQrInput(InputModel):
     email: Annotated[str, Field(min_length=3, max_length=254)]
     phone: Annotated[str, Field(min_length=7, max_length=32)]
     meal_limit: Quantity
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
     expires_at: datetime | None = None
 
     @model_validator(mode="after")
