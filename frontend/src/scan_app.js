@@ -8,6 +8,7 @@ import { ScanAppOperation } from "./scan_app_operation.js";
 import { chooseScannerRecovery } from "./scanner_recovery.js";
 import { scheduleScanResultReset } from "./scan_result_reset.js";
 import { mountScannerInstall } from "./scanner_install.js";
+import { chooseMealType, mealTypeOptions, mealTypeRejection } from "./meal_types.js";
 
 mountScannerInstall({ root: document.getElementById("scanner-install"), window, navigator });
 const root = document.getElementById("scan-app");
@@ -31,6 +32,15 @@ export function scanOutcomeMessage(code) {
   return messages[code] ?? String(code).replaceAll("_", " ").toLowerCase();
 }
 
+let mealTypes = [];
+let selectedMealType = null;
+
+async function loadMealTypes() {
+  const data = await transport.request("/meal-types");
+  mealTypes = Array.isArray(data?.meal_types) ? data.meal_types : [];
+  selectedMealType = selectedMealType ? chooseMealType(mealTypes, selectedMealType.id) : null;
+}
+
 async function openScanner() {
   const current = ++version;
   dispose();
@@ -42,6 +52,7 @@ async function openScanner() {
     if (activeMarker && activeMarker.scope !== session.scope) throw new Error("The previous serving belongs to another browser session. Ask the office administrator to confirm it before serving another meal.");
     if (flow?.request && servingScope !== session.scope) throw new Error("The previous serving belongs to another browser session. Ask the office administrator to confirm it before serving another meal.");
     servingScope = session.scope;
+    await loadMealTypes();
     const localMarker = activeMarker?.request ?? loadScannerMarker(storage, servingScope);
     const recovery = await chooseScannerRecovery({
       localMarker,
@@ -96,7 +107,7 @@ function renderScanner() {
   dispose();
   const current = ++version;
   const active = () => current === version;
-  root.innerHTML = `<div class="scan-app-shell"><header class="scan-app-header"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div></header><main id="main" class="scan-only-main"><section class="scan-view" id="capture-view"><div class="scan-only-camera"><video id="scan-video" playsinline muted aria-label="Live QR camera"></video><div class="scan-camera-placeholder" id="scan-camera-placeholder">${icon("scan")}<h1>Scan a meal QR</h1><p>Hold the QR inside the frame.</p></div><div class="scan-camera-frame" id="scan-camera-frame" hidden></div><span class="scan-live-label" id="camera-state">Camera off</span></div><div class="scan-only-controls"><button class="button primary" id="camera-start">Start camera</button><button class="button" id="camera-stop" disabled>Stop</button><button class="button" id="camera-switch" disabled>Switch</button></div><div class="scan-upload"><label class="button" for="qr-upload">Upload QR image</label><input id="qr-upload" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><p>PNG, JPG, WebP, or SVG · images stay on this device</p></div></section><section id="scanner-outcome" class="scan-only-outcome" aria-live="assertive" aria-atomic="true"></section><div id="scanner-message" class="scan-only-message" role="alert" hidden></div><div class="scan-bottom-actions"><button class="button" id="check-serving" hidden>Check previous result</button></div></main></div>`;
+  root.innerHTML = `<div class="scan-app-shell"><header class="scan-app-header"><div class="scan-app-brand">${icon("scan")}<strong>Meal Scanner</strong></div></header><main id="main" class="scan-only-main"><section class="scan-meal-type" aria-label="Meal type"><label for="meal-type">Meal type</label><select id="meal-type">${mealTypeOptions(mealTypes, selectedMealType)}</select><p class="scan-meal-current" id="meal-current" aria-live="polite">${selectedMealType ? escape(selectedMealType.name) : "Choose a meal type to start scanning"}</p></section><section class="scan-view" id="capture-view"><div class="scan-only-camera"><video id="scan-video" playsinline muted aria-label="Live QR camera"></video><div class="scan-camera-placeholder" id="scan-camera-placeholder">${icon("scan")}<h1>Scan a meal QR</h1><p>Hold the QR inside the frame.</p></div><div class="scan-camera-frame" id="scan-camera-frame" hidden></div><span class="scan-live-label" id="camera-state">Camera off</span></div><div class="scan-only-controls"><button class="button primary" id="camera-start">Start camera</button><button class="button" id="camera-stop" disabled>Stop</button><button class="button" id="camera-switch" disabled>Switch</button></div><div class="scan-upload"><label class="button" for="qr-upload">Upload QR image</label><input id="qr-upload" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><p>PNG, JPG, WebP, or SVG · images stay on this device</p></div></section><section id="scanner-outcome" class="scan-only-outcome" aria-live="assertive" aria-atomic="true"></section><div id="scanner-message" class="scan-only-message" role="alert" hidden></div><div class="scan-bottom-actions"><button class="button" id="check-serving" hidden>Check previous result</button></div></main></div>`;
   const video = root.querySelector("#scan-video");
   const canvas = document.createElement("canvas");
   const cameraStart = root.querySelector("#camera-start");
@@ -115,8 +126,11 @@ function renderScanner() {
   let detector = null;
   let camera;
 
+  const mealSelect = root.querySelector("#meal-type");
+  const mealCurrent = root.querySelector("#meal-current");
+
   function canAcquire() {
-    return active() && !busy && !decoding && !flow.result && !flow.inFlight && !flow.request?.token;
+    return active() && Boolean(selectedMealType) && !busy && !decoding && !flow.result && !flow.inFlight && !flow.request?.token;
   }
 
   function controls(state = camera?.state ?? "stopped") {
@@ -130,6 +144,8 @@ function renderScanner() {
     root.querySelector("#scan-camera-frame").hidden = state !== "active";
     root.querySelector("#camera-state").textContent = state === "active" ? "Scanning" : state === "starting" ? "Starting camera…" : "Camera off";
     checkServing.disabled = busy;
+    mealSelect.disabled = busy || flow.inFlight || Boolean(flow.request && !flow.result);
+    mealCurrent.classList.toggle("unselected", !selectedMealType);
   }
 
   camera = new CameraSession({ video, mediaDevices: navigator.mediaDevices, secureContext: window.isSecureContext, onState: controls });
@@ -143,7 +159,7 @@ function renderScanner() {
     if (!saved) showMessage("Keep this page open until the result is confirmed. This browser cannot retain the current serving after a reload.");
   }
 
-  const sendRead = body => transport.request("/read", { method: "POST", body }, servingScope);
+  const sendRead = body => transport.request("/read", { method: "POST", body: { ...body, meal_type_id: Number(selectedMealType?.id) } }, servingScope);
 
   function finished(result, recovered = false) {
     stop();
@@ -151,7 +167,7 @@ function renderScanner() {
     capture.hidden = true;
     checkServing.hidden = true;
     clearMessage();
-    outcome.innerHTML = result.approved ? `<div class="scan-final accepted">${icon("check")}<h1>Accepted · 1 meal</h1>${result.duplicate || recovered ? '<p>Already recorded. Do not serve again.</p>' : ""}<span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>` : `<div class="scan-final rejected">${icon("close")}<h1>Meal rejected</h1><p>${escape(scanOutcomeMessage(result.code))}</p><span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>`;
+    outcome.innerHTML = result.approved ? `<div class="scan-final accepted">${icon("check")}<h1>Accepted · 1 meal</h1>${result.duplicate || recovered ? '<p>Already recorded. Do not serve again.</p>' : ""}<span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>` : `<div class="scan-final rejected">${icon("close")}<h1>Meal rejected</h1><p>${escape(mealTypeRejection(result.code, result, selectedMealType?.name) ?? scanOutcomeMessage(result.code))}</p><span>Returning to scanner in 2 seconds</span><p>Start camera or upload the next QR when ready.</p></div>`;
     controls();
     cancelResultReset();
     cancelResultReset = scheduleScanResultReset({
@@ -277,6 +293,12 @@ function renderScanner() {
     finally { decoding = false; upload.value = ""; if (active()) controls(); }
   }
 
+  mealSelect.onchange = () => {
+    selectedMealType = chooseMealType(mealTypes, mealSelect.value);
+    mealCurrent.textContent = selectedMealType ? selectedMealType.name : "Choose a meal type to start scanning";
+    if (!selectedMealType) stop();
+    controls();
+  };
   cameraStart.onclick = () => start();
   cameraStop.onclick = stop;
   cameraSwitch.onclick = () => start(true);

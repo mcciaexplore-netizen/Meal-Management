@@ -189,7 +189,9 @@ test("an uncertain first submission cannot become a final invalid QR rejection o
 
 test("the scanner entry opens directly without staff authentication or service selection", async () => {
   const source = await readFile(new URL("../src/scan_app.js", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /auth\/|sign.?in|logout|login|catalog|station|selectField|meal_type_id|scanner_code|staff_id/);
+  assert.doesNotMatch(source, /auth\/|logout|login|catalog|station|selectField|scanner_code|staff_id/);
+  assert.match(source, /Choose a meal type to start scanning/);
+  assert.match(source, /meal_type_id: Number\(selectedMealType\?\.id\)/);
   assert.match(source, /await openScanner\(\)/);
   assert.match(source, /Scanner unavailable/);
   assert.match(source, /Start camera/);

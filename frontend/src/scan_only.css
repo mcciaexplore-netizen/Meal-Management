@@ -88,3 +88,8 @@
   .scan-bottom-actions .button { width: 100%; }
   .scan-visitor-card { padding: 23px 20px 24px; }
 }
+.scan-meal-type { display: grid; gap: 6px; margin: 0 0 12px; padding: 12px; border-radius: 10px; background: #f1f7f6; border: 1px solid #d3e6e2; }
+.scan-meal-type label { font-size: 13px; font-weight: 600; color: #5a6b75; }
+.scan-meal-type select { min-height: 48px; font-size: 18px; }
+.scan-meal-current { margin: 4px 0 0; font-size: 34px; font-weight: 800; line-height: 1.15; color: var(--teal-dark, #0c655a); text-align: center; }
+.scan-meal-current.unselected { font-size: 18px; font-weight: 600; color: #946312; }

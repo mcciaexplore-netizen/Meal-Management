@@ -5,7 +5,7 @@ from .auth import require_actor
 from .database import is_postgres
 from .email_queue import email_delivery_state
 from .errors import DomainError
-from .meals import positive_integer
+from .meals import EFFECTIVE_MEAL_TYPE, positive_integer
 from .reports import _date_range
 from .security import required_text
 
@@ -99,7 +99,12 @@ class QueryService:
             )
             if row is None:
                 raise DomainError("EMPLOYEE_NOT_FOUND")
-        return _record(row)
+            meal_types = tx.all(
+                "SELECT meal_type_id FROM employee_meal_types WHERE employee_id = %s ORDER BY meal_type_id", (employee_id,),
+            )
+        record = _record(row)
+        record["meal_type_ids"] = [item["meal_type_id"] for item in meal_types]
+        return record
 
     def current_employee_qr(self, context, employee_id):
         positive_integer(employee_id, "EMPLOYEE_ID")
@@ -181,7 +186,7 @@ class QueryService:
             row["last_error"] = row["code"]
         return _page(rows, limit)
 
-    def meal_history(self, context, start, end, limit=50, after_id=0, employee_id=None):
+    def meal_history(self, context, start, end, limit=50, after_id=0, employee_id=None, meal_type_id=None):
         _pagination(limit, after_id)
         start_utc, end_utc = _date_range(start, end)
         filters = [
@@ -192,6 +197,9 @@ class QueryService:
         if employee_id is not None:
             filters.append("s.employee_id = %s")
             params.append(positive_integer(employee_id, "EMPLOYEE_ID"))
+        if meal_type_id is not None:
+            filters.append(EFFECTIVE_MEAL_TYPE + " = %s")
+            params.append(positive_integer(meal_type_id, "MEAL_TYPE_ID"))
         params.append(limit + 1)
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
@@ -199,7 +207,9 @@ class QueryService:
                 "SELECT m.id, m.id AS meal_id, m.served_at, m.unit_number, s.id AS serving_id, "
                 "s.request_id, s.kind, s.quantity AS serving_quantity, s.employee_id, "
                 "e.employee_code, e.full_name AS employee_name, e.company_name AS employee_company_name, "
-                "e.email AS employee_email, e.phone AS employee_phone, s.meal_type_id, "
+                "e.email AS employee_email, e.phone AS employee_phone, t.id AS meal_type_id, "
+                "s.meal_type_id AS recorded_meal_type_id, ot.name AS recorded_meal_type_name, "
+                "(SELECT COUNT(*) FROM meal_type_corrections c WHERE c.meal_id = m.id) AS correction_count, "
                 "t.code AS meal_type_code, t.name AS meal_type_name, s.waiter_id, "
                 "w.display_name AS waiter_name, s.location_id, l.name AS location_name, "
                 "s.scanner_id, d.code AS scanner_code, "
@@ -209,7 +219,8 @@ class QueryService:
                 "a.visit_purpose, a.authorized_by, admin.display_name AS admin_name "
                 "FROM meals m JOIN servings s ON s.id = m.serving_id "
                 "LEFT JOIN employees e ON e.id = s.employee_id "
-                "JOIN meal_types t ON t.id = s.meal_type_id "
+                "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
+                "JOIN meal_types ot ON ot.id = s.meal_type_id "
                 "JOIN staff_accounts w ON w.id = s.waiter_id "
                 "JOIN locations l ON l.id = s.location_id "
                 "JOIN scanner_devices d ON d.id = s.scanner_id "

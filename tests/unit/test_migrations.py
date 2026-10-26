@@ -30,7 +30,7 @@ class MigrationParserTests(unittest.TestCase):
     def test_repository_migrations_have_stable_sequence(self):
         directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
         migrations = load_migrations(directory)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
         self.assertGreater(len(migrations[0].statements), 20)
         self.assertIn("scan_bound_at", "\n".join(migrations[1].statements))
         self.assertIn("last_seen_at", "\n".join(migrations[1].statements))
@@ -104,9 +104,32 @@ class MigrationParserTests(unittest.TestCase):
         for table in ("locations", "scanner_devices", "meal_types", "staff_accounts"):
             trigger = next(item for item in triggers if f"BEFORE UPDATE ON {table}" in item)
             self.assertIn("SIGNAL SQLSTATE '45000'", trigger)
+        dropped_later = "CREATE TRIGGER shared_scanner_meal_type_guard"
         for statement in migration.statements[1:]:
-            self.assertIn(statement, snapshot)
+            if statement.startswith(dropped_later):
+                self.assertNotIn(statement, snapshot)
+            else:
+                self.assertIn(statement, snapshot)
             self.assertFalse(statement.startswith(("INSERT", "UPDATE", "DELETE", "ALTER", "DROP")))
+
+    def test_meal_type_migration_seeds_types_retires_scanner_meal_and_grants_existing_employees(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[11]
+        source = "\n".join(migration.statements)
+        snapshot = tuple(sql_statements((directory.parent / "schema.sql").read_text()))
+        self.assertEqual((migration.version, migration.name), (12, "meal_types_eligibility"))
+        self.assertIn("DROP TRIGGER shared_scanner_meal_type_guard", source)
+        for code, name in (("BREAKFAST", "Breakfast"), ("LUNCH", "Lunch"), ("HIGH-TEA", "High Tea"), ("DINNER", "Dinner")):
+            self.assertIn(f"SELECT '{code}', '{name}', TRUE FROM DUAL", source)
+        self.assertIn("UPDATE meal_types SET is_active = FALSE WHERE code = 'SCANNER-MEAL'", source)
+        self.assertIn("CREATE TABLE employee_meal_types", source)
+        self.assertIn("CREATE TABLE meal_type_corrections", source)
+        self.assertIn("FROM employees e CROSS JOIN meal_types t", source)
+        self.assertNotIn("default_start", source)
+        self.assertNotIn("DELETE FROM", source)
+        for statement in migration.statements[1:]:
+            if not statement.startswith("DROP TRIGGER"):
+                self.assertIn(statement, snapshot)
 
     def test_rejects_migration_gap(self):
         with tempfile.TemporaryDirectory() as root:

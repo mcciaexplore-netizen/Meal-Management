@@ -33,13 +33,13 @@ class SharedScannerMySQLTests(MealServicesFixture):
         browser = secrets.token_bytes(32)
         identifier = uuid4()
         sessions_before = self.scalar("SELECT COUNT(*) FROM staff_sessions")
-        result = self.shared().read(browser, identifier, token)
+        result = self.shared().read(browser, identifier, token, self.meal_type_id)
         self.assertTrue(result.approved)
         self.assertEqual(len(result.meal_ids), 1)
         serving = self.rows("SELECT waiter_id, scanner_id, meal_type_id, employee_id FROM servings WHERE id = %s", (result.serving_id,))[0]
         self.assertEqual(serving["waiter_id"], profile["staff_id"])
         self.assertEqual(serving["scanner_id"], profile["scanner_id"])
-        self.assertEqual(serving["meal_type_id"], profile["meal_type_id"])
+        self.assertEqual(serving["meal_type_id"], self.meal_type_id)
         self.assertEqual(serving["employee_id"], registration.employee_id)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM staff_sessions"), sessions_before)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM staff_sessions WHERE staff_id = %s", (profile["staff_id"],)), 0)
@@ -54,16 +54,16 @@ class SharedScannerMySQLTests(MealServicesFixture):
         browser = secrets.token_bytes(32)
         other_browser = secrets.token_bytes(32)
         identifier = uuid4()
-        result = self.shared().read(browser, identifier, credential.token)
+        result = self.shared().read(browser, identifier, credential.token, self.meal_type_id)
         self.assertTrue(result.approved)
         for action in (
-            lambda: self.shared().read(other_browser, identifier, credential.token),
+            lambda: self.shared().read(other_browser, identifier, credential.token, self.meal_type_id),
             lambda: self.shared().result(other_browser, identifier),
         ):
             with self.assertRaises(DomainError) as caught:
                 action()
             self.assertEqual(caught.exception.code, "REQUEST_MISMATCH")
-        duplicate = self.shared().read(browser, identifier, credential.token)
+        duplicate = self.shared().read(browser, identifier, credential.token, self.meal_type_id)
         self.assertTrue(duplicate.approved)
         self.assertTrue(duplicate.duplicate)
         self.assertEqual(duplicate.meal_ids, result.meal_ids)
@@ -75,7 +75,8 @@ class SharedScannerMySQLTests(MealServicesFixture):
         browser = secrets.token_bytes(32)
         identifier = uuid4()
         original_profile = self.profile()
-        self.shared()._reserve(browser, identifier)
+        captured_type = self.scalar("SELECT id FROM meal_types WHERE code = 'LUNCH'")
+        self.shared()._reserve(browser, identifier, captured_type)
         try:
             cursor = self.admin_connection.cursor()
             try:
@@ -85,12 +86,12 @@ class SharedScannerMySQLTests(MealServicesFixture):
                 )
             finally:
                 cursor.close()
-            result = self.shared().read(browser, identifier, credential.token)
+            result = self.shared().read(browser, identifier, credential.token, self.meal_type_id)
             self.assertTrue(result.approved)
             serving = self.rows("SELECT scanner_id, meal_type_id FROM servings WHERE id = %s", (result.serving_id,))[0]
             self.assertEqual(serving["scanner_id"], original_profile["scanner_id"])
-            self.assertEqual(serving["meal_type_id"], original_profile["meal_type_id"])
-            second = self.shared().read(browser, uuid4(), credential.token)
+            self.assertEqual(serving["meal_type_id"], captured_type)
+            second = self.shared().read(browser, uuid4(), credential.token, self.meal_type_id)
             self.assertTrue(second.approved)
             current = self.rows("SELECT scanner_id, meal_type_id FROM servings WHERE id = %s", (second.serving_id,))[0]
             self.assertEqual(current["scanner_id"], self.scanner_id)
@@ -116,7 +117,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
         def read(browser):
             barrier.wait(timeout=10)
             try:
-                return browser, self.shared().read(browser, identifier, token)
+                return browser, self.shared().read(browser, identifier, token, self.meal_type_id)
             except DomainError as error:
                 return browser, error.code
 
@@ -139,7 +140,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
 
         def record():
             barrier.wait(timeout=10)
-            return self.shared().read(browser, identifier, credential.token)
+            return self.shared().read(browser, identifier, credential.token, self.meal_type_id)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(record) for _ in range(2)]
@@ -152,11 +153,11 @@ class SharedScannerMySQLTests(MealServicesFixture):
         credential = self.allocated_master(5)
         browser = secrets.token_bytes(32)
         identifiers = [uuid4() for _ in range(6)]
-        results = [self.shared().read(browser, identifier, credential.token) for identifier in identifiers]
+        results = [self.shared().read(browser, identifier, credential.token, self.meal_type_id) for identifier in identifiers]
         self.assertTrue(all(result.approved for result in results[:5]))
         self.assertFalse(results[5].approved)
         self.assertEqual(results[5].code, "QR_EXPIRED")
-        retry = self.shared().read(browser, identifiers[4], credential.token)
+        retry = self.shared().read(browser, identifiers[4], credential.token, self.meal_type_id)
         self.assertTrue(retry.approved)
         self.assertTrue(retry.duplicate)
         self.assertEqual(retry.meal_ids, results[4].meal_ids)
@@ -171,7 +172,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
 
         def record(browser):
             barrier.wait(timeout=10)
-            return self.shared().read(browser, uuid4(), credential.token)
+            return self.shared().read(browser, uuid4(), credential.token, self.meal_type_id)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = [future.result(timeout=30) for future in [
@@ -196,7 +197,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
         self.assertEqual(self.scalar("SELECT meals_used FROM master_qr_allocations WHERE qr_id = %s", (credential.qr_id,)), 0)
         approved = self.meals.record(self.waiter_context, self.scan(credential.token))
         self.assertTrue(approved.approved)
-        exhausted = self.shared().read(secrets.token_bytes(32), uuid4(), credential.token)
+        exhausted = self.shared().read(secrets.token_bytes(32), uuid4(), credential.token, self.meal_type_id)
         self.assertFalse(exhausted.approved)
         self.assertEqual(exhausted.code, "QR_EXPIRED")
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM servings WHERE qr_id = %s", (credential.qr_id,)), 1)
@@ -266,7 +267,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
         _, token = self.employee()
         identifier = uuid4()
         browser = secrets.token_bytes(32)
-        self.assertTrue(self.shared().read(browser, identifier, token).approved)
+        self.assertTrue(self.shared().read(browser, identifier, token, self.meal_type_id).approved)
         with self.assertRaises(mysql.connector.Error):
             with self.db.transaction() as tx:
                 tx.execute("UPDATE scan_app_requests SET browser_hash = %s WHERE request_id = %s", (secrets.token_bytes(32), identifier.bytes))
@@ -285,7 +286,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
         finally:
             cursor.close()
         try:
-            result = self.shared().read(browser, identifier, credential.token)
+            result = self.shared().read(browser, identifier, credential.token, self.meal_type_id)
         finally:
             cursor = self.admin_connection.cursor()
             try:
@@ -298,4 +299,4 @@ class SharedScannerMySQLTests(MealServicesFixture):
         self.assertEqual(bytes(self.scalar("SELECT browser_hash FROM scan_app_requests WHERE request_id = %s", (identifier.bytes,))), browser)
         self.assertFalse(self.shared().result(browser, identifier)["approved"])
         self.assertEqual(self.scalar("SELECT meals_used FROM master_qr_allocations WHERE qr_id = %s", (credential.qr_id,)), 0)
-        self.assertTrue(self.shared().read(browser, identifier, credential.token).approved)
+        self.assertTrue(self.shared().read(browser, identifier, credential.token, self.meal_type_id).approved)

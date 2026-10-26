@@ -909,7 +909,7 @@ class ValidationAndReportApiTests(ApiTestCase):
         args = self.harness.queries.meal_history.call_args
         self.assertIsNotNone(args.args[1].utcoffset())
         self.assertEqual(args.args[1].astimezone(timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc))
-        self.assertEqual(args.kwargs, {"limit": 10, "after_id": 12, "employee_id": 7})
+        self.assertEqual(args.kwargs, {"limit": 10, "after_id": 12, "employee_id": 7, "meal_type_id": None})
 
     def test_naive_or_reversed_report_dates_are_rejected_by_service_validation(self):
         for start, end, code in (
@@ -989,7 +989,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_employee_contact_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

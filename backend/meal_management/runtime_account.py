@@ -18,6 +18,7 @@ INSERT_TABLES = (
     "audit_events", "serving_requests", "visitor_authorizations", "servings", "meals",
     "scan_attempts", "scan_app_requests", "employee_email_batches", "login_rate_limits",
     "employee_archives", "master_qr_allocations", "scanner_phones",
+    "employee_meal_types", "meal_type_corrections",
 )
 UPDATE_TABLES = (
     "employees", "staff_accounts", "staff_sessions", "locations", "scanner_devices",
@@ -25,7 +26,7 @@ UPDATE_TABLES = (
     "scan_attempts", "login_rate_limits", "scan_app_requests", "employee_email_batches",
     "system_locks", "master_qr_allocations", "scanner_phones", "departments", "meal_types",
 )
-DELETE_TABLES = ("staff_account_roles",)
+DELETE_TABLES = ("staff_account_roles", "employee_meal_types")
 STAGES = (
     "PREFLIGHT", "PRIVATE_CREDENTIALS", "CREATE_ACCOUNT", "GRANTS",
     "VERIFY_ACCOUNT", "PUBLISH_CREDENTIALS",
@@ -167,8 +168,8 @@ def create_aiven_runtime_account(settings, runtime, migration_directory, output_
     if confirmation != expected:
         raise DomainError("RUNTIME_ACCOUNT_TARGET_NOT_CONFIRMED")
     migrations = load_migrations(migration_directory)
-    if [migration.version for migration in migrations] != [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
-        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_ELEVEN")
+    if [migration.version for migration in migrations] != [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]:
+        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_TWELVE")
     output, pending = _paths(output_path)
     connection = None
     runtime_connection = None

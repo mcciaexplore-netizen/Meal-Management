@@ -60,14 +60,20 @@ class CatalogEditTests(unittest.TestCase):
         self.tx.one.side_effect = [{"id": 3, "code": "SHARED-SCANNER", "name": "Meal Scanner"}, self.shared()]
         self.service.update_scanner(self.context, 3, "SHARED-SCANNER", "Main counter")
         self.tx.execute.assert_called_once()
-        for method, identifier in (("update_scanner", 3), ("update_location", 4), ("update_meal_type", 5)):
+        for method, identifier in (("update_scanner", 3), ("update_location", 4)):
             self.tx.one.side_effect = [{"id": identifier, "code": "BUILT-IN", "name": "Built in"}, self.shared()]
             with self.subTest(method=method), self.assertRaisesRegex(DomainError, "SHARED_SCANNER_SETTING_PROTECTED"):
                 getattr(self.service, method)(self.context, identifier, "NEW-CODE", "Built in")
-        for method, identifier in (("set_scanner_active", 3), ("set_location_active", 4), ("set_meal_type_active", 5)):
+        for method, identifier in (("set_scanner_active", 3), ("set_location_active", 4)):
             self.tx.one.side_effect = [{"id": identifier, "code": "BUILT-IN", "name": "Built in", "is_active": True}, self.shared()]
             with self.subTest(method=method), self.assertRaisesRegex(DomainError, "SHARED_SCANNER_SETTING_PROTECTED"):
                 getattr(self.service, method)(self.context, identifier, False)
+
+    def test_meal_types_are_no_longer_tied_to_the_scanner(self):
+        self.tx.one.side_effect = [{"id": 5, "code": "SCANNER-MEAL", "name": "Meal", "is_active": True}]
+        self.assertFalse(self.service.set_meal_type_active(self.context, 5, False)["is_active"])
+        self.tx.one.side_effect = [{"id": 5, "code": "SCANNER-MEAL", "name": "Meal"}]
+        self.assertEqual(self.service.update_meal_type(self.context, 5, "OLD-MEAL", "Meal")["code"], "OLD-MEAL")
 
     def test_database_guard_signal_is_reported_as_protected(self):
         self.tx.one.side_effect = [{"id": 8, "code": "C8", "name": "Counter", "is_active": True}, self.shared()]

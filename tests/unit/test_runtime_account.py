@@ -25,6 +25,7 @@ INSERT_TABLES = {
     "audit_events", "serving_requests", "visitor_authorizations", "servings", "meals",
     "scan_attempts", "scan_app_requests", "employee_email_batches", "login_rate_limits",
     "employee_archives", "master_qr_allocations", "scanner_phones",
+    "employee_meal_types", "meal_type_corrections",
 }
 UPDATE_TABLES = {
     "employees", "staff_accounts", "staff_sessions", "locations", "scanner_devices",
@@ -32,7 +33,7 @@ UPDATE_TABLES = {
     "scan_attempts", "login_rate_limits", "scan_app_requests", "employee_email_batches",
     "system_locks", "master_qr_allocations", "scanner_phones", "departments", "meal_types",
 }
-DELETE_TABLES = {"staff_account_roles"}
+DELETE_TABLES = {"staff_account_roles", "employee_meal_types"}
 MIGRATIONS = Path(__file__).resolve().parents[2] / "database" / "migrations"
 PROVIDER_SECRET = "fictional-provider-secret-never-print"
 
@@ -418,7 +419,7 @@ class RuntimeAccountTests(unittest.TestCase):
     def test_missing_reviewed_migration_stops_before_paths_and_database(self):
         migrations = load_migrations(MIGRATIONS)[:-1]
         with patch.object(runtime_account, "load_migrations", return_value=migrations), patch.object(runtime_account, "_paths") as paths:
-            with self.assertRaisesRegex(DomainError, "RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_ELEVEN"):
+            with self.assertRaisesRegex(DomainError, "RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_TWELVE"):
                 self.fixture.run()
             paths.assert_not_called()
         self.assert_no_credentials_or_database()

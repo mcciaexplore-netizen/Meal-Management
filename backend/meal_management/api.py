@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, MealTypeCorrectionInput, MealTypeIdsInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -288,9 +288,17 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def employee_create(body: EmployeeInput, ctx=Depends(admin)):
         return asdict(services.employees.register(ctx, **body.model_dump()))
 
+    @app.patch("/api/employees/{employee_id}/meal-types")
+    def employee_meal_types(employee_id: PathIdentifier, body: MealTypeIdsInput, ctx=Depends(admin)):
+        return services.employees.set_meal_types(ctx, employee_id, body.meal_type_ids)
+
+    @app.post("/api/meals/{meal_id}/meal-type")
+    def meal_type_correction(meal_id: PathIdentifier, body: MealTypeCorrectionInput, ctx=Depends(admin)):
+        return services.meals.correct_meal_type(ctx, meal_id, body.meal_type_id, body.reason)
+
     @app.post("/api/employees/bulk", status_code=201)
     def employee_bulk_create(body: BulkEmployeesInput, ctx=Depends(admin)):
-        return services.employees.register_bulk(ctx, str(body.request_id), [item.model_dump() for item in body.employees])
+        return services.employees.register_bulk(ctx, str(body.request_id), [item.model_dump(exclude_none=True) for item in body.employees])
 
     @app.post("/api/employees/bulk-remove")
     def employee_bulk_remove(body: BulkEmployeeRemovalInput, ctx=Depends(admin)):
@@ -484,8 +492,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
 
     @app.get("/api/reports/meals")
     def meal_history(start: datetime, end: datetime, limit: Limit = 50, after_id: Cursor = 0,
-                     employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
-        return app.state.queries.meal_history(ctx, start, end, limit=limit, after_id=after_id, employee_id=employee_id)
+                     employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
+                     meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
+        return app.state.queries.meal_history(ctx, start, end, limit=limit, after_id=after_id, employee_id=employee_id,
+                                              meal_type_id=meal_type_id)
 
     @app.get("/api/reports/totals")
     def totals(start: datetime, end: datetime, ctx=Depends(admin)):

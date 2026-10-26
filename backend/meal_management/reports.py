@@ -4,6 +4,7 @@ from .auth import require_actor
 from .database import Database, typed_null
 from .errors import DomainError
 from .models import ServerContext
+from .meals import EFFECTIVE_MEAL_TYPE
 
 
 def _date_range(start: datetime, end: datetime) -> tuple[datetime, datetime]:
@@ -45,14 +46,14 @@ class ReportService:
                 "s.employee_id, e.employee_code, e.full_name AS employee_name, "
                 "e.company_name AS employee_company_name, e.email AS employee_email, "
                 "e.phone AS employee_phone, "
-                "s.meal_type_id, t.code AS meal_type_code, t.name AS meal_type_name, "
+                "t.id AS meal_type_id, t.code AS meal_type_code, t.name AS meal_type_name, "
                 "s.waiter_id, w.display_name AS waiter_name, "
                 "s.location_id, l.code AS location_code, l.name AS location_name, "
                 "s.scanner_id, d.code AS scanner_code "
                 "FROM meals m "
                 "JOIN servings s ON s.id = m.serving_id "
                 "JOIN employees e ON e.id = s.employee_id "
-                "JOIN meal_types t ON t.id = s.meal_type_id "
+                "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
                 "JOIN staff_accounts w ON w.id = s.waiter_id "
                 "JOIN locations l ON l.id = s.location_id "
                 "JOIN scanner_devices d ON d.id = s.scanner_id "
@@ -83,13 +84,13 @@ class ReportService:
             records = tx.all(
                 "WITH filtered_meals AS ("
                 "SELECT m.id, m.serving_id, s.kind, "
-                "s.meal_type_id, t.code AS meal_type_code, t.name AS meal_type_name, "
+                "t.id AS meal_type_id, t.code AS meal_type_code, t.name AS meal_type_name, "
                 "s.location_id, l.code AS location_code, l.name AS location_name, "
                 "s.waiter_id, w.display_name AS waiter_name, "
                 "a.authorized_by, admin.display_name AS admin_name "
                 "FROM meals m "
                 "JOIN servings s ON s.id = m.serving_id "
-                "JOIN meal_types t ON t.id = s.meal_type_id "
+                "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
                 "JOIN locations l ON l.id = s.location_id "
                 "JOIN staff_accounts w ON w.id = s.waiter_id "
                 "LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id "

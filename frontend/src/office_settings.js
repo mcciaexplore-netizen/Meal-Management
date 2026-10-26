@@ -4,7 +4,7 @@ import { badge, closeModal, empty, field, formAction, modal, notify } from "./ui
 
 export const catalogKinds = Object.freeze({
   departments: { title: "Departments", singular: "department", code: null, nameLimit: 100, shared: null },
-  "meal-types": { title: "Meal types", singular: "meal type", code: 32, nameLimit: 100, shared: "meal_type_id" },
+  "meal-types": { title: "Meal types", singular: "meal type", code: 32, nameLimit: 100, shared: null },
   locations: { title: "Serving locations", singular: "serving location", code: 32, nameLimit: 150, shared: "location_id" },
   scanners: { title: "Scanning counters", singular: "scanning counter", code: 64, nameLimit: 150, shared: "scanner_id" }
 });

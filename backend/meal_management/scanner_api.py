@@ -58,7 +58,8 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=N
                 app.state.scanner_limiter.consume(identity, address)
                 request.state.scanner_rate_checked = True
         if phones_required and not getattr(request.state, "scanner_phone_checked", False):
-            app.state.scanner_phones.authorize(identity, adopt_legacy)
+            phone = app.state.scanner_phones.authorize(identity, adopt_legacy)
+            request.state.scanner_phone_id = phone.get("id") if isinstance(phone, dict) else None
             request.state.scanner_phone_checked = True
         return identity
 
@@ -151,8 +152,15 @@ def create_app(services=None, runtime=None, scanner=None, limiter=None, phones=N
         return response
 
     @app.post("/api/scanner/read")
-    def read(body: ScannerReadBody, browser_hash=Depends(browser_context)):
-        return scan_response(app.state.scanner.read(browser_hash, body.request_id, body.token.get_secret_value()))
+    def read(body: ScannerReadBody, request: Request, browser_hash=Depends(browser_context)):
+        return scan_response(app.state.scanner.read(
+            browser_hash, body.request_id, body.token.get_secret_value(), body.meal_type_id,
+            phone_id=getattr(request.state, "scanner_phone_id", None),
+        ))
+
+    @app.get("/api/scanner/meal-types")
+    def meal_types(browser_hash=Depends(browser_context)):
+        return app.state.scanner.meal_types()
 
     @app.get("/api/scanner/requests/{request_id}/result")
     def result(request_id: UUID, browser_hash=Depends(browser_context)):

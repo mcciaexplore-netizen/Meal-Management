@@ -16,7 +16,6 @@ _LIMITS = {
 _SHARED_COLUMNS = {
     "LOCATION": "location_id",
     "SCANNER": "scanner_id",
-    "MEAL_TYPE": "meal_type_id",
 }
 
 
@@ -128,7 +127,7 @@ class CatalogService:
             previous = bool(row["is_active"])
             if previous == is_active:
                 return {"id": identifier, "is_active": is_active}
-            if not is_active and _shared_ids(tx).get(_SHARED_COLUMNS[catalog]) == identifier:
+            if not is_active and catalog in _SHARED_COLUMNS and _shared_ids(tx).get(_SHARED_COLUMNS[catalog]) == identifier:
                 raise DomainError("SHARED_SCANNER_SETTING_PROTECTED")
             try:
                 tx.execute(
@@ -158,7 +157,7 @@ class CatalogService:
                 raise DomainError(catalog + "_NOT_FOUND")
             if (row["code"], row["name"]) == (code, name):
                 return {"id": identifier, "code": code, "name": name}
-            if code != row["code"] and _shared_ids(tx).get(_SHARED_COLUMNS[catalog]) == identifier:
+            if code != row["code"] and catalog in _SHARED_COLUMNS and _shared_ids(tx).get(_SHARED_COLUMNS[catalog]) == identifier:
                 raise DomainError("SHARED_SCANNER_SETTING_PROTECTED")
             try:
                 tx.execute(f"UPDATE {table} SET code = %s, name = %s WHERE id = %s", (code, name, identifier))

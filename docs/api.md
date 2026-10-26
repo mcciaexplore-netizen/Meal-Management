@@ -11,6 +11,7 @@ The scanner has no staff login or service-station selectors. Its `/api/scanner` 
 | `GET` | `/api/scanner/session` | Public same-origin scanner bootstrap | Issue or renew a signed HTTP-only browser cookie; return `scope` and `csrf_token`, with no staff login or database write |
 | `POST` | `/api/scanner/activate` | Public same-origin scanner, rate-limited | Accept `activation_code`: an 8-character administrator code (case, spaces and dashes ignored) or, while configured, the emergency `SCANNER_ACTIVATION_SECRET`; issue the scanner cookie bound to a new scanner phone record |
 | `POST` | `/api/scanner/read` | Scanner cookie, scanner CSRF, exact origin | Accept only `request_id` and `token`; record one employee meal or consume one remaining master meal |
+| `GET` | `/api/scanner/meal-types` | Activated scanner browser | Active meal types for the scanner's meal type picker |
 | `GET` | `/api/scanner/requests/{request_id}/result` | Original scanner browser | Recover only that browser's original committed result without recording another meal |
 | `GET` | `/api/scanner/recovery` | Original scanner browser | Find that browser's last saved request ID when local recovery storage is missing; return no QR token or visitor details |
 
@@ -23,6 +24,10 @@ Employee and master reads return the canonical committed ScanResult. A master al
 Each UUID is first bound to a hashed browser identity and captured server settings. Another browser cannot submit or recover that UUID. Repeated successful calls return the original meal and serving IDs without consuming another allowance, including after the QR is exhausted. Only a deliberate new serving uses a new UUID. `/api/scanner/visitors` is no longer exposed; public callers cannot replace the administrator's stored visitor details.
 
 The browser retains only scope, request UUID, and quantity one across reloads. A stable pending marker detects changed or lost cookies even after reload and blocks a new meal until the earlier result is checked. QR values and visitor contact details are not stored in browser storage. In-memory and restored retries treat malformed rescans as unconfirmed, including when the original request is still delayed. When local storage has no marker, `/api/scanner/recovery` checks MySQL for the browser's most recent mapped request before new scans are enabled. This supports moving from the old port 8000 scanner to port 8001 without silently losing a committed request. A confirmed approval or rejection displays an animation for two seconds, then returns to the initial scanner screen with the camera stopped. Starting the camera or uploading the next QR deliberately begins another serving; an unchanged QR left in view cannot generate repeated meals. If the completed recovery marker cannot be cleared, the result remains visible with **Scanner reset paused** and a **Return to scanner** retry. Processing or connection errors keep the original request unresolved and never reset it as a new meal. Removing the browser cookie as well as its recovery storage removes the ownership proof; an administrator must check history in that case.
+
+### Meal types
+
+`POST /api/scanner/read` requires `meal_type_id`; a retry of the same `request_id` keeps the type it started with. Employee scans are refused with `MEAL_TYPE_NOT_ELIGIBLE` for types not granted to the employee, and with `MEAL_TYPE_ALREADY_RECORDED` (plus `previous_served_at` in UTC) when the same effective type was recorded within `MEAL_TYPE_LOCK_HOURS`. Administrators use `PATCH /api/employees/{id}/meal-types` (`meal_type_ids`), `POST /api/meals/{id}/meal-type` (`meal_type_id`, `reason`), and `GET /api/reports/meals?meal_type_id=`.
 
 ### Scanner phones
 

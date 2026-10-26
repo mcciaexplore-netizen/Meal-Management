@@ -14,6 +14,8 @@ Migration `011_settings_guards.sql` adds update triggers that stop the Meal Scan
 
 The runtime account's privileges are listed in `meal_management.runtime_account`: `SELECT` on the database, table-specific `INSERT` and `UPDATE`, and `DELETE` only on `staff_account_roles` for role replacement. In MySQL 8.4, `SELECT ... FOR UPDATE` also needs `UPDATE`, `DELETE` or `LOCK TABLES` on every locked table, while `FOR SHARE` needs only `SELECT`. `tests/unit/test_runtime_privileges.py` checks every runtime statement against these lists, and `tests/integration/test_runtime_privileges_mysql.py` reruns the integration suite as an account with exactly these grants.
 
+Migration `012_meal_types_eligibility.sql` seeds Breakfast, Lunch, High Tea and Dinner, deactivates `SCANNER-MEAL`, drops the 011 trigger that pinned it to the scanner, and adds `employee_meal_types` (granted to every existing employee for every active type) and the append-only `meal_type_corrections`. The runtime account needs `INSERT` and `DELETE` on `employee_meal_types` and `INSERT` on `meal_type_corrections`. The previous image cannot scan after this migration until `SCANNER-MEAL` is reactivated.
+
 New migrations are MySQL-only. The PostgreSQL schema under `database/postgres` stops at its first migration and is no longer supported; do not run the application against PostgreSQL.
 
 `schema.sql` defines a fresh MySQL 8.4 schema in the database selected by the operator. It does not create, select, reset, or migrate a database. Applying it requires separate authorization. Do not apply it to an existing populated database. No existing data is deleted or transformed by the application on startup.
