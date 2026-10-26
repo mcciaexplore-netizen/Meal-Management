@@ -163,17 +163,6 @@ class BulkEmployeeRemovalInput(RemovalInput):
         return value
 
 
-class BulkMealRemovalInput(RemovalInput):
-    meal_ids: Annotated[list[Identifier], Field(min_length=1, max_length=100)]
-
-    @field_validator("meal_ids")
-    @classmethod
-    def unique_meal_ids(cls, value):
-        if len(set(value)) != len(value):
-            raise ValueError("Meal identifiers must be unique")
-        return value
-
-
 class AuthorizationInput(InputModel):
     request_id: UUID
     master_qr_id: Identifier

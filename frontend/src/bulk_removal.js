@@ -1,5 +1,5 @@
 export function bulkRemovalPayload(kind, values, reason) {
-  const key = kind === "employees" ? "employee_ids" : kind === "meals" ? "meal_ids" : null;
+  const key = kind === "employees" ? "employee_ids" : null;
   if (!key) throw new Error("Choose a supported record type.");
   if (values.some(value => typeof value === "boolean" || typeof value === "string" && !/^[1-9][0-9]*$/.test(value))) {
     throw new Error("The selected records are invalid. Refresh and try again.");

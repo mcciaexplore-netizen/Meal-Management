@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, Mock, patch
 from meal_management.accounts import StaffService
 from meal_management.catalog import CatalogService
 from meal_management.errors import DomainError
-from meal_management.meals import _insert_void
 from meal_management.models import Actor, ServerContext
 from meal_management.security import generate_token
 from test_api import ApiHarness, ApiTestCase
@@ -165,14 +164,6 @@ class StaffEditTests(unittest.TestCase):
         with self.assertRaisesRegex(DomainError, "SCANNER_ACCOUNT_PROTECTED"):
             self.service.set_active(self.context, 2, False)
         self.tx.execute.assert_not_called()
-
-
-class MealVoidTests(unittest.TestCase):
-    def test_duplicate_void_insert_is_reported_as_already_removed(self):
-        tx = Mock()
-        tx.insert.side_effect = DuplicateKey()
-        with self.assertRaisesRegex(DomainError, "MEAL_ALREADY_REMOVED"):
-            _insert_void(tx, 5, 1, "Correction", datetime(2026, 10, 25))
 
 
 class SettingsApiTests(ApiTestCase):

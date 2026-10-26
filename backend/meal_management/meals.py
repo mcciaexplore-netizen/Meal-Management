@@ -85,19 +85,6 @@ def check_qr(qr, now):
         raise DomainError("QR_EXPIRED")
 
 
-def _insert_void(tx, meal_id, staff_id, reason, voided_at):
-    try:
-        tx.insert(
-            "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) "
-            "VALUES (%s, %s, %s, %s)",
-            (meal_id, staff_id, reason, voided_at),
-        )
-    except Exception as error:
-        if getattr(error, "errno", None) == 1062:
-            raise DomainError("MEAL_ALREADY_REMOVED") from None
-        raise
-
-
 def check_meal_type(tx, meal_type_id):
     row = tx.one("SELECT id, is_active FROM meal_types WHERE id = %s FOR SHARE", (meal_type_id,))
     if not row or not row["is_active"]:
@@ -584,86 +571,3 @@ class MealService:
                           after={"outcome": "REJECTED", "rejection_code": "PROCESSING_INTERRUPTED"})
                 changed += updated
         return changed
-
-    @retry_transaction
-    def void(self, context, meal_id, reason):
-        positive_integer(meal_id, "MEAL_ID")
-        reason = required_text(reason, "removal_reason", 255)
-        with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
-            meal = tx.one(
-                "SELECT m.id, m.serving_id, m.unit_number, m.served_at, s.kind "
-                "FROM meals m JOIN servings s ON s.id = m.serving_id "
-                "WHERE m.id = %s FOR SHARE",
-                (meal_id,),
-            )
-            if meal is None:
-                raise DomainError("MEAL_NOT_FOUND")
-            if tx.one(
-                "SELECT meal_id FROM meal_voids WHERE meal_id = %s FOR SHARE",
-                (meal_id,),
-            ) is not None:
-                raise DomainError("MEAL_ALREADY_REMOVED")
-            voided_at = tx.now()
-            _insert_void(tx, meal_id, actor.staff_id, reason, voided_at)
-            audit(
-                tx,
-                actor.staff_id,
-                "MEAL_REMOVED",
-                "meals",
-                meal_id,
-                before={
-                    "serving_id": meal["serving_id"],
-                    "unit_number": meal["unit_number"],
-                    "served_at": meal["served_at"],
-                    "kind": meal["kind"],
-                },
-                after={"voided_at": voided_at, "reason": reason},
-            )
-        return voided_at
-
-    @retry_transaction
-    def void_bulk(self, context, meal_ids, reason):
-        identifiers = positive_identifiers(meal_ids, "MEAL_IDS")
-        reason = required_text(reason, "removal_reason", 255)
-        placeholders = ", ".join(["%s"] * len(identifiers))
-        with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
-            meals = tx.all(
-                "SELECT m.id, m.serving_id, m.unit_number, m.served_at, s.kind "
-                "FROM meals m JOIN servings s ON s.id = m.serving_id "
-                f"WHERE m.id IN ({placeholders}) ORDER BY m.id FOR SHARE",
-                identifiers,
-            )
-            if tuple(meal["id"] for meal in meals) != identifiers:
-                raise DomainError("MEAL_NOT_FOUND")
-            voids = tx.all(
-                "SELECT meal_id FROM meal_voids "
-                f"WHERE meal_id IN ({placeholders}) ORDER BY meal_id FOR SHARE",
-                identifiers,
-            )
-            if voids:
-                raise DomainError("MEAL_ALREADY_REMOVED")
-            voided_at = tx.now()
-            for meal in meals:
-                meal_id = meal["id"]
-                _insert_void(tx, meal_id, actor.staff_id, reason, voided_at)
-                audit(
-                    tx,
-                    actor.staff_id,
-                    "MEAL_REMOVED",
-                    "meals",
-                    meal_id,
-                    before={
-                        "serving_id": meal["serving_id"],
-                        "unit_number": meal["unit_number"],
-                        "served_at": meal["served_at"],
-                        "kind": meal["kind"],
-                    },
-                    after={"voided_at": voided_at, "reason": reason, "bulk": True},
-                )
-        return {
-            "meal_ids": list(identifiers),
-            "removed_count": len(identifiers),
-            "removed_at": voided_at,
-        }

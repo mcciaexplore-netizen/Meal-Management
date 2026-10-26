@@ -460,7 +460,7 @@ class MealServicesMySQLTests(MealServicesFixture):
         self.assertEqual(report["totals"]["employee_meals"], 0)
         self.assertEqual(report["by_authorizing_admin"][0]["admin_id"], self.admin_id)
 
-    def test_removed_meal_is_excluded_from_history_and_totals_without_deleting_ledger(self):
+    def test_meals_removed_before_meals_became_permanent_stay_excluded_from_reports(self):
         from meal_management.queries import QueryService
         from meal_management.reports import ReportService
 
@@ -470,35 +470,40 @@ class MealServicesMySQLTests(MealServicesFixture):
         served_at = self.scalar("SELECT served_at FROM meals WHERE id = %s", (meal_id,))
         start = served_at.replace(tzinfo=timezone.utc)
         end = start + timedelta(microseconds=1)
-        self.meals.void(self.admin_context, meal_id, "Integration correction")
+        cursor = self.admin_connection.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) VALUES (%s, %s, %s, UTC_TIMESTAMP(6))",
+                (meal_id, self.admin_id, "Removed before meals became permanent"),
+            )
+        finally:
+            cursor.close()
         history = QueryService(self.db).meal_history(self.admin_context, start, end)
         totals = ReportService(self.db).meal_report(self.admin_context, start, end)
         self.assertEqual(history["items"], [])
         self.assertEqual(totals["totals"]["meal_count"], 0)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM meals WHERE id = %s", (meal_id,)), 1)
-        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id = %s", (meal_id,)), 1)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM servings WHERE id = %s", (recorded.serving_id,)), 1)
         self.assertEqual(registration.employee_id, self.scalar("SELECT employee_id FROM servings WHERE id = %s", (recorded.serving_id,)))
 
-    def test_concurrent_meal_removal_creates_one_void_record(self):
-        from meal_management.errors import DomainError
+    def test_recorded_meals_cannot_be_removed_by_the_application(self):
+        from meal_management.meals import MealService
+        from meal_management.runtime_account import DELETE_TABLES, INSERT_TABLES, UPDATE_TABLES
 
         _, token = self.employee()
         meal_id = self.meals.record(self.waiter_context, self.scan(token)).meal_ids[0]
-        barrier = threading.Barrier(2)
-
-        def remove():
-            barrier.wait(timeout=10)
-            try:
-                self.meals.void(self.admin_context, meal_id, "Concurrent correction")
-                return "REMOVED"
-            except DomainError as error:
-                return error.code
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            results = [future.result(timeout=30) for future in (pool.submit(remove), pool.submit(remove))]
-        self.assertEqual(sorted(results), ["MEAL_ALREADY_REMOVED", "REMOVED"])
-        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id = %s", (meal_id,)), 1)
+        self.assertFalse(hasattr(MealService, "void") or hasattr(MealService, "void_bulk"))
+        self.assertNotIn("meal_voids", set(INSERT_TABLES) | set(UPDATE_TABLES) | set(DELETE_TABLES))
+        self.assertTrue({"meals", "servings"}.isdisjoint(set(UPDATE_TABLES) | set(DELETE_TABLES)))
+        if self.restricted:
+            with self.assertRaises(Exception) as caught:
+                with self.db.transaction() as tx:
+                    tx.insert(
+                        "INSERT INTO meal_voids (meal_id, voided_by_staff_id, reason, voided_at) VALUES (%s, %s, %s, UTC_TIMESTAMP(6))",
+                        (meal_id, self.admin_id, "Attempted removal"),
+                    )
+            self.assertEqual(getattr(caught.exception, "errno", None), 1142)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id = %s", (meal_id,)), 0)
 
     def test_removed_employee_is_hidden_and_qr_is_revoked(self):
         from meal_management.errors import DomainError
@@ -550,24 +555,6 @@ class MealServicesMySQLTests(MealServicesFixture):
         self.assertEqual(caught.exception.code, "EMPLOYEE_NOT_FOUND")
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM employee_archives WHERE employee_id = %s", (registration.employee_id,)), 0)
         self.assertIsNone(self.scalar("SELECT revoked_at FROM qr_credentials WHERE id = %s", (registration.qr_id,)))
-
-    def test_bulk_meal_removal_excludes_every_selected_record_from_reports(self):
-        from meal_management.queries import QueryService
-
-        _, token = self.employee()
-        first = self.meals.record(self.waiter_context, self.scan(token))
-        second = self.meals.record(self.waiter_context, self.scan(token))
-        identifiers = [first.meal_ids[0], second.meal_ids[0]]
-        times = self.rows("SELECT MIN(served_at) AS first, MAX(served_at) AS last FROM meals WHERE id IN (%s, %s)", identifiers)[0]
-        result = self.meals.void_bulk(self.admin_context, identifiers[::-1], "Integration bulk correction")
-        self.assertEqual(result["meal_ids"], sorted(identifiers))
-        history = QueryService(self.db).meal_history(
-            self.admin_context,
-            times["first"].replace(tzinfo=timezone.utc),
-            times["last"].replace(tzinfo=timezone.utc) + timedelta(microseconds=1),
-        )
-        self.assertFalse(set(identifiers).intersection(row["meal_id"] for row in history["items"]))
-        self.assertEqual(self.scalar("SELECT COUNT(*) FROM meal_voids WHERE meal_id IN (%s, %s)", identifiers), 2)
 
     def test_successful_retry_returns_original_approval_after_qr_revocation(self):
         registration, token = self.employee()

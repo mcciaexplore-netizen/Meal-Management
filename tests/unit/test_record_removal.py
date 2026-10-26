@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 
 from meal_management.employees import EmployeeService
 from meal_management.errors import DomainError
-from meal_management.meals import MealService
 from meal_management.models import Actor, ServerContext
 from meal_management.security import generate_token
 
@@ -111,81 +110,6 @@ class EmployeeRemovalTests(unittest.TestCase):
                 with self.assertRaises(DomainError) as caught:
                     self.service.archive_bulk(self.context, identifiers, "Office cleanup")
                 self.assertEqual(caught.exception.code, "INVALID_EMPLOYEE_IDS")
-        self.tx.all.assert_not_called()
-
-
-class MealRemovalTests(unittest.TestCase):
-    def setUp(self):
-        self.now = datetime(2026, 9, 11, 10, 0)
-        self.tx = Mock()
-        self.tx.now.return_value = self.now
-        self.db = TransactionDatabase(self.tx)
-        self.service = MealService(self.db)
-        self.context = ServerContext(generate_token())
-        self.actor = Actor(7, frozenset({"ADMIN"}))
-        self.meal = {
-            "id": 91,
-            "serving_id": 77,
-            "unit_number": 1,
-            "served_at": self.now,
-            "kind": "EMPLOYEE",
-        }
-
-    def test_removal_creates_immutable_void_and_audit_event(self):
-        self.tx.one.side_effect = [self.meal, None]
-        with patch("meal_management.meals.require_actor", return_value=self.actor), patch("meal_management.meals.audit") as audit:
-            result = self.service.void(self.context, 91, "Recorded by mistake")
-        self.assertEqual(result, self.now)
-        self.assertTrue(self.db.committed)
-        self.assertIn("INSERT INTO meal_voids", self.tx.insert.call_args.args[0])
-        self.assertEqual(self.tx.insert.call_args.args[1], (91, 7, "Recorded by mistake", self.now))
-        self.assertEqual(audit.call_args.args[2], "MEAL_REMOVED")
-
-    def test_already_removed_meal_cannot_be_removed_again(self):
-        self.tx.one.side_effect = [self.meal, {"meal_id": 91}]
-        with patch("meal_management.meals.require_actor", return_value=self.actor):
-            with self.assertRaises(DomainError) as caught:
-                self.service.void(self.context, 91, "Second removal")
-        self.assertEqual(caught.exception.code, "MEAL_ALREADY_REMOVED")
-        self.assertTrue(self.db.rolled_back)
-        self.tx.insert.assert_not_called()
-
-    def test_invalid_reason_is_rejected_before_database_access(self):
-        with self.assertRaises(DomainError) as caught:
-            self.service.void(self.context, 91, "   ")
-        self.assertEqual(caught.exception.code, "INVALID_REMOVAL_REASON")
-        self.assertFalse(self.db.committed)
-        self.assertFalse(self.db.rolled_back)
-
-    def test_bulk_removal_voids_every_selected_meal_atomically(self):
-        meals = [
-            self.meal,
-            {"id": 92, "serving_id": 78, "unit_number": 1, "served_at": self.now, "kind": "MASTER"},
-        ]
-        self.tx.all.side_effect = [meals, []]
-        with patch("meal_management.meals.require_actor", return_value=self.actor), patch("meal_management.meals.audit") as audit:
-            result = self.service.void_bulk(self.context, [92, 91], "Duplicate imports")
-        self.assertEqual(result, {"meal_ids": [91, 92], "removed_count": 2, "removed_at": self.now})
-        self.assertTrue(self.db.committed)
-        self.assertEqual(self.tx.insert.call_count, 2)
-        self.assertEqual(audit.call_count, 2)
-        self.assertTrue(all(call.args[2] == "MEAL_REMOVED" for call in audit.call_args_list))
-
-    def test_bulk_removal_rejects_already_removed_meal_before_writing_anything(self):
-        self.tx.all.side_effect = [[self.meal], [{"meal_id": 91}]]
-        with patch("meal_management.meals.require_actor", return_value=self.actor):
-            with self.assertRaises(DomainError) as caught:
-                self.service.void_bulk(self.context, [91], "Duplicate imports")
-        self.assertEqual(caught.exception.code, "MEAL_ALREADY_REMOVED")
-        self.assertTrue(self.db.rolled_back)
-        self.tx.insert.assert_not_called()
-
-    def test_bulk_removal_rejects_empty_duplicate_and_oversized_identifier_sets(self):
-        for identifiers in ([], [91, 91], list(range(1, 102))):
-            with self.subTest(count=len(identifiers)):
-                with self.assertRaises(DomainError) as caught:
-                    self.service.void_bulk(self.context, identifiers, "Duplicate imports")
-                self.assertEqual(caught.exception.code, "INVALID_MEAL_IDS")
         self.tx.all.assert_not_called()
 
 

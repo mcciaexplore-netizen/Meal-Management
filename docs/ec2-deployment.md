@@ -127,6 +127,12 @@ GRANT DELETE ON `meal_management`.`staff_account_roles` TO 'meal_runtime'@'172.3
 
 Rolling back after 010 is safe for meals and reports, but the earlier image does not check scanner phone records, so revoked or expired phones with a signed cookie would scan again until the new image is redeployed.
 
+Meals became permanent after migration 011. Remove the runtime account's ability to record meal removals as the master user, then rerun `--verify-only` from the new image:
+
+```sql
+REVOKE INSERT ON `meal_management`.`meal_voids` FROM 'meal_runtime'@'172.31.%';
+```
+
 ## Changing hostnames
 
 Point the new DNS names at the Elastic IP, then rerun `make-env.py` with the new hostnames and the same `--out` file. That keeps the secrets. Then run `docker compose --env-file .env.docker up -d`, and Caddy obtains the new certificates. Activated scanner browsers must activate again on the new scanner hostname.

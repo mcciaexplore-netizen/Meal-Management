@@ -123,11 +123,11 @@ test("dashboard meal reports show employee company email and phone", () => {
   assert.match(html, /\+91 98765 43211/);
 });
 
-test("administrator meal history can render a removal control", () => {
+test("recorded meals are permanent: meal history has no removal control", () => {
   const html = mealTable([{ id: 19, kind: "EMPLOYEE", employee_name: "Asha", meal_type_name: "Lunch", waiter_name: "Scanner", location_name: "Office", served_at: "2026-09-09T12:00:00Z" }], true);
-  assert.match(html, /data-action="meal-remove"/);
-  assert.match(html, /data-id="19"/);
-  assert.match(html, />Remove</);
+  assert.doesNotMatch(html, /meal-remove/);
+  assert.doesNotMatch(html, />Remove</);
+  assert.match(html, /Asha/);
 });
 
 test("missing master details remain unconfirmed instead of permitting a new serving", async () => {
