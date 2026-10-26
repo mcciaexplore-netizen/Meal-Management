@@ -1,4 +1,4 @@
-.scan-only-body { background: #edf3f2; }
+.scan-only-body { background: #edf3f2; min-height: 100dvh; }
 .scanner-install-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin: 14px auto; max-width: 774px; padding: 17px 20px; background: #fff; border: 1px solid #b9d7ce; border-radius: 12px; color: #173844; box-shadow: 0 3px 15px #16362c08; }
 .scanner-install-copy { flex: 1 1 250px; }
 .scanner-install-copy h2 { margin: 0; font-size: 18px; }
@@ -12,7 +12,7 @@
 .scan-app-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 15px max(20px, env(safe-area-inset-left)); background: #102d3a; color: #fff; }
 .scan-app-brand { display: flex; align-items: center; gap: 12px; }
 .scan-app-brand > .icon { color: #9cdbcb; width: 26px; height: 26px; }
-.scan-app-brand strong { font-size: 19px; font-weight: 600; }
+.scan-app-brand strong { font-size: 19px; font-weight: 600; white-space: nowrap; }
 .scanner-activation { max-width: 510px; margin: 8vh auto 0; align-items: stretch; text-align: left; background: #fff; border: 1px solid #d7e4df; border-radius: 12px; padding: 30px; }
 .scanner-activation > .scan-app-brand { color: #176947; margin-bottom: 22px; }
 .scanner-activation > h1 { font-size: 30px; }
@@ -33,8 +33,9 @@
 .scan-only-controls { display: flex; gap: 10px; padding: 18px 20px 9px; }
 .scan-only-controls > .button { min-height: 47px; flex: 1; }
 .scan-only-controls > .button:first-child { flex: 2; }
-.scan-upload { text-align: center; padding: 12px 20px 20px; }
-.scan-upload > input { display: block; max-width: 100%; font-size: 12px; margin: 10px auto; color: #6c8179; }
+.scan-upload { position: relative; text-align: center; padding: 12px 20px 20px; }
+.scan-upload > input[type="file"] { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; opacity: 0; }
+.scan-upload:has(> input:focus-visible) > label { outline: 3px solid #2d99c0; outline-offset: 4px; }
 .scan-upload > label { width: 100%; min-height: 43px; cursor: pointer; font-size: 13px; }
 .scan-upload > p { font-size: 10px; color: #718a80; margin-top: 7px; }
 .scan-only-outcome:empty { display: none; }
@@ -72,6 +73,7 @@
   .scan-app-header { padding: 13px 15px; }
   .scan-app-brand { gap: 9px; }
   .scan-app-brand strong { font-size: 17px; }
+  .scan-app-header:has(.scan-shift) .scan-app-brand strong { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .scanner-activation { margin: 4vh 12px 0; padding: 24px 20px; }
   .scan-only-main { padding: 14px 12px max(22px, env(safe-area-inset-bottom)); }
   .scan-only-camera { min-height: 310px; aspect-ratio: 1.05; max-height: 53dvh; }
@@ -90,14 +92,21 @@
 }
 .scan-meal-type { display: grid; gap: 6px; margin: 0 0 12px; padding: 12px; border-radius: 10px; background: #f1f7f6; border: 1px solid #d3e6e2; }
 .scan-meal-type label { font-size: 13px; font-weight: 600; color: #5a6b75; }
-.scan-meal-type select { min-height: 48px; font-size: 18px; }
+.scan-meal-type select { width: 100%; min-height: 48px; padding: 8px 12px; font-size: 18px; color: #173746; background: #fff; border: 1px solid #cdd9df; border-radius: 8px; }
 .scan-meal-current { margin: 4px 0 0; font-size: 34px; font-weight: 800; line-height: 1.15; color: var(--teal-dark, #0c655a); text-align: center; }
 .scan-meal-current.unselected { font-size: 18px; font-weight: 600; color: #946312; }
-.scan-shift { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-left: auto; }
+.scan-shift { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-left: auto; min-width: 0; }
+.scan-shift-who { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; text-align: right; }
+.scan-shift-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.scan-shift-until { font-size: 12px; opacity: .85; white-space: nowrap; }
+.scan-shift > .button { flex-shrink: 0; }
 .scan-shift-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; margin: 8px 12px 0; border-radius: 8px; background: #fff1d9; color: #6b4a07; font-weight: 600; }
 .scan-shift-banner[hidden] { display: none; }
 .shift-signin form { display: grid; gap: 14px; text-align: left; }
 .shift-notice { background: #f1f7f6; border: 1px solid #d3e6e2; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.5; text-align: left; }
-.shift-signin .consent { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.shift-signin form label { margin: 0; }
+.shift-signin .button { margin: 0; }
+.shift-signin .consent { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 15px; font-weight: 700; color: #173746; cursor: pointer; }
+.shift-signin .consent input { width: 24px; height: 24px; }
 .selfie-field { display: flex; align-items: center; gap: 12px; }
 .selfie-field img { width: 96px; height: 96px; object-fit: cover; border-radius: 50%; }
