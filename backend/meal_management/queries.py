@@ -34,6 +34,26 @@ def _page(rows, limit):
     return {"items": items, "next_cursor": items[-1]["id"] if len(rows) > limit else None}
 
 
+def _master_meal_types(tx, items):
+    identifiers = [item["id"] for item in items if item.get("kind") == "MASTER"]
+    by_qr = {identifier: [] for identifier in identifiers}
+    if identifiers:
+        placeholders = ", ".join(["%s"] * len(identifiers))
+        for row in tx.all(
+            "SELECT a.qr_id, a.meal_type_id, t.code, t.name, t.is_active, a.meal_limit, a.meals_used, "
+            "a.meal_limit - a.meals_used AS meals_remaining, a.exhausted_at "
+            "FROM master_qr_meal_types a JOIN meal_types t ON t.id = a.meal_type_id "
+            f"WHERE a.qr_id IN ({placeholders}) ORDER BY a.qr_id, t.id",
+            tuple(identifiers),
+        ):
+            record = _record(row)
+            by_qr[record.pop("qr_id")].append(record)
+    for item in items:
+        if item.get("kind") == "MASTER":
+            item["meal_types"] = by_qr[item["id"]]
+    return items
+
+
 class QueryService:
     def __init__(self, db):
         self.db = db
@@ -136,7 +156,9 @@ class QueryService:
                 "WHERE q.kind = 'MASTER' AND q.id > %s ORDER BY q.id LIMIT %s",
                 (after_id, limit + 1),
             )
-        return _page(rows, limit)
+            page = _page(rows, limit)
+            _master_meal_types(tx, page["items"])
+        return page
 
     def qr_metadata(self, context, qr_id):
         positive_integer(qr_id, "QR_ID")
@@ -152,7 +174,8 @@ class QueryService:
             )
             if row is None:
                 raise DomainError("QR_NOT_FOUND")
-        return _record(row)
+            record = _master_meal_types(tx, [_record(row)])[0]
+        return record
 
     def email_status(self, context, limit=50, after_id=0, employee_id=None, delivery_scope="all", bulk_batch_id=None):
         _pagination(limit, after_id)

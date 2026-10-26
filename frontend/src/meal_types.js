@@ -6,16 +6,16 @@ export function activeMealTypes(rows = []) {
   return rows.filter(enabled);
 }
 
-export function mealTypeCheckboxes(rows = [], selectedIds = null) {
+export function mealTypeCheckboxes(rows = [], selectedIds = null, help = "The employee's QR is refused for meal types that are not ticked.") {
   const active = activeMealTypes(rows);
   const chosen = new Set((selectedIds ?? active.map(row => row.id)).map(Number));
   if (!active.length) return '<fieldset class="role-choices"><legend>Valid for meal types</legend><p class="field-help">Add a meal type in Office settings first.</p></fieldset>';
-  return `<fieldset class="role-choices meal-type-choices"><legend>Valid for meal types</legend>${active.map(row => `<label class="checkbox"><input type="checkbox" name="meal_type_ids" value="${escape(row.id)}" ${chosen.has(Number(row.id)) ? "checked" : ""}> ${escape(row.name)}</label>`).join("")}<p class="field-help">The employee's QR is refused for meal types that are not ticked.</p></fieldset>`;
+  return `<fieldset class="role-choices meal-type-choices"><legend>Valid for meal types</legend>${active.map(row => `<label class="checkbox"><input type="checkbox" name="meal_type_ids" value="${escape(row.id)}" ${chosen.has(Number(row.id)) ? "checked" : ""}> ${escape(row.name)}</label>`).join("")}<p class="field-help">${escape(help)}</p></fieldset>`;
 }
 
-export function selectedMealTypeIds(values) {
+export function selectedMealTypeIds(values, message = "Tick at least one meal type this employee's QR is valid for.") {
   const ids = [...new Set(values.map(Number))];
-  if (!ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 1)) throw new Error("Tick at least one meal type this employee's QR is valid for.");
+  if (!ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 1)) throw new Error(message);
   return ids.sort((left, right) => left - right);
 }
 
@@ -53,7 +53,18 @@ export function mealTypeRejection(code, result, mealTypeName) {
     return time ? `${name} already recorded at ${time} (India time).` : `${name} was already recorded in the last 12 hours.`;
   }
   if (code === "MEAL_TYPE_UNAVAILABLE") return `${name} is no longer offered. Choose another meal type.`;
+  if (code === "MASTER_MEAL_TYPE_NOT_ALLOWED") return `This visitor QR is not valid for ${name}.`;
+  if (code === "MASTER_MEAL_TYPE_USED_UP") return `All ${name} meals on this visitor QR have been used.`;
   return null;
+}
+
+export function visitorMealTypeLines(qr) {
+  const rows = Array.isArray(qr?.meal_types) ? qr.meal_types : [];
+  return rows.map(row => {
+    const name = `${row.name}${row.is_active === false || row.is_active === 0 ? " (inactive)" : ""}`;
+    const remaining = Number(row.meals_remaining);
+    return remaining > 0 ? `${name}: ${remaining} of ${row.meal_limit} left` : `${name}: used up`;
+  });
 }
 
 export function chooseMealType(types, id) {

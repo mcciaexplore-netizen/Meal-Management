@@ -384,15 +384,29 @@ class EmployeeQrServiceTests(unittest.TestCase):
 
     def test_master_request_stores_normalized_group_details_and_meal_limit_atomically(self):
         self.tx.insert.return_value = 72
+        self.tx.all.return_value = [{"id": 1}, {"id": 3}]
         with self._patch_actor("qr"), patch("meal_management.qr.audit"):
             issued = self.qr.issue_master(
                 self.context, company_name=" Example Company ", contact_name=" Ravi Patel ",
-                email=" RAVI@EXAMPLE.TEST ", phone=" +91 98765 43210 ", meal_limit=5,
+                email=" RAVI@EXAMPLE.TEST ", phone=" +91 98765 43210 ", meal_limit=5, meal_type_ids=[3, 1],
             )
         self.assertEqual(issued.qr_id, 72)
         allocation = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("INSERT INTO master_qr_allocations"))
         self.assertEqual(allocation.args[1], (72, "Example Company", "Ravi Patel", "ravi@example.test", "+91 98765 43210", 5, 7))
+        allowances = [call.args[1][:3] for call in self.tx.execute.call_args_list if call.args[0].startswith("INSERT INTO master_qr_meal_types")]
+        self.assertEqual(allowances, [(72, 1, 5), (72, 3, 5)])
         self.assertTrue(self.db.committed)
+
+    def test_master_request_refuses_inactive_or_unknown_meal_types(self):
+        self.tx.insert.return_value = 72
+        self.tx.all.return_value = [{"id": 1}]
+        with self._patch_actor("qr"), patch("meal_management.qr.audit"):
+            with self.assertRaisesRegex(DomainError, "MEAL_TYPE_UNAVAILABLE"):
+                self.qr.issue_master(
+                    self.context, company_name="Example", contact_name="Ravi", email="ravi@example.test",
+                    phone="+919876543210", meal_limit=5, meal_type_ids=[1, 9],
+                )
+        self.assertTrue(self.db.rolled_back)
 
     def test_exhausted_master_cannot_be_retrieved_or_exported(self):
         credential = {**self.credential, "kind": "MASTER", "employee_id": None}
@@ -415,16 +429,18 @@ class EmployeeQrServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ALLOCATION_INSERT_FAILED"):
                 self.qr.issue_master(
                     self.context, company_name="Example Company", contact_name="Ravi Patel",
-                    email="ravi@example.test", phone="+919876543210", meal_limit=5,
+                    email="ravi@example.test", phone="+919876543210", meal_limit=5, meal_type_ids=[1],
                 )
         self.assertTrue(self.db.rolled_back)
         self.assertFalse(self.db.committed)
 
     def test_master_request_rejects_incomplete_details_or_invalid_allowance_before_writing(self):
+        valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test",
+                 "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1]}
         for values in (
-            {"company_name": "", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5},
-            {"company_name": "Example", "contact_name": "Ravi", "email": "invalid", "phone": "+919876543210", "meal_limit": 5},
-            {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 0},
+            {**valid, "company_name": ""}, {**valid, "email": "invalid"}, {**valid, "meal_limit": 0},
+            {**valid, "meal_type_ids": None}, {**valid, "meal_type_ids": []}, {**valid, "meal_type_ids": [1, 1]},
+            {**valid, "meal_type_ids": [0]}, {**valid, "meal_type_ids": ["1"]},
         ):
             with self.subTest(values=values):
                 with self.assertRaises(DomainError):

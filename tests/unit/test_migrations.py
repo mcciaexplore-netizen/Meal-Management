@@ -30,7 +30,7 @@ class MigrationParserTests(unittest.TestCase):
     def test_repository_migrations_have_stable_sequence(self):
         directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
         migrations = load_migrations(directory)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
         self.assertGreater(len(migrations[0].statements), 20)
         self.assertIn("scan_bound_at", "\n".join(migrations[1].statements))
         self.assertIn("last_seen_at", "\n".join(migrations[1].statements))
@@ -147,6 +147,23 @@ class MigrationParserTests(unittest.TestCase):
         self.assertIn("CREATE TRIGGER waiter_shift_delete_guard", source)
         self.assertNotIn("DELETE FROM", source)
         self.assertNotIn("DROP ", source)
+        for statement in migration.statements[1:]:
+            self.assertIn(statement, snapshot)
+
+    def test_visitor_meal_type_migration_backfills_remaining_per_active_type(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[13]
+        source = "\n".join(migration.statements)
+        snapshot = tuple(sql_statements((directory.parent / "schema.sql").read_text()))
+        self.assertEqual((migration.version, migration.name), (14, "master_qr_meal_types"))
+        self.assertIn("CREATE TABLE master_qr_meal_types", source)
+        self.assertIn("SELECT a.qr_id, t.id, a.meal_limit, a.meals_used, a.exhausted_at, UTC_TIMESTAMP(6)", source)
+        self.assertIn("FROM master_qr_allocations a CROSS JOIN meal_types t\nWHERE t.is_active = TRUE", source)
+        self.assertIn("CREATE TRIGGER master_qr_meal_type_update_guard", source)
+        self.assertIn("CREATE TRIGGER master_qr_meal_type_delete_guard", source)
+        self.assertNotIn("DELETE FROM", source)
+        self.assertNotIn("DROP ", source)
+        self.assertNotIn("ALTER TABLE", source)
         for statement in migration.statements[1:]:
             self.assertIn(statement, snapshot)
 

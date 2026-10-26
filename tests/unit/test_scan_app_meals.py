@@ -221,15 +221,36 @@ class ScanAppMealTests(unittest.TestCase):
             "meals_used": 4, "exhausted_at": None,
         }
         self.receipt["public_scanner"] = True
-        self.tx.one.side_effect = self.pending_rows() + [allocation]
+        per_type = {"meal_limit": 5, "meals_used": 4, "exhausted_at": None}
+        self.tx.one.side_effect = self.pending_rows() + [allocation, per_type, {"remaining": 0}]
         result = self.service._process(self.context, self.scan, self.receipt)
         self.assertTrue(result.approved)
         self.assertEqual(result.meal_ids, (91,))
         serving = self.tx.insert.call_args_list[0].args[1]
         self.assertEqual(serving[-4:], ("Example Ltd", "Ravi Patel", "ravi@example.test", "+919876543210"))
-        allowance = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("UPDATE master_qr_allocations"))
-        self.assertIn("meals_used < meal_limit", allowance.args[0])
-        self.assertEqual(allowance.args[1], (self.tx.now(), 12))
+        used = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("UPDATE master_qr_meal_types"))
+        self.assertIn("meals_used < meal_limit", used.args[0])
+        self.assertEqual(used.args[1], (self.tx.now(), 12, self.scan.meal_type_id))
+        summary = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("UPDATE master_qr_allocations"))
+        self.assertEqual(summary.args[1], (0, self.tx.now(), 0, 12))
+
+    def test_allocated_master_refuses_a_meal_type_it_does_not_allow_or_has_used_up(self):
+        allocation = {
+            "qr_id": 12, "company_name": "Example Ltd", "contact_name": "Ravi Patel",
+            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5,
+            "meals_used": 0, "exhausted_at": None,
+        }
+        self.receipt["public_scanner"] = True
+        for per_type, code in ((None, "MASTER_MEAL_TYPE_NOT_ALLOWED"),
+                               ({"meal_limit": 5, "meals_used": 5, "exhausted_at": self.tx.now()}, "MASTER_MEAL_TYPE_USED_UP")):
+            with self.subTest(code=code):
+                self.tx.reset_mock()
+                self.tx.one.side_effect = self.pending_rows() + [allocation, per_type, {"id": 12}]
+                result = self.service._process(self.context, self.scan, self.receipt)
+                self.assertFalse(result.approved)
+                self.assertEqual(result.code, code)
+                self.tx.insert.assert_not_called()
+                self.assertFalse(any(call.args[0].startswith("UPDATE master_qr") for call in self.tx.execute.call_args_list))
 
     def test_exhausted_allocated_master_is_rejected_without_a_meal(self):
         allocation = {
@@ -291,7 +312,8 @@ class ScanAppMealTests(unittest.TestCase):
             "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 1,
             "meals_used": 0, "exhausted_at": None,
         }
-        self.tx.one.side_effect = self.pending_rows() + [allocation]
+        per_type = {"meal_limit": 1, "meals_used": 0, "exhausted_at": None}
+        self.tx.one.side_effect = self.pending_rows() + [allocation, per_type, {"remaining": 0}]
         database = FailingCommitDatabase(self.tx)
         service = MealService(database)
         with patch.object(service, "_receive", return_value=self.receipt), patch.object(service, "_mark_interrupted"):

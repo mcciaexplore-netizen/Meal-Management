@@ -21,10 +21,11 @@ class SharedScannerMySQLTests(MealServicesFixture):
     def visitor(self):
         return {"company_name": "Example Company", "name": "Fictional Visitor", "email": "visitor@example.test", "phone": "+919876543210"}
 
-    def allocated_master(self, meal_limit=5):
+    def allocated_master(self, meal_limit=5, meal_type_ids=None):
         return self.qr.issue_master(
             self.admin_context, company_name="Example Company", contact_name="Fictional Visitor",
             email="visitor@example.test", phone="+919876543210", meal_limit=meal_limit,
+            meal_type_ids=meal_type_ids or [self.meal_type_id],
         )
 
     def test_shared_employee_scan_uses_system_actor_defaults_and_no_staff_session(self):
@@ -71,11 +72,11 @@ class SharedScannerMySQLTests(MealServicesFixture):
         self.assertEqual(self.shared().result(browser, identifier)["meal_ids"], list(result.meal_ids))
 
     def test_pending_request_keeps_captured_defaults_when_profile_changes(self):
-        credential = self.allocated_master(2)
+        captured_type = self.scalar("SELECT id FROM meal_types WHERE code = 'LUNCH'")
+        credential = self.allocated_master(2, [captured_type, self.meal_type_id])
         browser = secrets.token_bytes(32)
         identifier = uuid4()
         original_profile = self.profile()
-        captured_type = self.scalar("SELECT id FROM meal_types WHERE code = 'LUNCH'")
         self.shared()._reserve(browser, identifier, captured_type)
         try:
             cursor = self.admin_connection.cursor()

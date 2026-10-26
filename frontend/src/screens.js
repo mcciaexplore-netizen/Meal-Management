@@ -8,7 +8,7 @@ import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
 import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
-import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds } from "./meal_types.js";
+import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds, visitorMealTypeLines } from "./meal_types.js";
 
 const active = rows => (rows ?? []).filter(row => row.is_active !== false && row.is_active !== 0);
 const rowId = row => row.id ?? row.qr_id ?? row.authorization_id;
@@ -174,16 +174,30 @@ function removalDialog(title, description, label, callback) {
   formAction(dialog.querySelector("form"), async data => callback(data.get("reason")));
 }
 
-function masterRequestDialog(title, values, callback) {
-  const dialog = modal(title, `<p class="muted">Create one QR for this visitor group. Each successful scan records one meal and reduces the remaining allowance by one.</p><form><div class="form-grid">${field("Company Name", "company_name", values?.company_name ?? "", "text", 'required maxlength="150" autocomplete="organization"')}${field("POC Name", "contact_name", values?.contact_name ?? "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email", "email", values?.email ?? "", "email", 'required maxlength="254" autocomplete="email"')}${field("Phone Number", "phone", values?.phone ?? "", "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Number of people", "meal_limit", values?.meal_limit ?? 1, "number", 'required min="1" max="65535" step="1"')}${field("Expiry, local time", "expires_at", "", "datetime-local")}</div><p class="field-help">The QR expires automatically after the final allowed meal. You may also set an earlier date and time.</p>${formEnd("Generate master QR")}</form>`);
+export const VISITOR_ALLOWANCE_HELP = "Each ticked meal type allows this many scans.";
+
+export function visitorMealTypeChoices(mealTypes, values) {
+  const previous = Array.isArray(values?.meal_types) ? values.meal_types.map(row => row.meal_type_id) : null;
+  return mealTypeCheckboxes(mealTypes, previous, "The visitor QR is refused for meal types that are not ticked.");
+}
+
+function masterRequestDialog(title, values, mealTypes, callback) {
+  const dialog = modal(title, `<p class="muted">Create one QR for this visitor group. Each successful scan records one meal for the selected meal type and reduces that meal type's remaining allowance by one.</p><form><div class="form-grid">${field("Company Name", "company_name", values?.company_name ?? "", "text", 'required maxlength="150" autocomplete="organization"')}${field("POC Name", "contact_name", values?.contact_name ?? "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email", "email", values?.email ?? "", "email", 'required maxlength="254" autocomplete="email"')}${field("Phone Number", "phone", values?.phone ?? "", "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Number of people", "meal_limit", values?.meal_limit ?? 1, "number", 'required min="1" max="65535" step="1"')}${field("Expiry, local time", "expires_at", "", "datetime-local")}</div><p class="field-help">${VISITOR_ALLOWANCE_HELP} Number of people is the allowance for each ticked meal type.</p>${visitorMealTypeChoices(mealTypes, values)}<p class="field-help">The QR expires automatically once every ticked meal type is used up. You may also set an earlier date and time.</p>${formEnd("Generate master QR")}</form>`);
   formAction(dialog.querySelector("form"), async data => callback({
     company_name: data.get("company_name"),
     contact_name: data.get("contact_name"),
     email: data.get("email"),
     phone: data.get("phone"),
     meal_limit: positive(data.get("meal_limit"), "number of people"),
+    meal_type_ids: selectedMealTypeIds(data.getAll("meal_type_ids"), "Tick at least one meal type this visitor QR is valid for."),
     expires_at: optionalExpiry(data.get("expires_at"))
   }));
+}
+
+export function visitorMealTypeCell(qr) {
+  const lines = visitorMealTypeLines(qr);
+  if (!lines.length) return qr?.meal_limit == null ? "—" : `${escape(qr.meals_remaining ?? "—")} of ${escape(qr.meal_limit)} left`;
+  return lines.map(line => `<span class="meal-type-line">${escape(line)}</span>`).join("");
 }
 
 export async function masters(target, context) {
@@ -195,7 +209,7 @@ export async function masters(target, context) {
     if (!context.isCurrent()) return;
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
-    target.querySelector("#master-list").innerHTML = rows.length ? table(["Visitor group", "POC", "Meals", "Status", "Issued", ""], rows.map(row => `<tr><td><strong>${escape(row.company_name ?? `Legacy master QR ${rowId(row)}`)}</strong><span class="cell-subtitle">QR ${escape(rowId(row))}</span></td><td>${escape(row.contact_name ?? "—")}<span class="cell-subtitle">${escape(row.email ?? "")}</span></td><td>${escape(row.meals_used ?? 0)} / ${escape(row.meal_limit ?? "—")}<span class="cell-subtitle">${escape(row.meals_remaining ?? "—")} remaining</span></td><td>${qrStatus(row)}</td><td>${escape(timestamp(row.issued_at))}</td><td>${action("open-master", rowId(row), "Manage")}</td></tr>`), "Visitor master credentials") : empty("No visitor QR created", "Create a limited master QR for the next visitor group.", "qr");
+    target.querySelector("#master-list").innerHTML = rows.length ? table(["Visitor group", "POC", "Meals", "Status", "Issued", ""], rows.map(row => `<tr><td><strong>${escape(row.company_name ?? `Legacy master QR ${rowId(row)}`)}</strong><span class="cell-subtitle">QR ${escape(rowId(row))}</span></td><td>${escape(row.contact_name ?? "—")}<span class="cell-subtitle">${escape(row.email ?? "")}</span></td><td>${visitorMealTypeCell(row)}</td><td>${qrStatus(row)}</td><td>${escape(timestamp(row.issued_at))}</td><td>${action("open-master", rowId(row), "Manage")}</td></tr>`), "Visitor master credentials") : empty("No visitor QR created", "Create a limited master QR for the next visitor group.", "qr");
     target.querySelectorAll('[data-action="open-master"]').forEach(button => button.onclick = () => detail(Number(button.dataset.id)));
     target.querySelector("#master-pagination").innerHTML = `<span>${rows.length} credentials shown</span>${cursor ? '<button class="button" id="more-master">Load more</button>' : ""}`;
     target.querySelector("#more-master")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
@@ -205,8 +219,8 @@ export async function masters(target, context) {
     try {
       const qr = await api(`/master-qrs/${id}`);
       if (!dialog.open) return;
-      dialog.querySelector(".modal-content").innerHTML = `${qrCard(qr)}<div class="detail-grid"><div><span>Company</span><strong>${escape(qr.company_name ?? "Legacy credential")}</strong></div><div><span>POC</span><strong>${escape(qr.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escape(qr.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escape(qr.phone ?? "—")}</strong></div><div><span>Meals recorded</span><strong>${escape(qr.meals_used ?? 0)} of ${escape(qr.meal_limit ?? "—")}</strong></div><div><span>Meals remaining</span><strong>${escape(qr.meals_remaining ?? "—")}</strong></div></div><p class="field-help">Each deliberate scan records one meal. After the final allowance is committed, this QR is expired automatically.</p><div class="stack-actions"><button class="button" id="replace-master">Create another visitor QR</button>${!qr.revoked_at && !qr.exhausted_at ? '<button class="button danger-outline" id="revoke-master">Revoke master QR</button>' : ""}<a class="button primary" href="${escape(context.scanner_url)}">Open Meal Scanner</a></div>`;
-      dialog.querySelector("#replace-master").onclick = () => masterRequestDialog("Create another visitor QR", qr, async body => {
+      dialog.querySelector(".modal-content").innerHTML = `${qrCard(qr)}<div class="detail-grid"><div><span>Company</span><strong>${escape(qr.company_name ?? "Legacy credential")}</strong></div><div><span>POC</span><strong>${escape(qr.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escape(qr.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escape(qr.phone ?? "—")}</strong></div><div><span>Number of people</span><strong>${escape(qr.meal_limit ?? "—")} per meal type</strong></div><div><span>Valid for</span><strong>${visitorMealTypeCell(qr)}</strong></div></div><p class="field-help">Each deliberate scan records one meal for the selected meal type. After every meal type is used up, this QR is expired automatically.</p><div class="stack-actions"><button class="button" id="replace-master">Create another visitor QR</button>${!qr.revoked_at && !qr.exhausted_at ? '<button class="button danger-outline" id="revoke-master">Revoke master QR</button>' : ""}<a class="button primary" href="${escape(context.scanner_url)}">Open Meal Scanner</a></div>`;
+      dialog.querySelector("#replace-master").onclick = () => masterRequestDialog("Create another visitor QR", qr, context.catalog?.meal_types ?? [], async body => {
         const result = await api("/master-qrs", { method: "POST", body });
         notify("Visitor master QR created.");
         await load();
@@ -220,7 +234,7 @@ export async function masters(target, context) {
       }));
     } catch (error) { if (dialog.open) dialog.querySelector(".modal-content").innerHTML = errorMessage(error); }
   }
-  target.querySelector("#new-master").onclick = () => masterRequestDialog("Create visitor master QR", null, async body => {
+  target.querySelector("#new-master").onclick = () => masterRequestDialog("Create visitor master QR", null, context.catalog?.meal_types ?? [], async body => {
     const result = await api("/master-qrs", { method: "POST", body });
     notify("Visitor master QR created.");
     await load();

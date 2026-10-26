@@ -676,7 +676,7 @@ class MasterAuthorizationApiTests(ApiTestCase):
     def test_master_creation_returns_master_category(self):
         body = {
             "company_name": "Example Visitors", "contact_name": "Ravi Patel",
-            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5,
+            "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [3, 1],
         }
         response = self.harness.post("/api/master-qrs", json=body)
         self.assertEqual(response.status_code, 201)
@@ -684,10 +684,13 @@ class MasterAuthorizationApiTests(ApiTestCase):
         self.assertNotIn(self.harness.meals.master_token, response.text)
         self.harness.services.qr.issue_master.assert_called_once()
         self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["meal_limit"], 5)
+        self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["meal_type_ids"], [3, 1])
 
     def test_master_creation_requires_group_details_and_rejects_a_third_category(self):
-        valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5}
-        for body in ({}, {**valid, "meal_limit": 0}, {**valid, "kind": "GUEST"}, {**valid, "phone": "123"}):
+        valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1]}
+        without_types = {key: value for key, value in valid.items() if key != "meal_type_ids"}
+        for body in ({}, {**valid, "meal_limit": 0}, {**valid, "kind": "GUEST"}, {**valid, "phone": "123"},
+                     without_types, {**valid, "meal_type_ids": []}, {**valid, "meal_type_ids": [0]}):
             with self.subTest(body=body):
                 self.assert_error(self.harness.post("/api/master-qrs", json=body), 422, "INVALID_INPUT")
 
@@ -992,7 +995,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_employee_contact_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}
