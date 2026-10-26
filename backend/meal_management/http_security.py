@@ -48,6 +48,7 @@ def error_body(code, request_id=None):
         "MASTER_MEAL_TYPE_NOT_ALLOWED": "This visitor QR is not valid for this meal type.",
         "MASTER_MEAL_TYPE_USED_UP": "All meals of this type on this visitor QR have been used.",
         "INVALID_MEAL_TYPE_IDS": "Tick at least one meal type.",
+        "CLIENT_REFRESH_REQUIRED": "Meal Office was updated. Refresh the page to continue.",
         "SCANNER_INACTIVE": "This scanning counter has been deactivated. Ask the office administrator.",
         "LOCATION_INACTIVE": "This serving location has been deactivated. Ask the office administrator.",
         "DEPARTMENT_UNAVAILABLE": "That department is inactive. Choose an active department.",
@@ -78,6 +79,8 @@ def status_for(code):
         return 429
     if code in {"SERVICE_UNAVAILABLE", "PROCESSING_UNCONFIRMED", "SCAN_RECEIPT_UNCONFIRMED", "TRANSACTION_RETRY_REQUIRED", "DATABASE_NOT_READY", "SCANNER_NOT_CONFIGURED"}:
         return 503
+    if code == "CLIENT_REFRESH_REQUIRED":
+        return 409
     if code in {"SCANNER_DISABLED", "SHIFT_SELFIE_EXPIRED"}:
         return 404
     if code.endswith("NOT_FOUND") or code == "NOT_FOUND":
@@ -156,6 +159,8 @@ class SecurityMiddleware:
                 ]
                 if sensitive:
                     extra.append((b"cache-control", b"no-store"))
+                elif path.startswith("/assets/"):
+                    extra.append((b"cache-control", b"no-cache"))
                 if self.settings.environment == "production":
                     extra.append((b"strict-transport-security", b"max-age=31536000"))
                 message["headers"] = list(message.get("headers", [])) + extra

@@ -227,7 +227,7 @@ class EmailPolicyTests(unittest.TestCase):
             QueryService(self.db).email_status(self.context, delivery_scope="bulk", bulk_batch_id=19)
         sql, params = self.tx.all.call_args.args
         self.assertIn("q.bulk_batch_id = %s", sql)
-        self.assertEqual(params, [0, 19, 51])
+        self.assertEqual(params, [19, 51])
         require.assert_called_once_with(self.tx, self.context, {"ADMIN"})
         with self.assertRaisesRegex(DomainError, "INVALID_EMAIL_BATCH_ID"):
             QueryService(self.db).email_status(self.context, bulk_batch_id=True)

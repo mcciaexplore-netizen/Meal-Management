@@ -106,7 +106,7 @@ class ShiftServiceTests(unittest.TestCase):
 
     def test_admin_filters_and_pages_are_validated(self):
         for kwargs, code in (({"status": "open"}, "INVALID_SHIFT_FILTER"), ({"limit": 0}, "INVALID_SHIFT_PAGE"),
-                             ({"limit": 201}, "INVALID_SHIFT_PAGE"), ({"after_id": -1}, "INVALID_SHIFT_PAGE")):
+                             ({"limit": 201}, "INVALID_SHIFT_PAGE"), ({"before": "1.0"}, "INVALID_REPORT_CURSOR")):
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(DomainError, code):
                 self.service.list(Mock(), **kwargs)
 
@@ -283,7 +283,7 @@ class AdminShiftApiTests(ApiTestCase):
     def test_admin_lists_views_selfie_ends_shift_and_sets_canteen(self):
         self.harness.login()
         self.assertEqual(self.client.get("/api/waiter-shifts?status=flagged&limit=20").status_code, 200)
-        self.assertEqual(self.shifts.list.call_args.kwargs, {"status": "flagged", "limit": 20, "after_id": 0})
+        self.assertEqual(self.shifts.list.call_args.kwargs, {"status": "flagged", "limit": 20, "before": None})
         response = self.client.get("/api/waiter-shifts/4/selfie")
         self.assertEqual((response.status_code, response.headers["content-type"]), (200, "image/jpeg"))
         self.assertIn("no-store", response.headers["cache-control"])

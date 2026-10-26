@@ -62,7 +62,7 @@ export async function allPages(path) {
   let cursor = null;
   do {
     const separator = path.includes("?") ? "&" : "?";
-    const response = await api(`${path}${separator}limit=100${cursor ? `&after_id=${encodeURIComponent(cursor)}` : ""}`);
+    const response = await api(`${path}${separator}limit=100${cursor ? `&before=${encodeURIComponent(cursor)}` : ""}`);
     items.push(...(response.items ?? []));
     if (response.next_cursor && response.next_cursor === cursor) throw new Error("The list could not be loaded. Please refresh and try again.");
     cursor = response.next_cursor;

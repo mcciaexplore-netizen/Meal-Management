@@ -39,7 +39,7 @@ export async function employees(target, context) {
   let photoEditor = null;
   async function load(append = false) {
     const data = new FormData(target.querySelector("#employee-filters"));
-    const result = await api(`/employees?${query({ q: data.get("q"), active: data.get("active"), limit: 30, after_id: append ? cursor : null })}`);
+    const result = await api(`/employees?${query({ q: data.get("q"), active: data.get("active"), limit: 30, before: append ? cursor : null })}`);
     if (!context.isCurrent()) return;
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
@@ -205,7 +205,7 @@ export async function masters(target, context) {
   let rows = [];
   let cursor = null;
   async function load(append = false) {
-    const result = await api(`/master-qrs?${query({ limit: 30, after_id: append ? cursor : null })}`);
+    const result = await api(`/master-qrs?${query({ limit: 30, before: append ? cursor : null })}`);
     if (!context.isCurrent()) return;
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
@@ -273,7 +273,7 @@ export function mealTable(rows, correctable = false) {
   if (!rows.length) return empty("No meals in this period", "Try a different date range or record a serving.", "plate");
   const headers = ["Meal", "Employee / visitor", "Company", "Email", "Phone", "Category", "Service", "Waiter", "Location", "Date & time"];
   if (correctable) headers.push("");
-  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.employee_company_name ?? row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.employee_email ?? row.visitor_email ?? "—")}</td><td>${escape(row.employee_phone ?? row.visitor_phone ?? "—")}</td><td>${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${mealTypeCell(row)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td>${correctable ? `<td>${action("meal-type-correct", row.meal_id ?? row.id, "Change meal type")}</td>` : ""}</tr>`), "Meal records");
+  return table(headers, rows.map(row => `<tr><td class="mono">${escape(row.meal_id ?? row.id)}</td><td><strong>${escape(row.employee_name ?? row.full_name ?? row.visitor_name ?? "Visitor")}</strong><span class="cell-subtitle">${escape(row.employee_code ?? "")}</span></td><td>${escape(row.employee_company_name ?? row.visitor_company_name ?? row.visitor_organization ?? "—")}</td><td>${escape(row.employee_email ?? row.visitor_email ?? "—")}</td><td>${escape(row.employee_phone ?? row.visitor_phone ?? "—")}</td><td class="nowrap">${badge(row.kind === "MASTER" ? "Visitor" : "Employee")}</td><td>${mealTypeCell(row)}</td><td>${escape(row.waiter_name ?? row.waiter_id)}</td><td>${escape(row.location_name ?? row.location_code ?? row.location_id)}</td><td class="nowrap">${escape(timestamp(row.served_at))}</td>${correctable ? `<td>${action("meal-type-correct", row.meal_id ?? row.id, "Change meal type")}</td>` : ""}</tr>`), "Meal records");
 }
 
 function scanTable(rows) {
@@ -296,7 +296,7 @@ export async function reports(target, context) {
     const employeeId = data.get("employee_id") ? positive(data.get("employee_id"), "employee ID") : null;
     target.querySelectorAll("[data-report]").forEach(button => { button.setAttribute("aria-selected", button.dataset.report === view ? "true" : "false"); button.classList.toggle("active", button.dataset.report === view); });
     const endpoint = view === "meals" ? "/reports/meals" : "/reports/scans";
-    const params = { ...range, limit: 40, after_id: append ? cursor : null, employee_id: view === "meals" ? employeeId : null, meal_type_id: view === "meals" && data.get("meal_type_id") ? positive(data.get("meal_type_id"), "meal type") : null, outcome: view === "rejected" ? "REJECTED" : null };
+    const params = { ...range, limit: 40, before: append ? cursor : null, employee_id: view === "meals" ? employeeId : null, meal_type_id: view === "meals" && data.get("meal_type_id") ? positive(data.get("meal_type_id"), "meal type") : null, outcome: view === "rejected" ? "REJECTED" : null };
     const [result, totals] = await Promise.all([api(`${endpoint}?${query(params)}`), append ? Promise.resolve(null) : api(`/reports/totals?${query(range)}`)]);
     if (!context.isCurrent() || version !== loadVersion) return;
     rows = append ? rows.concat(list(result)) : list(result);
@@ -433,7 +433,7 @@ export async function emails(target, context) {
     updateActions();
     try {
       const [result, configuration] = await Promise.all([
-        api(`/email-queue?${query({ limit: 100, after_id: append ? cursor : null, bulk_batch_id: batchId })}`),
+        api(`/email-queue?${query({ limit: 100, before: append ? cursor : null, bulk_batch_id: batchId })}`),
         api("/email-settings"),
       ]);
       if (!context.isCurrent() || version !== loadVersion) return;
@@ -620,7 +620,7 @@ export async function settings(target, context) {
     });
   }
   async function loadStaff(append = false) {
-    const result = await api(`/staff?${query({ limit: 30, after_id: append ? staffCursor : null })}`);
+    const result = await api(`/staff?${query({ limit: 30, before: append ? staffCursor : null })}`);
     if (!context.isCurrent()) return;
     staffRows = append ? staffRows.concat(list(result)) : list(result);
     staffCursor = result.next_cursor;
