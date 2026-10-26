@@ -20,6 +20,8 @@ Migration `012_meal_types_eligibility.sql` seeds Breakfast, Lunch, High Tea and 
 
 Migration `013_waiter_shifts.sql` adds `waiter_shifts` (name, private selfie key, location, accuracy, distance and flag, consent time and notice version, start, expiry and end), the single-row `waiter_shift_settings` for the canteen location and radius, and a nullable `waiter_shift_id` on `servings` and `scan_attempts`. Triggers forbid deleting shifts and changing anything except ending an open shift once. The runtime account needs `INSERT` and `UPDATE` on `waiter_shifts` and `UPDATE` on `waiter_shift_settings`; its row is inserted by the migration. Earlier images ignore the new nullable columns.
 
+`manage.py reset-test-data` empties the test-record tables with `TRUNCATE TABLE` as the master user, which bypasses delete-guard triggers without changing them, and verifies that triggers, constraints and kept tables are unchanged. `meal_management.test_data_reset` lists every table as wiped or kept; a unit test fails when a migration adds a table that is in neither list.
+
 New migrations are MySQL-only. The PostgreSQL schema under `database/postgres` stops at its first migration and is no longer supported; do not run the application against PostgreSQL.
 
 `schema.sql` defines a fresh MySQL 8.4 schema in the database selected by the operator. It does not create, select, reset, or migrate a database. Applying it requires separate authorization. Do not apply it to an existing populated database. No existing data is deleted or transformed by the application on startup.
