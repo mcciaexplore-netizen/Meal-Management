@@ -44,7 +44,7 @@ function shiftRow(shift) {
   const selfie = `<img class="shift-selfie" src="/api/waiter-shifts/${encodeURIComponent(shift.id)}/selfie" alt="Selfie of ${escape(shift.waiter_name)}" loading="lazy" data-selfie>`;
   const location = `<a href="${escape(mapLink(shift.latitude, shift.longitude))}" target="_blank" rel="noopener noreferrer">${escape(Number(shift.latitude).toFixed(5))}, ${escape(Number(shift.longitude).toFixed(5))}</a>`;
   const end = shift.status === "ACTIVE" ? `<button type="button" class="small-button" data-end-shift="${escape(shift.id)}" data-name="${escape(shift.waiter_name)}">End shift now</button>` : "";
-  return `<tr><td>${selfie}</td><td><strong>${escape(shift.waiter_name)}</strong></td><td class="nowrap">${escape(timestamp(shift.started_at))}<span class="cell-subtitle">until ${escape(timestamp(shift.ended_at ?? shift.expires_at))}</span></td><td>${escape(shift.phone_label ?? shift.phone_id)}</td><td>${location}</td><td>${escape(accuracyLabel(shift.accuracy_m))}</td><td>${flagLabel(shift)}</td><td>${statusLabel(shift)}</td><td>${end}</td></tr>`;
+  return `<tr><td>${selfie}</td><td><strong>${escape(shift.waiter_name)}</strong></td><td class="nowrap">${escape(timestamp(shift.started_at))}<span class="cell-subtitle">until ${escape(timestamp(shift.ended_at ?? shift.expires_at))}</span></td><td class="label-cell">${escape(shift.phone_label ?? shift.phone_id)}</td><td>${location}</td><td>${escape(accuracyLabel(shift.accuracy_m))}</td><td>${flagLabel(shift)}</td><td>${statusLabel(shift)}</td><td>${end}</td></tr>`;
 }
 
 export async function waiterShifts(target, context) {
