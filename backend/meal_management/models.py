@@ -12,6 +12,7 @@ class ServerContext:
 class ScanAppContext:
     staff_id: int
     phone_id: int | None = None
+    waiter_shift_id: int | None = None
 
 
 @dataclass(frozen=True)

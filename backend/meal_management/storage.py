@@ -19,10 +19,23 @@ class StoredPhoto:
     size: int
 
 
+PHOTO_PREFIXES = ("", "shift-selfies/")
+
+
 def _photo_key(key):
-    if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", key):
+    if not isinstance(key, str) or not re.fullmatch(r"(?:shift-selfies/)?[0-9a-f]{64}\.(?:jpg|png)", key):
         raise DomainError("INVALID_PHOTO_KEY")
     return key
+
+
+def _prefix(value):
+    if value not in PHOTO_PREFIXES:
+        raise DomainError("INVALID_PHOTO_PREFIX")
+    return value
+
+
+def _local_name(key):
+    return _photo_key(key).replace("/", "__")
 
 
 def _content_type(key):
@@ -108,15 +121,16 @@ class LocalFileStorage:
         finally:
             os.close(descriptor)
 
-    def put(self, data, content_type):
+    def put(self, data, content_type, prefix=""):
+        prefix = _prefix(prefix)
         normalized, actual_type = sanitize_photo(data, content_type, self.max_bytes)
         extension = ".jpg" if actual_type == "image/jpeg" else ".png"
         with self._directory(create=True) as directory:
             for attempt in range(3):
-                key = secrets.token_hex(32) + extension
+                key = prefix + secrets.token_hex(32) + extension
                 try:
                     descriptor = os.open(
-                        key, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        _local_name(key), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                         0o600, dir_fd=directory,
                     )
                     break
@@ -129,7 +143,7 @@ class LocalFileStorage:
                     output.flush()
                     os.fsync(output.fileno())
             except BaseException:
-                os.unlink(key, dir_fd=directory)
+                os.unlink(_local_name(key), dir_fd=directory)
                 raise
         return StoredPhoto(key=key, content_type=actual_type, size=len(normalized))
 
@@ -137,7 +151,7 @@ class LocalFileStorage:
         key = _photo_key(key)
         with self._directory() as directory:
             try:
-                descriptor = os.open(key, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                descriptor = os.open(_local_name(key), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
             except FileNotFoundError:
                 raise DomainError("PHOTO_NOT_FOUND") from None
             except OSError:
@@ -155,10 +169,10 @@ class LocalFileStorage:
         key = _photo_key(key)
         with self._directory() as directory:
             try:
-                attributes = os.stat(key, dir_fd=directory, follow_symlinks=False)
+                attributes = os.stat(_local_name(key), dir_fd=directory, follow_symlinks=False)
                 if not stat.S_ISREG(attributes.st_mode) or attributes.st_nlink != 1:
                     raise DomainError("UNSAFE_PHOTO_STORAGE")
-                os.unlink(key, dir_fd=directory)
+                os.unlink(_local_name(key), dir_fd=directory)
             except FileNotFoundError:
                 return
 
@@ -181,9 +195,10 @@ class S3Storage:
             self._client = boto3.client("s3", region_name=self.region)
         return self._client
 
-    def put(self, data, content_type):
+    def put(self, data, content_type, prefix=""):
+        prefix = _prefix(prefix)
         normalized, actual_type = sanitize_photo(data, content_type, self.max_bytes)
-        key = secrets.token_hex(32) + (".jpg" if actual_type == "image/jpeg" else ".png")
+        key = prefix + secrets.token_hex(32) + (".jpg" if actual_type == "image/jpeg" else ".png")
         self._get_client().put_object(
             Bucket=self.bucket,
             Key=key,
@@ -283,9 +298,10 @@ class VercelBlobStorage:
         finally:
             client.close()
 
-    def put(self, data, content_type):
+    def put(self, data, content_type, prefix=""):
+        prefix = _prefix(prefix)
         normalized, actual_type = sanitize_photo(data, content_type, self.max_bytes)
-        key = secrets.token_hex(32) + (".jpg" if actual_type == "image/jpeg" else ".png")
+        key = prefix + secrets.token_hex(32) + (".jpg" if actual_type == "image/jpeg" else ".png")
         result = self._sdk_call(
             "put", key, normalized, access="private", content_type=actual_type,
             add_random_suffix=False, overwrite=False,

@@ -106,6 +106,7 @@ class RuntimeSettings:
     scanner_request_limit: int = 120
     scanner_ip_limit: int = 600
     scanner_window_seconds: int = 60
+    waiter_shift_hours: int = 3
 
     @property
     def scan_app_enabled(self):
@@ -227,4 +228,5 @@ class RuntimeSettings:
             scanner_request_limit=_integer(env, "SCAN_REQUEST_LIMIT", 120, 1, 10000),
             scanner_ip_limit=_integer(env, "SCAN_IP_LIMIT", 600, 1, 10000),
             scanner_window_seconds=_integer(env, "SCAN_WINDOW_SECONDS", 60, 1, 3600),
+            waiter_shift_hours=_integer(env, "WAITER_SHIFT_HOURS", 3, 1, 12),
         )

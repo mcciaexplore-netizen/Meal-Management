@@ -93,3 +93,11 @@
 .scan-meal-type select { min-height: 48px; font-size: 18px; }
 .scan-meal-current { margin: 4px 0 0; font-size: 34px; font-weight: 800; line-height: 1.15; color: var(--teal-dark, #0c655a); text-align: center; }
 .scan-meal-current.unselected { font-size: 18px; font-weight: 600; color: #946312; }
+.scan-shift { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-left: auto; }
+.scan-shift-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; margin: 8px 12px 0; border-radius: 8px; background: #fff1d9; color: #6b4a07; font-weight: 600; }
+.scan-shift-banner[hidden] { display: none; }
+.shift-signin form { display: grid; gap: 14px; text-align: left; }
+.shift-notice { background: #f1f7f6; border: 1px solid #d3e6e2; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.5; text-align: left; }
+.shift-signin .consent { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.selfie-field { display: flex; align-items: center; gap: 12px; }
+.selfie-field img { width: 96px; height: 96px; object-fit: cover; border-radius: 50%; }

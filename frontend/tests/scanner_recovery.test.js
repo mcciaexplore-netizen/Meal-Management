@@ -76,5 +76,6 @@ test("scanner startup waits for scoped server recovery before rendering its cont
   assert.match(source, /transport\.request\("\/recovery", \{\}, session\.scope\)/);
   assert.match(source, /saveScannerMarker\(storage, servingScope, recovery\.request\)/);
   assert.match(source, /flow\.restore\(recovery\.request\)/);
-  assert.ok(source.indexOf("await chooseScannerRecovery") < source.indexOf("    renderScanner();"));
+  assert.ok(source.indexOf("await chooseScannerRecovery") < source.indexOf("    if (needsSignIn()) renderSignIn();\n    else renderScanner();"));
+  assert.ok(source.indexOf("    if (needsSignIn()) renderSignIn();\n    else renderScanner();") > 0);
 });

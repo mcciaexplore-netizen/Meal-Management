@@ -133,6 +133,29 @@ Meals became permanent after migration 011. Remove the runtime account's ability
 REVOKE INSERT ON `meal_management`.`meal_voids` FROM 'meal_runtime'@'172.31.%';
 ```
 
+### Meal types and waiter shifts (migrations 012 and 013)
+
+Before step 5, grant:
+
+```sql
+GRANT INSERT, DELETE ON `meal_management`.`employee_meal_types` TO 'meal_runtime'@'172.31.%';
+GRANT INSERT ON `meal_management`.`meal_type_corrections` TO 'meal_runtime'@'172.31.%';
+GRANT INSERT, UPDATE ON `meal_management`.`waiter_shifts` TO 'meal_runtime'@'172.31.%';
+GRANT UPDATE ON `meal_management`.`waiter_shift_settings` TO 'meal_runtime'@'172.31.%';
+```
+
+Add an S3 lifecycle rule on the photo bucket that expires objects with the prefix `shift-selfies/` after 90 days. Employee photos have no prefix and are not affected. The instance role's existing `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on the bucket's objects cover the new prefix.
+
+Optional settings in `.env.docker`: `WAITER_SHIFT_HOURS` (default 3, 1 to 12) and `MEAL_TYPE_LOCK_HOURS` (default 12, 0 to 48). The scanner's Caddy body limit is 2 MB for selfie uploads.
+
+After 012, earlier images refuse every scan with `SCANNER_NOT_CONFIGURED`, because their only meal type, `SCANNER-MEAL`, is deactivated. When rolling back to such an image, also run as the master user:
+
+```sql
+UPDATE meal_types SET is_active = TRUE WHERE code = 'SCANNER-MEAL';
+```
+
+Earlier images then scan again and record `SCANNER-MEAL`; they do not check eligibility, the meal-type lock or shifts. Before redeploying the new image, deactivate it again with `UPDATE meal_types SET is_active = FALSE WHERE code = 'SCANNER-MEAL';`.
+
 ## Changing hostnames
 
 Point the new DNS names at the Elastic IP, then rerun `make-env.py` with the new hostnames and the same `--out` file. That keeps the secrets. Then run `docker compose --env-file .env.docker up -d`, and Caddy obtains the new certificates. Activated scanner browsers must activate again on the new scanner hostname.

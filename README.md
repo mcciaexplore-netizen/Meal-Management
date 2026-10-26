@@ -160,6 +160,16 @@ Meal types (Breakfast, Lunch, High Tea and Dinner are seeded) are managed in **O
 - **Visitors:** visitor master QRs are recorded under the selected meal type, without eligibility checks or the lock; their allowance still applies.
 - **Reports:** Meal history filters by meal type and marks corrected meals; totals are broken down by meal type.
 
+## Waiter shifts
+
+In production, each waiter signs in on the scanner phone at the start of every shift before scanning. Sign-in asks for their name, a selfie from the front camera, and the phone's location. The screen shows a short notice on what is recorded and why; the waiter must tick **I agree**, and the consent time and notice version are stored with the shift. Sign-in is refused if location permission is refused. Poor accuracy never blocks it; the accuracy is recorded and shown.
+
+- A shift lasts `WAITER_SHIFT_HOURS` (default 3, from 1 to 12) and then ends automatically. **Sign out** ends it early. Ten minutes before the end, a banner offers **Sign in again**. A new sign-in on the same phone replaces the open shift. Each new shift starts with no meal type selected.
+- Every scan attempt and serving records the shift it was made under.
+- Administrators see **Waiter shifts**: the selfie, name, phone, times, a map link for the location, its accuracy, and whether it was inside the canteen radius. **End shift now** ends an active shift; the phone then asks for a new sign-in. The canteen location and radius are set on the same page. Sign-ins outside the radius are flagged for review, not refused. Without a canteen location, nothing is flagged.
+- Selfies are stored privately under the `shift-selfies/` prefix and deleted after 90 days by an S3 lifecycle rule; the shift record stays, and the page shows "Selfie expired". Shift records cannot be edited or deleted.
+- Development mode does not ask for shifts.
+
 ## Meal records are permanent
 
 Once a meal is recorded it cannot be removed: meal history has no Remove action, Office settings offers bulk removal for employees only, and there is no API for removing meals. The runtime database account cannot add meal removal records. Removing an employee keeps all of their meal history. Meals removed before this change stay excluded from history and totals.

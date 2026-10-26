@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, MealTypeCorrectionInput, MealTypeIdsInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CanteenLocationInput, CatalogActiveInput, MealTypeCorrectionInput, MealTypeIdsInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -29,6 +29,7 @@ from .queries import QueryService
 from .runtime import RuntimeSettings
 from .scan_receipts import ScanReceiptService
 from .scanner_phones import ScannerPhoneService
+from .waiter_shifts import WaiterShiftService
 from .storage import storage_from_settings
 
 
@@ -37,7 +38,7 @@ Cursor = Annotated[int, Query(ge=0, le=2**64 - 1)]
 PathIdentifier = Annotated[int, ApiPath(gt=0, le=2**64 - 1)]
 
 
-def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None, scanner_phones=None):
+def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None, scanner_phones=None, waiter_shifts=None):
     runtime = (RuntimeSettings.from_env() if runtime is None else runtime).for_application("admin")
     services = create_services() if services is None else services
     if runtime.environment == "production" and not services.database.settings.db_ssl_ca:
@@ -62,6 +63,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     app.state.limiter = DatabaseLoginLimiter(services.database, runtime) if limiter is None else limiter
     app.state.scan_receipts = ScanReceiptService(services.database)
     app.state.scanner_phones = ScannerPhoneService(services.database, runtime.csrf_secret) if scanner_phones is None else scanner_phones
+    app.state.waiter_shifts = (
+        WaiterShiftService(services.database, app.state.storage, runtime.waiter_shift_hours)
+        if waiter_shifts is None else waiter_shifts
+    )
     development_enabled = runtime.environment == "development" and runtime.email_backend == "preview" and not runtime.email_send_enabled
     app.state.development_seed = (
         DevelopmentSeedService(services.database, runtime, services.qr.vault, services.qr.renderer)
@@ -453,6 +458,28 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def visitor_revoke(authorization_id: PathIdentifier, ctx=Depends(admin)):
         services.approvals.revoke(ctx, authorization_id)
         return {"authorization_id": authorization_id, "revoked": True}
+
+    @app.get("/api/waiter-shifts")
+    def waiter_shift_list(limit: Annotated[int, Query(ge=1, le=200)] = 50, after_id: Cursor = 0,
+                          status: Literal["all", "active", "ended", "flagged"] = "all", ctx=Depends(admin)):
+        return app.state.waiter_shifts.list(ctx, status=status, limit=limit, after_id=after_id)
+
+    @app.get("/api/waiter-shifts/{shift_id}/selfie")
+    def waiter_shift_selfie(shift_id: PathIdentifier, ctx=Depends(admin)):
+        data, content_type = app.state.waiter_shifts.selfie(ctx, shift_id)
+        return Response(data, media_type=content_type)
+
+    @app.post("/api/waiter-shifts/{shift_id}/end")
+    def waiter_shift_end(shift_id: PathIdentifier, ctx=Depends(admin)):
+        return app.state.waiter_shifts.admin_end(ctx, shift_id)
+
+    @app.get("/api/waiter-shift-settings")
+    def waiter_shift_settings(ctx=Depends(admin)):
+        return app.state.waiter_shifts.settings(ctx)
+
+    @app.put("/api/waiter-shift-settings")
+    def waiter_shift_settings_update(body: CanteenLocationInput, ctx=Depends(admin)):
+        return app.state.waiter_shifts.update_settings(ctx, body.latitude, body.longitude, body.radius_m)
 
     @app.get("/api/scanner-phones")
     def scanner_phone_list(ctx=Depends(admin)):
