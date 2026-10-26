@@ -69,6 +69,17 @@ def build_parser():
     to_postgres.add_argument("--writers-paused", action="store_true")
     account = commands.add_parser("create-aiven-runtime", help="Review and create the restricted Aiven account for Vercel.")
     account.add_argument("--allow-database-changes", action="store_true", help="Allow account creation only after interactive target confirmation.")
+    reset = commands.add_parser("reset-test-data", help="Wipe all test records while keeping staff, settings and schema. Dry run unless --confirm.")
+    reset.add_argument("--expect-host", required=True)
+    reset.add_argument("--expect-db", required=True)
+    reset.add_argument("--operator-email", required=True)
+    reset.add_argument("--keep-phones")
+    reset.add_argument("--snapshot-id")
+    reset.add_argument("--confirm", action="store_true")
+    reset.add_argument("--include-s3", action="store_true")
+    reset.add_argument("--s3-bucket")
+    reset.add_argument("--aws-region")
+    reset.add_argument("--output-dir", type=Path, default=Path("/run/out"))
     return parser
 
 
@@ -344,6 +355,33 @@ def _transfer_to_postgres(args):
     return 0
 
 
+def _reset_test_data(args):
+    from .test_data_reset import TestDataReset, confirmation_text, parse_phone_ids
+
+    settings = Settings.from_env()
+    s3 = None
+    if args.s3_bucket:
+        import boto3
+
+        s3 = boto3.client("s3", region_name=args.aws_region)
+    reset = TestDataReset(
+        settings, args.expect_host, args.expect_db, args.operator_email,
+        keep_phones=parse_phone_ids(args.keep_phones), s3_client=s3, s3_bucket=args.s3_bucket,
+    )
+    if not args.confirm:
+        reset.dry_run()
+        return 0
+    if not args.snapshot_id:
+        raise DomainError("RESET_SNAPSHOT_ID_REQUIRED")
+    if not sys.stdin.isatty():
+        raise DomainError("RESET_REQUIRES_INTERACTIVE_TERMINAL")
+    expected = confirmation_text(args.expect_db, args.expect_host)
+    print("This permanently removes all test records from " + args.expect_db + ". RDS snapshot: " + args.snapshot_id)
+    typed = input("Type " + expected + " to continue: ")
+    reset.run(True, args.snapshot_id, typed, args.output_dir, include_s3=args.include_s3)
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
@@ -352,6 +390,8 @@ def main(argv=None):
         if args.command == "create-aiven-runtime":
             return _runtime_account_command(args)
         _load_environment(args.env_file)
+        if args.command == "reset-test-data":
+            return _reset_test_data(args)
         if args.command == "transfer-to-postgres":
             return _transfer_to_postgres(args)
         if args.command == "check-config":

@@ -142,6 +142,10 @@ The scanner automatically receives its own signed, HTTP-only browser cookie and 
 
 **Create visitor master QR** has a **Valid for** list of active meal types, all ticked by default; at least one is required. Each ticked meal type allows **Number of people** scans: a group of 5 valid for Lunch and Dinner can have 5 lunches and 5 dinners. The scanner refuses other meal types ("This visitor QR is not valid for Dinner.") and a type with none left ("All Lunch meals on this visitor QR have been used."), without using an allowance or recording a meal. The QR expires after its final allowed meal, when every ticked type has none left, or at its optional earlier expiry. Visitor QRs have no meal-type lock. The visitor list and QR details show what is left for each type. **Create another visitor QR** starts with the previous QR's types that are still active. Visitor QRs created before this change were given their remaining count for each meal type active at the time.
 
+### Resetting test data
+
+Before go-live, `manage.py reset-test-data` removes all test records and keeps staff, settings and the schema; it is a dry run unless confirmed. See [Resetting test data](docs/ec2-deployment.md#resetting-test-data).
+
 ## Editing and deactivating office settings
 
 **Office settings** lets administrators edit and deactivate departments, meal types, serving locations, scanning counters and staff accounts. Nothing is deleted. Each list has **Active** and **Inactive** views; inactive entries have **Reactivate**.

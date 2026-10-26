@@ -196,6 +196,35 @@ WHERE t.is_active = TRUE
   AND NOT EXISTS (SELECT 1 FROM master_qr_meal_types x WHERE x.qr_id = a.qr_id);
 ```
 
+## Resetting test data
+
+`manage.py reset-test-data` removes every test record before go-live and keeps staff accounts and roles, meal types, departments, locations, counters, the shared scanner settings, the canteen location and radius, `schema_migrations`, database grants and `QR_ENCRYPTION_KEYS`. It empties employees and their QRs and meal types, visitor master QRs with their allocations and per-type allowances, meals, servings, requests, scan attempts and receipts, meal type corrections, meal removals, waiter shifts, email drafts and batches, removed-employee records, development seed records, visitor authorizations, staff sessions, login rate limits and the audit log. Every scanner phone and unused code is revoked unless listed in `--keep-phones`; the rows are kept because they cannot be deleted.
+
+It runs only as the RDS master user. Tables are emptied with `TRUNCATE TABLE`, which does not fire the delete-guard triggers, so no trigger is dropped or changed; the command compares every trigger (including its creation time), CHECK constraint, foreign key and the schema fingerprint before and after, and fails if anything differs. Each table's next ID is restored afterwards, so new records never reuse an old number; the audit log alone restarts, with a `TEST_DATA_RESET` event as entry 1 recording the operator, snapshot ID and removed row counts. `TRUNCATE` commits on its own, so the reset is not one transaction: if it stops part way, run the same command again. The state file in the output folder keeps the original next IDs and photo keys for that rerun.
+
+Without `--confirm` it is a dry run: row counts for every table, each scanner phone and what will happen to it, S3 photo counts, bucket versioning if the role can read it, and the run order. Nothing changes. A real run needs `--confirm`, `--snapshot-id` and typing `WIPE meal_management ON <host>`. It refuses a different host or database, the runtime account, missing migrations, an operator who is not an active administrator, and phone IDs that are not active phones. S3 photos are deleted only with `--include-s3`, using the keys recorded in the database, and only keys in the application's photo formats.
+
+Run order:
+
+1. Take an RDS snapshot in the console and wait until it is available.
+2. Stop the applications: `docker compose --env-file .env.docker stop admin scanner` (Caddy keeps running).
+3. Dry run, then review the output.
+4. Real run.
+5. `docker compose --env-file .env.docker up -d`.
+6. Health checks on both `/health/ready` endpoints.
+
+```sh
+mkdir -p ~/mccia-reset && chmod 700 ~/mccia-reset
+ONEOFF="--rm --user $(id -u):$(id -g) -v $PWD/var/private/db-ca.pem:/run/db-ca.pem:ro -v $HOME/mccia-reset:/run/out"
+RESET="python manage.py reset-test-data --expect-host <rds-endpoint> --expect-db meal_management \
+    --operator-email <administrator email> --s3-bucket <bucket> --aws-region eu-north-1"
+docker run $ONEOFF --env-file ~/mccia-rds/rds-admin.env meal-management:latest $RESET
+docker run -it $ONEOFF --env-file ~/mccia-rds/rds-admin.env meal-management:latest $RESET \
+    --confirm --snapshot-id <snapshot-id> --include-s3
+```
+
+Add `--keep-phones ID,ID` to both runs to keep specific phones activated. Afterwards everyone signs in again, scanner phones need new activation codes, and employees and visitor QRs are created again. If the bucket has versioning enabled, deleted photos remain as earlier versions until removed in the console. To undo a reset, restore the RDS snapshot.
+
 ## Changing hostnames
 
 Point the new DNS names at the Elastic IP, then rerun `make-env.py` with the new hostnames and the same `--out` file. That keeps the secrets. Then run `docker compose --env-file .env.docker up -d`, and Caddy obtains the new certificates. Activated scanner browsers must activate again on the new scanner hostname.
