@@ -62,6 +62,9 @@ test("the bulk page previews first, confirms the count and sends only when email
   assert.match(page, /\/email-queue\/process/);
   assert.match(page, /\$\{sending \? "" : "disabled"\}>Send emails/);
   assert.match(page, /SENDING_DISABLED/);
+  assert.match(page, /<td><span class="mono">\$\{escape\(batch\.id\)\}<\/span><span class="cell-subtitle">/);
+  assert.match(page, /table\(\["Sr\. No\.", "Person", "Phone", "QR", "Email"\],/);
+  assert.match(page, /emailStatusBadge\(person\)\}<\/span>\$\{emailActionLabel\(person\)/);
   const app = await source("app.js");
   assert.match(app, /\["visitor-batches", \["Bulk visitor QRs", "qr", visitorBatches\]\]/);
 });
