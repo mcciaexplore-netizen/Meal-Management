@@ -1,6 +1,6 @@
 import hmac
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .database import null_safe_equal
 from .delivery import DeliveryError, validate_email_recipient
@@ -16,15 +16,24 @@ _SAFE_FAILURES = frozenset({
     "GMAIL_CONFIGURATION_REQUIRED", "EMAIL_AUTHENTICATION_FAILED",
     "EMAIL_SENDER_REJECTED", "EMAIL_RECIPIENT_REJECTED", "EMAIL_DATA_REJECTED",
     "EMAIL_DELIVERY_FAILED", "EMAIL_NOT_DELIVERABLE", "REAL_EMAIL_NOT_AUTHORIZED",
-    "EMAIL_APPROVAL_REQUIRED",
+    "EMAIL_APPROVAL_REQUIRED", "EMAIL_DAILY_LIMIT_REACHED",
 })
 
 
 class EmailDeliveryWorker:
-    def __init__(self, db, vault, renderer, delivery):
+    def __init__(self, db, vault, renderer, delivery, daily_limit=None):
+        if daily_limit is not None and (type(daily_limit) is not int or not 1 <= daily_limit <= 10000):
+            raise DomainError("INVALID_SETTING_EMAIL_DAILY_LIMIT")
         self.db = db
         self.queue = EmailQueueService(db, vault, renderer)
         self.delivery = delivery
+        self.daily_limit = daily_limit
+
+    def _limit_reached(self):
+        if self.daily_limit is None:
+            return False
+        with self.db.transaction() as tx:
+            return self.queue.sent_since(tx, tx.now() - timedelta(days=1)) >= self.daily_limit
 
     def _result(self, email_id, status, code=None):
         return {"email_id": email_id, "status": status, "code": code}
@@ -132,6 +141,8 @@ class EmailDeliveryWorker:
             raise DomainError("REAL_EMAIL_NOT_AUTHORIZED")
         if type(email_id) is not int or not 1 <= email_id <= 2**64 - 1:
             raise DomainError("INVALID_EMAIL_ID")
+        if self._limit_reached():
+            return self._result(email_id, "QUEUED", "EMAIL_DAILY_LIMIT_REACHED")
         try:
             claim, result = self._claim(email_id)
         except DomainError:

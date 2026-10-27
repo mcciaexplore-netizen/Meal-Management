@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, MealTypeCorrectionInput, MealTypeIdsInput, CatalogInput, CatalogUpdateInput, StaffRolesInput, StaffUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, MealTypeCorrectionInput, MealTypeIdsInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput, StaffRolesInput, StaffUpdateInput, VisitorBatchEmailInput, VisitorBatchInput, VisitorEmailInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -26,6 +26,7 @@ from .errors import ConfigurationError, DomainError
 from .http_security import DatabaseLoginLimiter, SecurityMiddleware, csrf_token, error_body, status_for
 from .models import ScanInput, ServerContext
 from .paging import CURSOR_PATTERN
+from .visitor_batches import VisitorBatchService
 from .queries import QueryService
 from .runtime import RuntimeSettings
 from .scan_receipts import ScanReceiptService
@@ -38,7 +39,7 @@ Cursor = Annotated[str | None, Query(pattern=CURSOR_PATTERN, max_length=40)]
 PathIdentifier = Annotated[int, ApiPath(gt=0, le=2**64 - 1)]
 
 
-def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None, scanner_phones=None):
+def create_app(services=None, runtime=None, queries=None, storage=None, limiter=None, email_actions=None, scanner_phones=None, visitor_batches=None):
     runtime = (RuntimeSettings.from_env() if runtime is None else runtime).for_application("admin")
     services = create_services() if services is None else services
     if runtime.environment == "production" and not services.database.settings.db_ssl_ca:
@@ -58,6 +59,10 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     app.state.runtime = runtime
     app.state.email_lifecycle = email_lifecycle
     app.state.email_actions = EmailActions(runtime, services) if email_actions is None else email_actions
+    app.state.visitor_batches = (
+        VisitorBatchService(services.database, services.qr, runtime.email_daily_limit)
+        if visitor_batches is None else visitor_batches
+    )
     app.state.queries = QueryService(services.database) if queries is None else queries
     app.state.storage = storage_from_settings(runtime) if storage is None else storage
     app.state.limiter = DatabaseLoginLimiter(services.database, runtime) if limiter is None else limiter
@@ -436,6 +441,37 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         issued = services.qr.replace_master(ctx, qr_id, expires_at=body.expires_at, **body.model_dump(exclude={"expires_at"}))
         return qr_response(ctx, issued.qr_id)
 
+    @app.post("/api/master-qrs/{qr_id}/email")
+    def master_email(qr_id: PathIdentifier, body: VisitorEmailInput, ctx=Depends(admin)):
+        return app.state.email_actions.send_visitor(ctx, qr_id, app.state.visitor_batches)
+
+    @app.post("/api/visitor-batches/preview")
+    async def visitor_batch_preview(request: Request, filename: Annotated[str, Query(min_length=1, max_length=255)],
+                                    ctx=Depends(admin)):
+        data = await request.body()
+        content_type = request.headers.get("content-type", "")
+        return await run_in_threadpool(app.state.visitor_batches.preview, ctx, data, content_type, filename)
+
+    @app.post("/api/visitor-batches", status_code=201)
+    def visitor_batch_create(body: VisitorBatchInput, ctx=Depends(admin)):
+        rows = [row.model_dump() for row in body.rows]
+        return app.state.visitor_batches.create(
+            ctx, body.request_id, rows, body.expires_at, body.meal_type_ids, body.department_id,
+            event_name=body.event_name, source_name=body.source_name,
+        )
+
+    @app.get("/api/visitor-batches", dependencies=[Depends(current_cursor)])
+    def visitor_batch_list(limit: Limit = 50, before: Cursor = None, ctx=Depends(admin)):
+        return app.state.visitor_batches.list(ctx, limit=limit, before=before)
+
+    @app.get("/api/visitor-batches/{batch_id}")
+    def visitor_batch_detail(batch_id: PathIdentifier, ctx=Depends(admin)):
+        return app.state.visitor_batches.detail(ctx, batch_id)
+
+    @app.post("/api/visitor-batches/{batch_id}/send-emails")
+    def visitor_batch_send(batch_id: PathIdentifier, body: VisitorBatchEmailInput, ctx=Depends(admin)):
+        return app.state.email_actions.approve_visitor_batch(ctx, app.state.visitor_batches, batch_id, body.expected_count)
+
     @app.post("/api/master-qrs/{qr_id}/revoke")
     def master_revoke(qr_id: PathIdentifier, body: RevokeInput, ctx=Depends(admin)):
         master_check(ctx, qr_id)
@@ -497,10 +533,11 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
 
     @app.get("/api/reports/meals", dependencies=[Depends(current_cursor)])
     def meal_history(start: datetime, end: datetime, limit: Limit = 50, before: Cursor = None,
+                     department_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
                      employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
                      meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
         return app.state.queries.meal_history(ctx, start, end, limit=limit, before=before, employee_id=employee_id,
-                                              meal_type_id=meal_type_id)
+                                              meal_type_id=meal_type_id, department_id=department_id)
 
     @app.get("/api/reports/totals")
     def totals(start: datetime, end: datetime, ctx=Depends(admin)):
@@ -518,6 +555,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
             "sending_enabled": runtime.email_send_enabled,
             "preview_available": runtime.environment == "development" and runtime.email_backend == "preview",
             "process_batch_size": app.state.email_actions.process_batch_size,
+            "daily_limit": runtime.email_daily_limit,
             **app.state.email_lifecycle.snapshot(),
         }
 

@@ -36,6 +36,12 @@ class EmailPreview:
     employee_name: str
     token: str = field(repr=False)
     qr_svg: str = field(repr=False)
+    kind: str = "EMPLOYEE"
+    visitor: dict | None = field(default=None, repr=False)
+
+
+VISITOR_FIELDS = ("company_name", "department_name", "event_name", "meal_types", "expires_at")
+RESEND_LIMIT = 3
 
 
 class EmailQueueService:
@@ -74,6 +80,36 @@ class EmailQueueService:
             ),
         )
 
+    def enqueue_visitor(self, tx, qr_id, recipient, token, visitor, *, bulk_batch_id=None):
+        if bulk_batch_id is not None and (type(bulk_batch_id) is not int or not 1 <= bulk_batch_id <= 2**64 - 1):
+            raise DomainError("INVALID_EMAIL_BATCH_ID")
+        payload = json.dumps(
+            {
+                "kind": "VISITOR",
+                "qr_id": qr_id,
+                "visitor_name": visitor["name"],
+                **{key: visitor[key] for key in VISITOR_FIELDS},
+                "token": token,
+                "qr_svg": self.renderer.render(token),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        now = tx.now()
+        return tx.insert(
+            "INSERT INTO email_queue "
+            "(qr_id, recipient_email, payload_ciphertext, status, created_at, updated_at, delivery_mode, bulk_batch_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                qr_id, recipient, self.vault.encrypt(payload),
+                "PENDING_APPROVAL" if bulk_batch_id is not None else "DRAFT", now, now,
+                "BULK" if bulk_batch_id is not None else "SINGLE", bulk_batch_id,
+            ),
+        )
+
+    def sent_since(self, tx, since):
+        return tx.one("SELECT COUNT(*) AS sent FROM email_queue WHERE status = 'SENT' AND updated_at >= %s", (since,))["sent"]
+
     def cancel_for_qr(self, tx, qr_id):
         tx.execute(
             "UPDATE email_queue SET "
@@ -107,18 +143,28 @@ class EmailQueueService:
         if type(email_id) is not int or email_id < 1:
             raise DomainError("INVALID_EMAIL_ID")
         reference = tx.one(
-            "SELECT c.employee_id, c.id AS qr_id FROM email_queue AS q "
+            "SELECT c.employee_id, c.id AS qr_id, c.kind FROM email_queue AS q "
             "JOIN qr_credentials AS c ON c.id = q.qr_id WHERE q.id = %s",
             (email_id,),
         )
         if reference is None:
             raise DomainError("EMAIL_NOT_FOUND")
-        employee = tx.one(
-            "SELECT id, email, is_active FROM employees WHERE id = %s FOR UPDATE",
-            (reference["employee_id"],),
-        )
+        if reference.get("kind") == "MASTER":
+            allocation = tx.one(
+                "SELECT qr_id, email, exhausted_at FROM master_qr_allocations WHERE qr_id = %s",
+                (reference["qr_id"],),
+            )
+            employee = None if allocation is None else {
+                "id": allocation["qr_id"], "email": allocation["email"], "kind": "VISITOR",
+                "is_active": allocation["exhausted_at"] is None,
+            }
+        else:
+            employee = tx.one(
+                "SELECT id, email, is_active FROM employees WHERE id = %s FOR UPDATE",
+                (reference["employee_id"],),
+            )
         credential = tx.one(
-            "SELECT token_hash, revoked_at, expires_at FROM qr_credentials "
+            "SELECT id, token_hash, revoked_at, expires_at FROM qr_credentials "
             "WHERE id = %s FOR UPDATE",
             (reference["qr_id"],),
         )
@@ -145,6 +191,8 @@ class EmailQueueService:
             raise DomainError("EMAIL_NOT_DELIVERABLE")
         try:
             payload = json.loads(self.vault.decrypt(queued["payload_ciphertext"]))
+            if payload.get("kind") == "VISITOR" or employee.get("kind") == "VISITOR":
+                return self._visitor_preview(employee, credential, queued, payload, include_svg)
             if (
                 type(payload["employee_id"]) is not int
                 or payload["employee_id"] != employee["id"]
@@ -161,6 +209,39 @@ class EmailQueueService:
             )
         except (DomainError, KeyError, TypeError, ValueError):
             raise DomainError("INVALID_EMAIL_PAYLOAD") from None
+
+    def _visitor_preview(self, owner, credential, queued, payload, include_svg):
+        if (
+            owner.get("kind") != "VISITOR" or payload.get("kind") != "VISITOR"
+            or type(payload["qr_id"]) is not int or payload["qr_id"] != credential["id"] or payload["qr_id"] != owner["id"]
+            or not hmac.compare_digest(token_digest(payload["token"]), bytes(credential["token_hash"]))
+            or (include_svg and not isinstance(payload["qr_svg"], str))
+            or not isinstance(payload["meal_types"], list)
+            or not all(isinstance(name, str) and name.strip() for name in payload["meal_types"])
+        ):
+            raise DomainError("INVALID_EMAIL_PAYLOAD")
+        visitor = {
+            "company_name": required_text(payload["company_name"], "company_name", 150),
+            "department_name": None if payload["department_name"] is None else required_text(payload["department_name"], "department_name", 100),
+            "event_name": None if payload["event_name"] is None else required_text(payload["event_name"], "event_name", 150),
+            "meal_types": [name.strip() for name in payload["meal_types"]],
+            "expires_at": payload["expires_at"],
+        }
+        return EmailPreview(
+            email_id=queued["id"], recipient_email=queued["recipient_email"],
+            employee_name=required_text(payload["visitor_name"], "visitor_name", 150),
+            token=payload["token"], qr_svg=payload["qr_svg"] if include_svg else "",
+            kind="VISITOR", visitor=visitor,
+        )
+
+    def approve_visitor(self, tx, actor, email_id, qr_id):
+        employee, credential, queued = self.lock_email(tx, email_id)
+        if not employee or employee.get("kind") != "VISITOR" or employee["id"] != qr_id or queued is None:
+            raise DomainError("EMAIL_NOT_FOUND")
+        if queued["delivery_mode"] != "SINGLE" or queued["status"] != "DRAFT":
+            raise DomainError("EMAIL_APPROVAL_REQUIRED")
+        self.validated_preview(tx, employee, credential, queued, statuses=("DRAFT",), include_svg=False)
+        self._approve(tx, actor, queued)
 
     def preview(self, context, email_id):
         if type(email_id) is not int or email_id < 1:

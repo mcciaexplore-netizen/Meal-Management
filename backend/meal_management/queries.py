@@ -3,7 +3,7 @@ from uuid import UUID
 
 from .auth import require_actor
 from .database import is_postgres
-from .email_queue import email_delivery_state
+from .email_queue import RESEND_LIMIT, email_delivery_state
 from .errors import DomainError
 from .meals import EFFECTIVE_MEAL_TYPE, positive_integer
 from .paging import newest_first, next_cursor, parse_cursor
@@ -39,6 +39,16 @@ def _record(row):
 
 def _page(rows, limit, time_key):
     return {"items": [_record(row) for row in rows[:limit]], "next_cursor": next_cursor(rows, limit, time_key)}
+
+
+def _email_state(items):
+    for item in items:
+        if "email_status" in item:
+            status, error = item.pop("email_status"), item.pop("email_error", None)
+            item["email_status"], item["email_code"] = (None, None) if status is None else email_delivery_state(
+                {"status": status, "last_error": error})
+            item["resends_left"] = max(0, RESEND_LIMIT + 1 - (item.pop("email_count", 0) or 0)) if item.get("email") else 0
+    return items
 
 
 def _master_meal_types(tx, items):
@@ -163,13 +173,18 @@ class QueryService:
             rows = tx.all(
                 "SELECT q.id, q.id AS qr_id, q.kind, q.issued_by, q.issued_at, q.expires_at, q.revoked_at, "
                 "q.revoked_by, q.revocation_reason, a.company_name, a.contact_name, a.email, a.phone, "
+                "a.department_id, vd.name AS department_name, a.event_name, a.batch_id, a.batch_row, "
+                "(SELECT eq.status FROM email_queue eq WHERE eq.qr_id = q.id ORDER BY eq.id DESC LIMIT 1) AS email_status, "
+                "(SELECT eq.last_error FROM email_queue eq WHERE eq.qr_id = q.id ORDER BY eq.id DESC LIMIT 1) AS email_error, "
+                "(SELECT COUNT(*) FROM email_queue eq WHERE eq.qr_id = q.id) AS email_count, "
                 "a.meal_limit, a.meals_used, a.meal_limit - a.meals_used AS meals_remaining, a.exhausted_at "
                 "FROM qr_credentials q LEFT JOIN master_qr_allocations a ON a.qr_id = q.id "
+                "LEFT JOIN departments vd ON vd.id = a.department_id "
                 "WHERE " + " AND ".join(filters) + order,
                 (*params, limit + 1),
             )
             page = _page(rows, limit, "issued_at")
-            _master_meal_types(tx, page["items"])
+            _master_meal_types(tx, _email_state(page["items"]))
         return page
 
     def qr_metadata(self, context, qr_id):
@@ -180,13 +195,18 @@ class QueryService:
                 "SELECT q.id, q.id AS qr_id, q.kind, q.employee_id, q.issued_by, q.issued_at, q.expires_at, "
                 "q.revoked_at, q.revoked_by, q.revocation_reason, a.company_name, a.contact_name, a.email, "
                 "a.phone, a.meal_limit, a.meals_used, a.meal_limit - a.meals_used AS meals_remaining, "
+                "a.department_id, vd.name AS department_name, a.event_name, a.batch_id, a.batch_row, "
+                "(SELECT eq.status FROM email_queue eq WHERE eq.qr_id = q.id ORDER BY eq.id DESC LIMIT 1) AS email_status, "
+                "(SELECT eq.last_error FROM email_queue eq WHERE eq.qr_id = q.id ORDER BY eq.id DESC LIMIT 1) AS email_error, "
+                "(SELECT COUNT(*) FROM email_queue eq WHERE eq.qr_id = q.id) AS email_count, "
                 "a.exhausted_at FROM qr_credentials q LEFT JOIN master_qr_allocations a ON a.qr_id = q.id "
+                "LEFT JOIN departments vd ON vd.id = a.department_id "
                 "WHERE q.id = %s",
                 (qr_id,),
             )
             if row is None:
                 raise DomainError("QR_NOT_FOUND")
-            record = _master_meal_types(tx, [_record(row)])[0]
+            record = _master_meal_types(tx, _email_state([_record(row)]))[0]
         return record
 
     def email_status(self, context, limit=50, before=None, employee_id=None, delivery_scope="all", bulk_batch_id=None):
@@ -208,12 +228,13 @@ class QueryService:
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
             rows = tx.all(
-                "SELECT q.id, q.qr_id, c.employee_id, e.full_name AS employee_name, "
+                "SELECT q.id, q.qr_id, c.employee_id, c.kind AS qr_kind, COALESCE(e.full_name, va.contact_name) AS employee_name, "
                 "q.recipient_email, q.status, q.created_at, q.updated_at, "
                 "q.delivery_mode, q.bulk_batch_id, q.approved_by_staff_id, q.approved_at, "
                 "q.last_error "
                 "FROM email_queue q JOIN qr_credentials c ON c.id = q.qr_id "
-                "JOIN employees e ON e.id = c.employee_id WHERE "
+                "LEFT JOIN employees e ON e.id = c.employee_id "
+                "LEFT JOIN master_qr_allocations va ON va.qr_id = c.id WHERE "
                 + " AND ".join(filters) + order,
                 params,
             )
@@ -222,7 +243,7 @@ class QueryService:
             row["last_error"] = row["code"]
         return _page(rows, limit, "created_at")
 
-    def meal_history(self, context, start, end, limit=50, before=None, employee_id=None, meal_type_id=None):
+    def meal_history(self, context, start, end, limit=50, before=None, employee_id=None, meal_type_id=None, department_id=None):
         cursor = _pagination(limit, before)
         start_utc, end_utc = _date_range(start, end)
         filters = [
@@ -236,6 +257,9 @@ class QueryService:
         if meal_type_id is not None:
             filters.append(EFFECTIVE_MEAL_TYPE + " = %s")
             params.append(positive_integer(meal_type_id, "MEAL_TYPE_ID"))
+        if department_id is not None:
+            filters.append("COALESCE(e.department_id, ma.department_id) = %s")
+            params.append(positive_integer(department_id, "DEPARTMENT_ID"))
         order = _where(filters, params, "m.served_at", "m.id", cursor)
         params.append(limit + 1)
         with self.db.transaction() as tx:
@@ -243,6 +267,8 @@ class QueryService:
             rows = tx.all(
                 "SELECT m.id, m.id AS meal_id, m.served_at, m.unit_number, s.id AS serving_id, "
                 "s.request_id, s.kind, s.quantity AS serving_quantity, s.employee_id, "
+                "COALESCE(e.department_id, ma.department_id) AS department_id, md.name AS department_name, "
+                "ma.event_name, "
                 "e.employee_code, e.full_name AS employee_name, e.company_name AS employee_company_name, "
                 "e.email AS employee_email, e.phone AS employee_phone, t.id AS meal_type_id, "
                 "s.meal_type_id AS recorded_meal_type_id, ot.name AS recorded_meal_type_name, "
@@ -257,6 +283,8 @@ class QueryService:
                 "a.visit_purpose, a.authorized_by, admin.display_name AS admin_name "
                 "FROM meals m JOIN servings s ON s.id = m.serving_id "
                 "LEFT JOIN employees e ON e.id = s.employee_id "
+                "LEFT JOIN master_qr_allocations ma ON ma.qr_id = s.qr_id AND s.kind = 'MASTER' "
+                "LEFT JOIN departments md ON md.id = COALESCE(e.department_id, ma.department_id) "
                 "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
                 "JOIN meal_types ot ON ot.id = s.meal_type_id "
                 "JOIN staff_accounts w ON w.id = s.waiter_id "

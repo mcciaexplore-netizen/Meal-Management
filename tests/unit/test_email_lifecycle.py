@@ -147,7 +147,8 @@ class EmailLifecycleConstructionTests(unittest.TestCase):
         ):
             result = _build_dispatcher(runtime, services)
         delivery.assert_called_once_with(runtime)
-        worker.assert_called_once_with(services.database, services.qr.vault, services.qr.renderer, delivery.return_value)
+        worker.assert_called_once_with(services.database, services.qr.vault, services.qr.renderer, delivery.return_value,
+                                       daily_limit=runtime.email_daily_limit)
         dispatcher.assert_called_once_with(services.database, worker.return_value, interval_seconds=11, batch_size=4)
         self.assertIs(result, dispatcher.return_value)
         self.assertEqual(services.database.mock_calls, [])
@@ -266,7 +267,7 @@ class EmailLifecycleApiTests(unittest.TestCase):
                 response = harness.client.get("/api/email-settings")
                 self.assertEqual(response.json(), {
                     "backend": "gmail", "sending_enabled": True, "preview_available": False,
-                    "process_batch_size": 10,
+                    "process_batch_size": 10, "daily_limit": 450,
                     "approval_required": True,
                     "automatic_enabled": True, "worker_running": True, "poll_seconds": 8, "batch_size": 3,
                 })

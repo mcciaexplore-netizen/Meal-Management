@@ -11,7 +11,8 @@ def _build_dispatcher(runtime, services):
     from .email_dispatcher import EmailDispatcher
 
     delivery = delivery_from_settings(runtime)
-    worker = EmailDeliveryWorker(services.database, services.qr.vault, services.qr.renderer, delivery)
+    worker = EmailDeliveryWorker(services.database, services.qr.vault, services.qr.renderer, delivery,
+                                 daily_limit=runtime.email_daily_limit)
     return EmailDispatcher(
         services.database, worker,
         interval_seconds=runtime.email_poll_seconds, batch_size=runtime.email_batch_size,

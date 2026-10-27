@@ -125,7 +125,8 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
         shared.read(browser, uuid4(), tokens[1][1], self.types["LUNCH"])
         shared.read(browser, uuid4(), "unknown-" + uuid4().hex, self.types["LUNCH"])
         visitor = qr.issue_master(self.admin, company_name="Visitors", contact_name="Lead", email="v@example.test",
-                                  phone="+91 98765 43210", meal_limit=2, meal_type_ids=[self.types["LUNCH"], self.types["DINNER"]])
+                                  phone="+91 98765 43210", meal_limit=2, meal_type_ids=[self.types["LUNCH"], self.types["DINNER"]],
+                                  department_id=department)
         shared.read(browser, uuid4(), visitor.token, self.types["DINNER"])
         meal_id = self.query("SELECT MIN(id) AS id FROM meals")[0]["id"]
         meals.correct_meal_type(self.admin, meal_id, self.types["DINNER"], "Wrong counter")
@@ -302,7 +303,8 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
         shared = ScanAppService(self.db, MealService(self.db), ScanReceiptService(self.db))
         self.assertTrue(shared.read(secrets.token_bytes(32), uuid4(), token, self.types["LUNCH"]).approved)
         visitor = qr.issue_master(context, company_name="V", contact_name="L", email="l@example.test",
-                                  phone="+91 98765 43210", meal_limit=1, meal_type_ids=[self.types["LUNCH"]])
+                                  phone="+91 98765 43210", meal_limit=1, meal_type_ids=[self.types["LUNCH"]],
+                                  department_id=department)
         self.assertTrue(shared.read(secrets.token_bytes(32), uuid4(), visitor.token, self.types["LUNCH"]).approved)
         for table in ("qr_credentials", "meals", "servings", "master_qr_meal_types", "audit_events", "scan_attempts"):
             with self.subTest(guard=table):

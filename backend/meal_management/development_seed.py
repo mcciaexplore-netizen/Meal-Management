@@ -207,7 +207,7 @@ class DevelopmentSeedService:
             master = qr.issue_master(
                 context, company_name="TEST Example Visitors", contact_name="TEST Visitor Lead",
                 email="visitor.lead@example.test", phone="+1 202 555 0199", meal_limit=10,
-                meal_type_ids=[meal_type_id],
+                meal_type_ids=[meal_type_id], department_id=department_id,
             )
             self._own(tx, actor.staff_id, "master", "MASTER", master.qr_id, MASTER_LABEL, credential=master)
             for code, name, scenario, expected_code in EMPLOYEES:

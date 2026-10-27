@@ -3,7 +3,7 @@ from .email_worker import EmailDeliveryWorker
 from .errors import DomainError
 
 
-_OUTCOMES = frozenset({"SENT", "ALREADY_SENT", "CANCELLED", "FAILED", "NEEDS_REVIEW"})
+_OUTCOMES = frozenset({"SENT", "ALREADY_SENT", "CANCELLED", "FAILED", "NEEDS_REVIEW", "QUEUED"})
 _SAFE_CODES = frozenset({
     "EMAIL_DELIVERY_NEEDS_REVIEW", "EMAIL_CLAIM_UNCONFIRMED", "EMAIL_CLAIM_LOST",
     "EMAIL_NOT_FOUND", "INVALID_EMAIL_ID", "INVALID_EMAIL_STATUS", "EMAIL_APPROVAL_REQUIRED",
@@ -11,7 +11,7 @@ _SAFE_CODES = frozenset({
     "TEST_EMAIL_RECIPIENT_FORBIDDEN", "INVALID_EMAIL_CONTENT", "INVALID_QR",
     "GMAIL_CONFIGURATION_REQUIRED", "EMAIL_AUTHENTICATION_FAILED", "EMAIL_SENDER_REJECTED",
     "EMAIL_RECIPIENT_REJECTED", "EMAIL_DATA_REJECTED", "EMAIL_DELIVERY_FAILED",
-    "EMAIL_NOT_DELIVERABLE", "REAL_EMAIL_NOT_AUTHORIZED",
+    "EMAIL_NOT_DELIVERABLE", "REAL_EMAIL_NOT_AUTHORIZED", "EMAIL_DAILY_LIMIT_REACHED",
 })
 
 
@@ -28,6 +28,7 @@ class EmailActions:
         delivery = delivery_from_settings(self.runtime)
         return EmailDeliveryWorker(
             self.services.database, self.services.qr.vault, self.services.qr.renderer, delivery,
+            daily_limit=self.runtime.email_daily_limit,
         )
 
     def _send(self, worker, email_id):
@@ -54,6 +55,15 @@ class EmailActions:
         if type(approved) is not int or approved != email_id:
             raise DomainError("EMAIL_APPROVAL_UNCONFIRMED")
         return self._send(self._worker(), email_id)
+
+    def send_visitor(self, context, qr_id, batches):
+        self._enabled()
+        email_id = batches.prepare_single(context, qr_id)
+        return self._send(self._worker(), email_id)
+
+    def approve_visitor_batch(self, context, batches, batch_id, expected_count):
+        self._enabled()
+        return batches.approve_emails(context, batch_id, expected_count)
 
     def approve_bulk(self, context, email_ids):
         self._enabled()

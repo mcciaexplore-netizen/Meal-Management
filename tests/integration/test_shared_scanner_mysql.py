@@ -25,7 +25,7 @@ class SharedScannerMySQLTests(MealServicesFixture):
         return self.qr.issue_master(
             self.admin_context, company_name="Example Company", contact_name="Fictional Visitor",
             email="visitor@example.test", phone="+919876543210", meal_limit=meal_limit,
-            meal_type_ids=meal_type_ids or [self.meal_type_id],
+            meal_type_ids=meal_type_ids or [self.meal_type_id], department_id=self.department_id,
         )
 
     def test_shared_employee_scan_uses_system_actor_defaults_and_no_staff_session(self):

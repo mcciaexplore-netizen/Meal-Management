@@ -44,6 +44,32 @@ def error_body(code, request_id=None):
         "MASTER_MEAL_TYPE_USED_UP": "All meals of this type on this visitor QR have been used.",
         "INVALID_MEAL_TYPE_IDS": "Tick at least one meal type.",
         "CLIENT_REFRESH_REQUIRED": "Meal Office was updated. Refresh the page to continue.",
+        "VISITOR_FILE_REQUIRED": "Choose a CSV or Excel (.xlsx) file.",
+        "VISITOR_FILE_TOO_LARGE": "The file is larger than 1 MB.",
+        "VISITOR_FILE_TYPE": "Upload a .csv or .xlsx file. Older .xls and macro-enabled .xlsm files are not accepted.",
+        "VISITOR_FILE_ENCODING": "Save the CSV as UTF-8 and upload it again.",
+        "VISITOR_FILE_INVALID": "The Excel file could not be read. Save it again as .xlsx and retry.",
+        "VISITOR_FILE_EXTERNAL_LINKS": "The workbook links to other files. Remove the external links and upload it again.",
+        "VISITOR_FILE_MACROS": "The workbook contains macros. Save it as a plain .xlsx without macros.",
+        "VISITOR_FILE_FORMULAS": "The sheet contains formulas. Replace formulas with plain values and upload it again.",
+        "VISITOR_FILE_HEADERS": "The columns must be exactly: Sr. No., Person Name, Company Name, Phone, Email.",
+        "VISITOR_FILE_EMPTY": "The file has no visitor rows.",
+        "VISITOR_FILE_TOO_MANY_ROWS": "A file can have at most 200 visitors.",
+        "VISITOR_ROWS_INVALID": "Some rows are not valid. Preview the file again and correct every listed row.",
+        "VISITOR_BATCH_EXPIRY_REQUIRED": "Set an expiry for the visitor QRs.",
+        "VISITOR_BATCH_NOT_FOUND": "That visitor batch was not found.",
+        "VISITOR_BATCH_HAS_NO_EMAILS": "No visitor in this batch has an email address.",
+        "VISITOR_BATCH_NOTHING_TO_SEND": "Every email in this batch has already been sent or approved.",
+        "VISITOR_EMAIL_MISSING": "This visitor QR has no email address.",
+        "QR_NOT_ACTIVE": "This visitor QR is revoked, expired or used up.",
+        "EMAIL_ALREADY_PENDING": "An email for this QR is already waiting to be sent.",
+        "EMAIL_COUNT_CHANGED": "The number of emails to send has changed. Refresh and confirm again.",
+        "EMAIL_COUNT_CONFIRMATION_REQUIRED": "Confirm the number of emails to send.",
+        "EMAIL_DAILY_LIMIT_EXCEEDED": "Sending these emails would exceed today's email limit. Send fewer or wait until tomorrow.",
+        "EMAIL_DAILY_LIMIT_REACHED": "Today's email limit has been reached. Remaining emails stay queued.",
+        "EMAIL_RESEND_LIMIT_REACHED": "This QR has already been emailed again 3 times to this address.",
+        "INVALID_DEPARTMENT_ID": "Choose a department.",
+        "INVALID_EVENT_NAME": "The event name must be at most 150 characters.",
         "SCANNER_INACTIVE": "This scanning counter has been deactivated. Ask the office administrator.",
         "LOCATION_INACTIVE": "This serving location has been deactivated. Ask the office administrator.",
         "DEPARTMENT_UNAVAILABLE": "That department is inactive. Choose an active department.",
@@ -74,8 +100,11 @@ def status_for(code):
         return 429
     if code in {"SERVICE_UNAVAILABLE", "PROCESSING_UNCONFIRMED", "SCAN_RECEIPT_UNCONFIRMED", "TRANSACTION_RETRY_REQUIRED", "DATABASE_NOT_READY", "SCANNER_NOT_CONFIGURED"}:
         return 503
-    if code == "CLIENT_REFRESH_REQUIRED":
+    if code in {"CLIENT_REFRESH_REQUIRED", "EMAIL_DAILY_LIMIT_EXCEEDED", "EMAIL_COUNT_CHANGED",
+                "EMAIL_RESEND_LIMIT_REACHED", "QR_NOT_ACTIVE", "VISITOR_BATCH_NOTHING_TO_SEND", "REQUEST_MISMATCH"}:
         return 409
+    if code == "VISITOR_FILE_TOO_LARGE":
+        return 413
     if code == "SCANNER_DISABLED":
         return 404
     if code.endswith("NOT_FOUND") or code == "NOT_FOUND":
@@ -176,7 +205,7 @@ class SecurityMiddleware:
             if headers.get("origin") != self.settings.app_origin:
                 await fail("ORIGIN_REJECTED", 403)
                 return
-            maximum = self.settings.max_photo_bytes if path.endswith("/photo") else 65536
+            maximum = self.settings.max_photo_bytes if path.endswith("/photo") else 1_048_576 if path == "/api/visitor-batches/preview" else 524_288 if path == "/api/visitor-batches" else 65536
             try:
                 declared = int(headers.get("content-length", "0"))
                 if declared < 0 or declared > maximum:

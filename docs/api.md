@@ -141,6 +141,22 @@ Creating an approval requires `request_id`, `master_qr_id`, `waiter_id`, `scanne
 
 Approval listing accepts `status=pending` or `status=all`. Pending rows are unrevoked, unexpired approvals whose request remains pending. The waiter submits the assigned approval's UUID, quantity, meal type, scanner, and authorization identifier when scanning the master QR.
 
+
+### Visitor departments, bulk visitor QRs and visitor emails
+
+`POST /api/master-qrs` and `/replace` require `department_id` (an active department) and accept `event_name` (up to 150 characters); `email` is optional, and a blank email creates no email. Visitor metadata adds `department_id`, `department_name`, `event_name`, `batch_id`, `batch_row`, `email_status`, `email_code` and `resends_left`. `GET /api/reports/meals` returns `department_id`, `department_name` and `event_name`, and accepts `department_id` as a filter for employee and visitor meals.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `POST` | `/api/visitor-batches/preview?filename=` | Raw `.csv` (`text/csv`) or `.xlsx` body up to 1 MB. Returns `{rows, errors[{row, column, code, message}], row_count, valid, email_count}`; writes nothing |
+| `POST` | `/api/visitor-batches` | `{request_id, source_name, rows, expires_at, meal_type_ids, department_id, event_name}`. Re-validates everything; returns `{batch_id, duplicate}`. The same `request_id` or identical content returns the existing batch; the same `request_id` with different content returns `REQUEST_MISMATCH` (409) |
+| `GET` | `/api/visitor-batches?limit=&before=` | Batches newest first with QR and email counts, plus `email_allowance {daily_limit, sent_last_24h, remaining}` |
+| `GET` | `/api/visitor-batches/{id}` | Each person's QR status and latest email status |
+| `POST` | `/api/visitor-batches/{id}/send-emails` | `{expected_count}` must equal the batch's unsent drafts; approves them, then `POST /api/email-queue/process` sends them in groups |
+| `POST` | `/api/master-qrs/{id}/email` | `{confirm: true}`; sends the QR's draft, or a new copy (at most 3 resends per address, then `EMAIL_RESEND_LIMIT_REACHED`) |
+
+Errors: `VISITOR_FILE_*` for unreadable, oversized, formula, macro or externally linked files; `VISITOR_ROWS_INVALID`; `EMAIL_DAILY_LIMIT_EXCEEDED` and `EMAIL_COUNT_CHANGED` (409); `REAL_EMAIL_NOT_AUTHORIZED` while sending is disabled. The worker returns `QUEUED` with `EMAIL_DAILY_LIMIT_REACHED` instead of sending once `EMAIL_DAILY_LIMIT` emails were sent in the last 24 hours. `GET /api/email-settings` adds `daily_limit`.
+
 ## Existing staff-authenticated scan contract
 
 `POST /api/scan-app/read` remains compatible with earlier staff clients; the current public scanner uses `/api/scanner/read` instead. This older endpoint requires an administrator or waiter session and accepts exactly `request_id`, `token`, `meal_type_id`, and `scanner_code`. The server determines the category from the private credential. Employee reads and allocated master reads record one meal and return the committed result. An older master credential without a group allocation retains its legacy `kind=MASTER`, `next=VISITOR_DETAILS`, and `AWAITING_DETAILS` behavior on this staff-only endpoint. Invalid or unusable credentials return recorded rejection results. Retrying a completed read returns the original committed result.

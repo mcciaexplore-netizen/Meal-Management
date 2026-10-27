@@ -611,7 +611,7 @@ class EmailSettingsApiTests(ApiTestCase):
         self.assertEqual(response.json(), {
             "backend": "preview", "sending_enabled": False, "preview_available": True,
             "automatic_enabled": False, "worker_running": False, "poll_seconds": 5, "batch_size": 10,
-            "approval_required": True, "process_batch_size": 10,
+            "approval_required": True, "process_batch_size": 10, "daily_limit": 450,
         })
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.harness.services.database.transaction.assert_not_called()
@@ -630,6 +630,7 @@ class EmailSettingsApiTests(ApiTestCase):
                         "backend": backend, "sending_enabled": enabled, "preview_available": False,
                         "automatic_enabled": False, "worker_running": False, "poll_seconds": 5, "batch_size": 10,
                         "approval_required": True, "process_batch_size": 10,
+                        "daily_limit": 200 if backend == "ses" else 450,
                     })
                     self.assertNotIn("private-sender", response.text)
                     harness.services.database.transaction.assert_not_called()
@@ -674,6 +675,7 @@ class MasterAuthorizationApiTests(ApiTestCase):
         body = {
             "company_name": "Example Visitors", "contact_name": "Ravi Patel",
             "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [3, 1],
+            "department_id": 4, "event_name": " Expo ",
         }
         response = self.harness.post("/api/master-qrs", json=body)
         self.assertEqual(response.status_code, 201)
@@ -682,12 +684,16 @@ class MasterAuthorizationApiTests(ApiTestCase):
         self.harness.services.qr.issue_master.assert_called_once()
         self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["meal_limit"], 5)
         self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["meal_type_ids"], [3, 1])
+        self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["department_id"], 4)
+        self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["event_name"], "Expo")
 
     def test_master_creation_requires_group_details_and_rejects_a_third_category(self):
-        valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1]}
+        valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1], "department_id": 4}
         without_types = {key: value for key, value in valid.items() if key != "meal_type_ids"}
         for body in ({}, {**valid, "meal_limit": 0}, {**valid, "kind": "GUEST"}, {**valid, "phone": "123"},
-                     without_types, {**valid, "meal_type_ids": []}, {**valid, "meal_type_ids": [0]}):
+                     without_types, {**valid, "meal_type_ids": []}, {**valid, "meal_type_ids": [0]},
+                     {key: value for key, value in valid.items() if key != "department_id"}, {**valid, "department_id": 0},
+                     {**valid, "event_name": "x" * 151}, {**valid, "email": "not-an-email"}):
             with self.subTest(body=body):
                 self.assert_error(self.harness.post("/api/master-qrs", json=body), 422, "INVALID_INPUT")
 
@@ -926,7 +932,7 @@ class ValidationAndReportApiTests(ApiTestCase):
         args = self.harness.queries.meal_history.call_args
         self.assertIsNotNone(args.args[1].utcoffset())
         self.assertEqual(args.args[1].astimezone(timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc))
-        self.assertEqual(args.kwargs, {"limit": 10, "before": "1788948000250000.12", "employee_id": 7, "meal_type_id": None})
+        self.assertEqual(args.kwargs, {"limit": 10, "before": "1788948000250000.12", "employee_id": 7, "meal_type_id": None, "department_id": None})
 
     def test_naive_or_reversed_report_dates_are_rejected_by_service_validation(self):
         for start, end, code in (
@@ -1007,7 +1013,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_employee_contact_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

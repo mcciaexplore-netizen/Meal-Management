@@ -56,7 +56,7 @@ class MySQLDevelopmentSeedLifecycleTests(DevelopmentSeedFixture, IsolatedMySQLTe
         )
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM development_seed_records WHERE seed_version = %s", (SEED_VERSION,)), len(EXPECTED_KEYS))
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM employees"), 10)
-        self.assertEqual(self.scalar("SELECT COUNT(*) FROM email_queue"), 10)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM email_queue"), 11)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM staff_accounts WHERE is_scanner = 0"), 3)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM qr_credentials"), 12)
         registry_before = self.rows("SELECT * FROM development_seed_records ORDER BY fixture_key")
@@ -177,7 +177,7 @@ class MySQLDevelopmentSeedConcurrencyTests(DevelopmentSeedFixture, IsolatedMySQL
         self.assertEqual(sorted(result.created for result in results), [False, True])
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM development_seed_batches"), 1)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM employees"), 10)
-        self.assertEqual(self.scalar("SELECT COUNT(*) FROM email_queue"), 10)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM email_queue"), 11)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM qr_credentials"), 11)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM staff_accounts WHERE is_scanner = 0"), 3)
 

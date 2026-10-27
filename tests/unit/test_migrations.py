@@ -30,7 +30,7 @@ class MigrationParserTests(unittest.TestCase):
     def test_repository_migrations_have_stable_sequence(self):
         directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
         migrations = load_migrations(directory)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
         self.assertGreater(len(migrations[0].statements), 20)
         self.assertIn("scan_bound_at", "\n".join(migrations[1].statements))
         self.assertIn("last_seen_at", "\n".join(migrations[1].statements))
@@ -164,6 +164,24 @@ class MigrationParserTests(unittest.TestCase):
         self.assertNotIn("DELETE FROM", source)
         self.assertNotIn("DROP ", source)
         self.assertNotIn("ALTER TABLE", source)
+        for statement in migration.statements[1:]:
+            self.assertIn(statement, snapshot)
+
+    def test_visitor_department_migration_adds_batches_and_relaxes_visitor_email(self):
+        directory = Path(__file__).resolve().parents[2] / "database" / "migrations"
+        migration = load_migrations(directory)[14]
+        source = "\n".join(migration.statements)
+        snapshot = tuple(sql_statements((directory.parent / "schema.sql").read_text()))
+        self.assertEqual((migration.version, migration.name), (15, "visitor_departments_batches"))
+        self.assertIn("CREATE TABLE visitor_qr_batches", source)
+        self.assertIn("UNIQUE KEY uq_visitor_batch_request (created_by_staff_id, request_id)", source)
+        self.assertIn("ADD COLUMN department_id BIGINT UNSIGNED NULL", source)
+        self.assertIn("MODIFY COLUMN email VARCHAR(254) NULL", source)
+        self.assertIn("AND (visitor_email IS NULL OR CHAR_LENGTH(TRIM(visitor_email)) > 0)", source)
+        self.assertIn("CREATE TRIGGER visitor_qr_batches_no_update", source)
+        self.assertIn("CREATE TRIGGER visitor_qr_batches_no_delete", source)
+        self.assertNotIn("DELETE FROM", source)
+        self.assertNotIn("UPDATE master_qr_allocations", source)
         for statement in migration.statements[1:]:
             self.assertIn(statement, snapshot)
 

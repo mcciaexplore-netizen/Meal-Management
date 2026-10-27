@@ -38,6 +38,7 @@ class VisitorMealTypeMySQLTests(MealServicesFixture):
             self.admin_context, company_name="Example Visitors", contact_name="Visitor Lead",
             email="visitors@example.test", phone="+91 98765 43210", meal_limit=people,
             meal_type_ids=[self.type_ids[code] for code in codes], expires_at=expires_at,
+            department_id=self.department_id,
         )
 
     def read(self, credential, code, request_id=None, browser=None):
@@ -158,7 +159,8 @@ class VisitorMealTypeMySQLTests(MealServicesFixture):
                           (None, "INVALID_MEAL_TYPE_IDS")):
             with self.subTest(ids=ids), self.assertRaisesRegex(DomainError, code):
                 self.qr.issue_master(self.admin_context, company_name="Example", contact_name="Lead",
-                                     email="lead@example.test", phone="+91 98765 43210", meal_limit=2, meal_type_ids=ids)
+                                     email="lead@example.test", phone="+91 98765 43210", meal_limit=2, meal_type_ids=ids,
+                                     department_id=self.department_id)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM qr_credentials"), before)
 
     def test_listing_and_detail_show_remaining_per_type(self):
@@ -220,7 +222,7 @@ class VisitorMealTypeBackfillMySQLTests(MealServicesFixture):
                 groups[label] = qr_id
             tx.execute("INSERT INTO meal_types (code, name, is_active) VALUES ('OLD-SNACK', 'Old snack', FALSE)")
             active = {row["code"] for row in tx.all("SELECT code FROM meal_types WHERE is_active = 1")}
-        self.assertEqual(MigrationRunner(database, MIGRATIONS).apply(), (14,))
+        self.assertEqual(MigrationRunner(database, MIGRATIONS, through=14).apply(), (14,))
         with database.transaction() as tx:
             rows = tx.all(
                 "SELECT a.qr_id, t.code, a.meal_limit, a.meals_used, a.exhausted_at, x.exhausted_at AS allocation_exhausted "

@@ -202,6 +202,7 @@ class EmailActionsTests(unittest.TestCase):
         ):
             result = actions._worker()
         provider.assert_called_once_with(self.runtime)
-        worker.assert_called_once_with(self.services.database, self.services.qr.vault, self.services.qr.renderer, provider.return_value)
+        worker.assert_called_once_with(self.services.database, self.services.qr.vault, self.services.qr.renderer, provider.return_value,
+                                       daily_limit=self.runtime.email_daily_limit)
         self.assertIs(result, worker.return_value)
         self.assertEqual(self.services.database.mock_calls, [])

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, Strict
 
 from .errors import DomainError
 from .meals import normalize_visitor_details
-from .security import normalize_phone
+from .security import normalize_email, normalize_phone, required_text
 
 
 Identifier = Annotated[StrictInt, Field(gt=0, le=2**64 - 1)]
@@ -125,26 +125,55 @@ class ExpiryInput(InputModel):
 class MasterQrInput(InputModel):
     company_name: Name
     contact_name: Name
-    email: Annotated[str, Field(min_length=3, max_length=254)]
+    email: Annotated[str, Field(max_length=254)] | None = None
     phone: Annotated[str, Field(min_length=7, max_length=32)]
     meal_limit: Quantity
     meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
+    department_id: Identifier
+    event_name: Annotated[str, Field(max_length=150)] | None = None
     expires_at: datetime | None = None
 
     @model_validator(mode="after")
     def normalized(self):
+        email = (self.email or "").strip()
         try:
-            values = normalize_visitor_details({
-                "company_name": self.company_name, "name": self.contact_name,
-                "email": self.email, "phone": self.phone,
-            })
+            self.company_name = required_text(self.company_name, "VISITOR_COMPANY_NAME", 150)
+            self.contact_name = required_text(self.contact_name, "VISITOR_NAME", 150)
+            self.phone = normalize_phone(self.phone, "VISITOR_PHONE")
+            self.email = normalize_email(email) if email else None
         except DomainError:
             raise ValueError("Invalid visitor group details") from None
-        self.company_name = values["company_name"]
-        self.contact_name = values["name"]
-        self.email = values["email"]
-        self.phone = values["phone"]
+        self.event_name = (self.event_name or "").strip() or None
         return self
+
+
+class VisitorRowInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row: Annotated[StrictInt, Field(ge=1, le=100000)] | None = None
+    sr_no: Annotated[str, Field(max_length=20)] | StrictInt | None = None
+    person_name: Annotated[str, Field(max_length=500)] | None = None
+    company_name: Annotated[str, Field(max_length=500)] | None = None
+    phone: Annotated[str, Field(max_length=100)] | None = None
+    email: Annotated[str, Field(max_length=500)] | None = None
+
+
+class VisitorBatchInput(InputModel):
+    request_id: UUID
+    source_name: Annotated[str, Field(min_length=1, max_length=255)]
+    rows: Annotated[list[VisitorRowInput], Field(min_length=1, max_length=200)]
+    expires_at: datetime
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
+    department_id: Identifier
+    event_name: Annotated[str, Field(max_length=150)] | None = None
+
+
+class VisitorBatchEmailInput(InputModel):
+    expected_count: Annotated[StrictInt, Field(ge=1, le=200)]
+
+
+class VisitorEmailInput(InputModel):
+    confirm: Literal[True]
 
 
 class RevokeInput(InputModel):
