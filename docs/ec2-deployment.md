@@ -146,7 +146,7 @@ GRANT UPDATE ON `meal_management`.`waiter_shift_settings` TO 'meal_runtime'@'172
 
 Add an S3 lifecycle rule on the photo bucket that expires objects with the prefix `shift-selfies/` after 90 days. Employee photos have no prefix and are not affected. The instance role's existing `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on the bucket's objects cover the new prefix.
 
-Optional settings in `.env.docker`: `WAITER_SHIFT_HOURS` (default 3, 1 to 12) and `MEAL_TYPE_LOCK_HOURS` (default 12, 0 to 48). The scanner's Caddy body limit is 2 MB for selfie uploads.
+Optional setting in `.env.docker`: `MEAL_TYPE_LOCK_HOURS` (default 12, 0 to 48). (`WAITER_SHIFT_HOURS` was read only while waiter sign-in existed; see Removing waiter sign-in.) The scanner's Caddy body limit is 2 MB for selfie uploads.
 
 After 012, earlier images refuse every scan with `SCANNER_NOT_CONFIGURED`, because their only meal type, `SCANNER-MEAL`, is deactivated. When rolling back to such an image, also run as the master user:
 
@@ -199,6 +199,22 @@ WHERE t.is_active = TRUE
 ### Newest-first lists
 
 This release changes the list paging parameter from `after_id` to `before` and needs no migration, grant or database change; roll back by retagging the previous image. Pages and scripts load with `Cache-Control: no-store` and `no-cache`, so browsers fetch the new JavaScript on the next page load; a tab opened before the deploy shows "Meal Office was updated. Refresh the page to continue." when it next loads more rows.
+
+### Removing waiter sign-in
+
+This release removes waiter sign-in and needs no migration and no grant change. The scanner opens straight to scanning after activation, and both applications refuse location access. Then:
+
+- Reload each scanner phone once; it shows the meal type picker with no sign-in or location prompt.
+- `WAITER_SHIFT_HOURS` in `.env.docker` is no longer read and can be deleted.
+- The `shift-selfies/` lifecycle rule is not needed for new data. Keep it until existing selfies have expired (90 days after the last sign-in) or `reset-test-data --include-s3` has deleted them, then remove it.
+- The runtime account keeps `INSERT, UPDATE` on `waiter_shifts` and `UPDATE` on `waiter_shift_settings`, so the previous image can still be rolled back to. Once that is no longer needed, a later release can remove them from `meal_management.runtime_account` and run, as the master user:
+
+```sql
+REVOKE INSERT, UPDATE ON `meal_management`.`waiter_shifts` FROM 'meal_runtime'@'172.31.%';
+REVOKE UPDATE ON `meal_management`.`waiter_shift_settings` FROM 'meal_runtime'@'172.31.%';
+```
+
+Rolling back to the previous image needs no SQL. That image requires a signed-in shift for every production scan and no current shift exists, so each waiter signs in again (name, selfie, location, I agree) before scanning.
 
 ## Resetting test data
 

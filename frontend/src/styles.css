@@ -423,7 +423,6 @@ dialog::backdrop { background: #102632a6; backdrop-filter: blur(3px); }
 .panel > form.form-grid > .form-actions { flex-wrap: wrap; }
 .catalog-list li > :first-child { min-width: 0; flex: 1 1 auto; }
 .label-cell { min-width: 150px; }
-.shift-selfie { width: 56px; height: 56px; object-fit: cover; border-radius: 50%; display: block; }
 @media (max-width: 720px) {
   .panel > form.form-grid { padding: 0 19px 19px; }
   .detail-grid { grid-template-columns: 1fr; }

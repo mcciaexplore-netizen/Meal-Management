@@ -7,7 +7,6 @@ from meal_management.models import Actor, ServerContext
 from meal_management.paging import format_cursor, newest_first, next_cursor, parse_cursor
 from meal_management.queries import QueryService
 from meal_management.security import generate_token
-from meal_management.waiter_shifts import WaiterShiftService
 
 
 class CursorTests(unittest.TestCase):
@@ -75,14 +74,6 @@ class ListOrderTests(unittest.TestCase):
                 column, identifier = order.replace(" DESC", "").split(", ")
                 self.assertIn(f"({column} < %s OR ({column} = %s AND {identifier} < %s))", sql)
                 self.assertNotIn(identifier + " > %s", sql)
-
-    def test_waiter_shifts_are_newest_started_first(self):
-        with patch("meal_management.waiter_shifts.require_actor"):
-            WaiterShiftService(self.db, MagicMock()).list(self.context, before="1788948000250000.12")
-        sql, params = self.tx.all.call_args.args
-        self.assertIn("(w.started_at < %s OR (w.started_at = %s AND w.id < %s))", sql)
-        self.assertTrue(sql.endswith(" ORDER BY w.started_at DESC, w.id DESC LIMIT %s"))
-        self.assertEqual(params[-2:], (12, 51))
 
 
 if __name__ == "__main__":

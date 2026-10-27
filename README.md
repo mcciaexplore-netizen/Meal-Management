@@ -161,22 +161,20 @@ Before go-live, `manage.py reset-test-data` removes all test records and keeps s
 
 Meal types (Breakfast, Lunch, High Tea and Dinner are seeded) are managed in **Office settings**: add, edit, deactivate; nothing is deleted. The old single "Meal" type (`SCANNER-MEAL`) is deactivated, and meals recorded with it keep it.
 
-- **Scanner:** when the scanner opens or a new shift starts, no meal type is selected and scanning is disabled until the waiter picks one. The choice is shown in large text and stays selected for the following scans until the waiter changes it. A retry keeps the meal type its request started with.
+- **Scanner:** when the scanner opens, no meal type is selected and scanning is disabled until the waiter picks one. The choice is shown in large text and stays selected for the following scans until the waiter changes it. A retry keeps the meal type its request started with.
 - **Eligibility:** each employee's QR is valid only for the meal types ticked on their record (registration, editing, or the optional `meal_types` CSV column such as `LUNCH;DINNER`). Existing employees were given all active meal types. Other types are refused: "Not eligible for Dinner."
 - **Lock:** once a meal type is recorded for an employee, the same type is refused for `MEAL_TYPE_LOCK_HOURS` (default 12; 0 turns it off): "Breakfast already recorded at 08:15 (India time)." Other types still work, simultaneous scans are serialized on the employee, and network retries return the original meal.
 - **Corrections:** an administrator can change a recorded meal's type with a required reason (**Change meal type** in Meal history). The original serving is kept, the correction is stored separately and audited, and reports, history and the lock use the corrected type from the original serving time.
 - **Visitors:** visitor master QRs are recorded under the selected meal type, without eligibility checks or the lock; their allowance still applies.
 - **Reports:** Meal history filters by meal type and marks corrected meals; totals are broken down by meal type.
 
-## Waiter shifts
+## Scanner phones as waiters
 
-In production, each waiter signs in on the scanner phone at the start of every shift before scanning. Sign-in asks for their name, a selfie from the front camera, and the phone's location. The screen shows a short notice on what is recorded and why; the waiter must tick **I agree**, and the consent time and notice version are stored with the shift. Sign-in is refused if location permission is refused. Poor accuracy never blocks it; the accuracy is recorded and shown.
+The scanner has no waiter sign-in. After a phone is activated with an administrator code, it opens straight to the meal type picker and scanning. The chosen meal type stays selected until the page is reloaded or the phone has to be activated again. The scanner asks for no name, selfie, location or consent, and its `Permissions-Policy` refuses location (`geolocation=()`); the camera is still allowed for QR scanning.
 
-- A shift lasts `WAITER_SHIFT_HOURS` (default 3, from 1 to 12) and then ends automatically. **Sign out** ends it early. Ten minutes before the end, a banner offers **Sign in again**. A new sign-in on the same phone replaces the open shift. Each new shift starts with no meal type selected.
-- Every scan attempt and serving records the shift it was made under.
-- Administrators see **Waiter shifts**: the selfie, name, phone, times, a map link for the location, its accuracy, and whether it was inside the canteen radius. **End shift now** ends an active shift; the phone then asks for a new sign-in. The canteen location and radius are set on the same page. Sign-ins outside the radius are flagged for review, not refused. Without a canteen location, nothing is flagged.
-- Selfies are stored privately under the `shift-selfies/` prefix and deleted after 90 days by an S3 lifecycle rule; the shift record stays, and the page shows "Selfie expired". Shift records cannot be edited or deleted.
-- Development mode does not ask for shifts.
+Each phone's activation label is its vendor or counter name. Meal records, rejected scans and the waiter totals in reports show that label as the Waiter, found through the scan request's browser identity; meals with no phone, such as development-mode or staff-scanner meals, show the scanner account's name. Labels cannot be edited, so name each phone after its vendor or counter when generating its code.
+
+Waiter sign-in used to be required (migration 013). Its tables, `waiter_shifts` and `waiter_shift_settings`, and the `waiter_shift_id` columns on servings and scan attempts are kept as dormant history: meals recorded under a shift still display, nothing new is written, and the admin has no Waiter shifts page. `WAITER_SHIFT_HOURS` is no longer read.
 
 ## Meal records are permanent
 

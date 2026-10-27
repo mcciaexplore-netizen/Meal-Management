@@ -1,5 +1,3 @@
-import base64
-import io
 import secrets
 import tempfile
 import uuid
@@ -11,14 +9,6 @@ from uuid import uuid4
 from mysql_support import IsolatedMySQLTestCase
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "database" / "migrations"
-
-
-def selfie():
-    from PIL import Image
-
-    output = io.BytesIO()
-    Image.new("RGB", (32, 32), "teal").save(output, format="JPEG")
-    return base64.b64encode(output.getvalue()).decode()
 
 
 class FakeS3:
@@ -104,8 +94,6 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
         from meal_management.scan_receipts import ScanReceiptService
         from meal_management.scanner_phones import ScannerPhoneService
         from meal_management.security import QrRenderer, TokenVault
-        from meal_management.storage import LocalFileStorage
-        from meal_management.waiter_shifts import NOTICE_VERSION, WaiterShiftService
 
         staff = StaffService(self.db)
         password = self.password = secrets.token_urlsafe(24)
@@ -146,11 +134,17 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
         phones = ScannerPhoneService(self.db, secrets.token_bytes(32))
         self.phones = [phones.register_secret_activation(secrets.token_bytes(32))["id"] for _ in range(3)]
         self.code = phones.create_code(self.admin, "Unused code", date.today() + timedelta(days=30))["id"]
-        storage = LocalFileStorage(str(Path(self.photo_root.name).resolve() / "photos"))
-        shifts = WaiterShiftService(self.db, storage, 3)
-        shifts.update_settings(self.admin, 18.52, 73.85, 100)
-        shift = shifts.start(self.phones[0], "Ravi", selfie(), 18.52, 73.85, 10.0, True, NOTICE_VERSION)
-        self.photo_keys.append(self.query("SELECT selfie_object_key FROM waiter_shifts WHERE id = %s", (shift["id"],))[0]["selfie_object_key"])
+        selfie_key = "shift-selfies/" + secrets.token_hex(32) + ".jpg"
+        self.execute(f"UPDATE `{self.name}`.waiter_shift_settings SET latitude = 18.52, longitude = 73.85, radius_m = 100, "
+                     f"updated_by_staff_id = %s WHERE id = 1", (self.admin_id,))
+        self.execute(
+            f"INSERT INTO `{self.name}`.waiter_shifts (phone_id, waiter_name, selfie_object_key, latitude, longitude, "
+            f"accuracy_m, consent_notice_version, consent_at, started_at, expires_at) VALUES "
+            f"(%s, 'Earlier shift', %s, 18.52, 73.85, 10, '2026-10-26', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), "
+            f"UTC_TIMESTAMP(6) + INTERVAL 3 HOUR)",
+            (self.phones[0], selfie_key),
+        )
+        self.photo_keys.append(selfie_key)
 
     def reset(self, **changes):
         from meal_management.test_data_reset import TestDataReset

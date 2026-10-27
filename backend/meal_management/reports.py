@@ -7,6 +7,13 @@ from .models import ServerContext
 from .meals import EFFECTIVE_MEAL_TYPE
 
 
+def scanner_phone_join(request_column):
+    return (
+        "LEFT JOIN scan_app_requests ar ON ar.request_id = " + request_column + " "
+        "LEFT JOIN scanner_phones ph ON ph.browser_hash = ar.browser_hash "
+    )
+
+
 def _date_range(start: datetime, end: datetime) -> tuple[datetime, datetime]:
     if not isinstance(start, datetime) or not isinstance(end, datetime):
         raise DomainError("INVALID_DATE_RANGE")
@@ -86,13 +93,14 @@ class ReportService:
                 "SELECT m.id, m.serving_id, s.kind, "
                 "t.id AS meal_type_id, t.code AS meal_type_code, t.name AS meal_type_name, "
                 "s.location_id, l.code AS location_code, l.name AS location_name, "
-                "s.waiter_id, w.display_name AS waiter_name, "
+                "s.waiter_id, COALESCE(ph.label, w.display_name) AS waiter_name, "
                 "a.authorized_by, admin.display_name AS admin_name "
                 "FROM meals m "
                 "JOIN servings s ON s.id = m.serving_id "
                 "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
                 "JOIN locations l ON l.id = s.location_id "
                 "JOIN staff_accounts w ON w.id = s.waiter_id "
+                + scanner_phone_join("s.request_id") +
                 "LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id "
                 "LEFT JOIN staff_accounts admin ON admin.id = a.authorized_by "
                 "WHERE m.served_at >= %s AND m.served_at < %s "

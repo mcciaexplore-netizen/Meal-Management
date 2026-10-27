@@ -79,11 +79,10 @@ test("approval selection loads subsequent pages", async () => {
 });
 
 test("every list screen pages with the before cursor and meal records keep the category on one line", async () => {
-  const sources = await Promise.all(["screens.js", "waiter_shifts.js", "api.js"].map(name => readFile(new URL(`../src/${name}`, import.meta.url), "utf8")));
+  const sources = await Promise.all(["screens.js", "api.js"].map(name => readFile(new URL(`../src/${name}`, import.meta.url), "utf8")));
   for (const source of sources) assert.doesNotMatch(source, /after_id/);
-  const [screens, shifts] = sources;
+  const [screens] = sources;
   assert.equal((screens.match(/before: append \? /g) ?? []).length, 5);
-  assert.match(shifts, /&before=\$\{encodeURIComponent\(cursor\)\}/);
   assert.match(screens, /<td class="nowrap">\$\{badge\(row\.kind === "MASTER" \? "Visitor" : "Employee"\)\}<\/td>/);
   assert.match(screens, /<td class="mono">\$\{escape\(row\.meal_id \?\? row\.id\)\}<\/td>/);
 });

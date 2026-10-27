@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { mealTypeCheckboxes } from "../src/meal_types.js";
-import { signInForm } from "../src/shift_signin.js";
 import { visitorMealTypeChoices } from "../src/screens.js";
 
 const read = name => readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
@@ -48,12 +47,11 @@ test("badges stay on one line and the visitor QR details have a layout", async (
 });
 
 test("tables keep phones and meal dates on one line and give labels room", async () => {
-  const [screens, access, shifts, css] = await Promise.all([read("screens.js"), read("scanner_access.js"), read("waiter_shifts.js"), read("styles.css")]);
+  const [screens, access, css] = await Promise.all([read("screens.js"), read("scanner_access.js"), read("styles.css")]);
   assert.match(screens, /<td class="nowrap">\$\{escape\(row\.employee_phone \?\? row\.visitor_phone \?\? "—"\)\}<\/td>/);
   assert.match(screens, /<td class="nowrap">\$\{badge\(row\.kind === "MASTER" \? "Visitor" : "Employee"\)\}<\/td>/);
   assert.match(screens, /<td class="nowrap">\$\{escape\(timestamp\(row\.created_at \?\? row\.queued_at\)\)\}/);
   assert.equal((access.match(/<td class="label-cell">/g) ?? []).length, 2);
-  assert.match(shifts, /<td class="label-cell">\$\{escape\(shift\.phone_label/);
   assert.match(rule(css, ".label-cell"), /min-width: 150px/);
 });
 
@@ -66,24 +64,14 @@ test("forms inside panels are padded and narrow filters stack", async () => {
   assert.match(css, /\.sidebar nav \{ -webkit-mask-image: linear-gradient/);
 });
 
-test("the scanner keeps 44px targets, a tappable consent row and a reachable hidden file input", async () => {
+test("the scanner keeps a reachable hidden file input, a styled picker and a full-height background", async () => {
   const css = await read("scan_only.css");
-  const consent = rule(css, ".shift-signin .consent");
-  assert.match(consent, /min-height: 44px/);
-  assert.match(rule(css, ".shift-signin .consent input"), /width: 24px; height: 24px/);
   const upload = rule(css, '.scan-upload > input[type="file"]');
   for (const declaration of ["position: absolute", "width: 1px", "height: 1px", "clip-path: inset(50%)", "opacity: 0"]) assert.ok(upload.includes(declaration), declaration);
   assert.doesNotMatch(upload, /display: none|visibility: hidden/);
   assert.match(rule(css, ".scan-upload:has(> input:focus-visible) > label"), /outline: 3px solid/);
   assert.match(rule(css, ".scan-meal-type select"), /min-height: 48px; padding: 8px 12px; font-size: 18px/);
   assert.match(rule(css, ".scan-only-body"), /min-height: 100dvh/);
-  assert.match(rule(css, ".scan-shift-name"), /text-overflow: ellipsis/);
-  assert.match(rule(css, ".scan-shift-until"), /white-space: nowrap/);
-  assert.match(rule(css, ".scan-shift > .button"), /flex-shrink: 0/);
-  const form = signInForm("Ravi");
-  assert.match(form, /<label class="consent"><input type="checkbox" name="consent" required/);
   const app = await read("scan_app.js");
   assert.match(app, /<label class="button" for="qr-upload">Upload QR image<\/label><input id="qr-upload" type="file"/);
-  assert.match(app, /<span class="scan-shift-name">\$\{escape\(currentShift\.waiter_name\)\}<\/span><span class="scan-shift-until">until /);
-  assert.match(app, /id="shift-banner" role="alert" hidden>.*>Sign in again</);
 });
