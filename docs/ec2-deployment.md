@@ -200,6 +200,23 @@ WHERE t.is_active = TRUE
 
 This release changes the list paging parameter from `after_id` to `before` and needs no migration, grant or database change; roll back by retagging the previous image. Pages and scripts load with `Cache-Control: no-store` and `no-cache`, so browsers fetch the new JavaScript on the next page load; a tab opened before the deploy shows "Meal Office was updated. Refresh the page to continue." when it next loads more rows.
 
+### Visitor departments, bulk visitor QRs and emails (migration 015)
+
+Before step 5, grant:
+
+```sql
+GRANT INSERT ON `meal_management`.`visitor_qr_batches` TO 'meal_runtime'@'172.31.%';
+```
+
+The image now includes `openpyxl==3.1.5` and `defusedxml==0.7.1` for reading .xlsx files. Optional setting: `EMAIL_DAILY_LIMIT` (default 450 for Gmail, which allows about 500 recipients a day on a personal account and 2,000 on Google Workspace; 200 for SES, the sandbox quota; raise it to your SES production quota). Email sending stays off unless `EMAIL_SEND_ENABLED=true`.
+
+Rolling back to the previous image after 015 needs no SQL. That image reports ready, creates visitor QRs without a department, and scans visitor QRs that have no email (checked against e04cfa8). It cannot render visitor emails, so cancel pending visitor emails before rolling back if sending is on:
+
+```sql
+UPDATE email_queue q JOIN qr_credentials c ON c.id = q.qr_id
+SET q.status = 'CANCELLED' WHERE c.kind = 'MASTER' AND q.status IN ('DRAFT', 'PENDING_APPROVAL', 'QUEUED');
+```
+
 ### Removing waiter sign-in
 
 This release removes waiter sign-in and needs no migration and no grant change. The scanner opens straight to scanning after activation, and both applications refuse location access. Then:

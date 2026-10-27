@@ -96,6 +96,7 @@ class RuntimeSettings:
     email_poll_seconds: int = 5
     email_batch_size: int = 10
     email_process_limit: int = 10
+    email_daily_limit_setting: int | None = None
     max_photo_bytes: int = 5 * 1024 * 1024
     session_idle_minutes: int = 30
     login_limit: int = 5
@@ -106,6 +107,12 @@ class RuntimeSettings:
     scanner_request_limit: int = 120
     scanner_ip_limit: int = 600
     scanner_window_seconds: int = 60
+
+    @property
+    def email_daily_limit(self):
+        if self.email_daily_limit_setting is not None:
+            return self.email_daily_limit_setting
+        return 200 if self.email_backend == "ses" else 450
 
     @property
     def scan_app_enabled(self):
@@ -217,6 +224,7 @@ class RuntimeSettings:
             email_poll_seconds=_integer(env, "EMAIL_POLL_SECONDS", 5, 1, 300),
             email_batch_size=_integer(env, "EMAIL_BATCH_SIZE", 10, 1, 100),
             email_process_limit=_integer(env, "EMAIL_PROCESS_LIMIT", 10, 1, 10),
+            email_daily_limit_setting=_integer(env, "EMAIL_DAILY_LIMIT", 0, 1, 10000) if (env.get("EMAIL_DAILY_LIMIT") or "").strip() else None,
             max_photo_bytes=_integer(env, "MAX_PHOTO_BYTES", 5 * 1024 * 1024, 1024, 20 * 1024 * 1024),
             session_idle_minutes=_integer(env, "SESSION_IDLE_MINUTES", 30, 1, 480),
             login_limit=_integer(env, "LOGIN_ATTEMPT_LIMIT", 5, 1, 100),

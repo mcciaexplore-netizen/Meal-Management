@@ -427,3 +427,5 @@ dialog::backdrop { background: #102632a6; backdrop-filter: blur(3px); }
   .panel > form.form-grid { padding: 0 19px 19px; }
   .detail-grid { grid-template-columns: 1fr; }
 }
+.inline-confirm { flex-basis: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #f6faf9; }
+.inline-confirm p { margin: 0 0 8px; }

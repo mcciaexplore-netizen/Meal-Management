@@ -1,5 +1,6 @@
 import hmac
 from dataclasses import dataclass, field
+from datetime import timezone
 
 from .auth import audit, require_actor
 from .email_queue import EmailQueueService, email_delivery_state
@@ -154,9 +155,19 @@ class QrService:
             after={"revoked_at": now, "reason": reason},
         )
 
-    def _master_details(self, company_name, contact_name, email, phone, meal_limit, meal_type_ids=None):
-        if all(value is None for value in (company_name, contact_name, email, phone, meal_limit, meal_type_ids)):
+    def _master_details(self, company_name, contact_name, email, phone, meal_limit, meal_type_ids=None,
+                        department_id=None, event_name=None):
+        if all(value is None for value in (company_name, contact_name, email, phone, meal_limit, meal_type_ids,
+                                           department_id, event_name)):
             return None
+        if type(department_id) is not int or not 1 <= department_id <= 2**64 - 1:
+            raise DomainError("INVALID_DEPARTMENT_ID")
+        if event_name is not None and not isinstance(event_name, str):
+            raise DomainError("INVALID_EVENT_NAME")
+        event_name = event_name.strip() if isinstance(event_name, str) else None
+        if event_name is not None and len(event_name) > 150:
+            raise DomainError("INVALID_EVENT_NAME")
+        email = email.strip() if isinstance(email, str) else email
         if type(meal_limit) is not int or not 1 <= meal_limit <= 65535:
             raise DomainError("INVALID_MEAL_LIMIT")
         if (not isinstance(meal_type_ids, (list, tuple)) or not 1 <= len(meal_type_ids) <= 50
@@ -166,29 +177,40 @@ class QrService:
         return {
             "company_name": required_text(company_name, "MASTER_COMPANY_NAME", 150),
             "contact_name": required_text(contact_name, "MASTER_CONTACT_NAME", 150),
-            "email": normalize_email(email),
+            "email": normalize_email(email) if email else None,
             "phone": normalize_phone(phone, "MASTER_PHONE"),
             "meal_limit": meal_limit,
             "meal_type_ids": sorted(meal_type_ids),
+            "department_id": department_id,
+            "event_name": event_name or None,
         }
 
-    def _create_master_allocation(self, tx, actor_id, qr_id, details):
+    def visitor_context(self, tx, department_id, meal_type_ids):
+        department = tx.one("SELECT id, name FROM departments WHERE id = %s AND is_active = 1 FOR SHARE", (department_id,))
+        if department is None:
+            raise DomainError("DEPARTMENT_UNAVAILABLE")
+        placeholders = ", ".join(["%s"] * len(meal_type_ids))
+        rows = tx.all(
+            f"SELECT id, name FROM meal_types WHERE is_active = 1 AND id IN ({placeholders}) ORDER BY id FOR SHARE",
+            tuple(meal_type_ids),
+        )
+        if len(rows) != len(meal_type_ids):
+            raise DomainError("MEAL_TYPE_UNAVAILABLE")
+        return department["name"], [row["name"] for row in rows]
+
+    def _create_master_allocation(self, tx, actor_id, qr_id, details, batch_id=None, batch_row=None):
         if details is None:
-            return
+            return None
+        department_name, meal_type_names = self.visitor_context(tx, details["department_id"], details["meal_type_ids"])
         tx.execute(
             "INSERT INTO master_qr_allocations "
-            "(qr_id, company_name, contact_name, email, phone, meal_limit, created_by_staff_id) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "(qr_id, company_name, contact_name, email, phone, meal_limit, created_by_staff_id, "
+            "department_id, event_name, batch_id, batch_row) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (qr_id, details["company_name"], details["contact_name"], details["email"],
-             details["phone"], details["meal_limit"], actor_id),
+             details["phone"], details["meal_limit"], actor_id, details["department_id"], details["event_name"],
+             batch_id, batch_row),
         )
-        placeholders = ", ".join(["%s"] * len(details["meal_type_ids"]))
-        rows = tx.all(
-            f"SELECT id FROM meal_types WHERE is_active = 1 AND id IN ({placeholders}) FOR SHARE",
-            tuple(details["meal_type_ids"]),
-        )
-        if len(rows) != len(details["meal_type_ids"]):
-            raise DomainError("MEAL_TYPE_UNAVAILABLE")
         now = tx.now()
         for meal_type_id in details["meal_type_ids"]:
             tx.execute(
@@ -196,15 +218,30 @@ class QrService:
                 (qr_id, meal_type_id, details["meal_limit"], now),
             )
         audit(tx, actor_id, "MASTER_QR_ALLOCATED", "master_qr_allocations", qr_id,
-              after={"meal_limit": details["meal_limit"], "meal_type_ids": details["meal_type_ids"]})
+              after={"meal_limit": details["meal_limit"], "meal_type_ids": details["meal_type_ids"],
+                     "department_id": details["department_id"], "event_name": details["event_name"],
+                     "batch_id": batch_id})
+        return {"name": details["contact_name"], "company_name": details["company_name"],
+                "department_name": department_name, "event_name": details["event_name"],
+                "meal_types": meal_type_names}
+
+    def queue_visitor_email(self, tx, qr_id, token, details, visitor, expires_at, bulk_batch_id=None):
+        if details is None or not details["email"] or visitor is None:
+            return None
+        expiry = None if expires_at is None else utc_naive(expires_at).replace(tzinfo=timezone.utc).isoformat()
+        return self.email_queue.enqueue_visitor(
+            tx, qr_id, details["email"], token, {**visitor, "expires_at": expiry}, bulk_batch_id=bulk_batch_id,
+        )
 
     def issue_master(self, context, expires_at=None, company_name=None, contact_name=None,
-                     email=None, phone=None, meal_limit=None, meal_type_ids=None):
-        details = self._master_details(company_name, contact_name, email, phone, meal_limit, meal_type_ids)
+                     email=None, phone=None, meal_limit=None, meal_type_ids=None, department_id=None, event_name=None):
+        details = self._master_details(company_name, contact_name, email, phone, meal_limit, meal_type_ids,
+                                       department_id, event_name)
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
             result = self._issue(tx, actor.staff_id, "MASTER", None, expires_at)
-            self._create_master_allocation(tx, actor.staff_id, result.qr_id, details)
+            visitor = self._create_master_allocation(tx, actor.staff_id, result.qr_id, details)
+            self.queue_visitor_email(tx, result.qr_id, result.token, details, visitor, expires_at)
         return result
 
     def revoke(self, context, qr_id, reason):
@@ -247,8 +284,9 @@ class QrService:
         return result
 
     def replace_master(self, context, qr_id, expires_at=None, company_name=None, contact_name=None,
-                       email=None, phone=None, meal_limit=None, meal_type_ids=None):
-        details = self._master_details(company_name, contact_name, email, phone, meal_limit, meal_type_ids)
+                       email=None, phone=None, meal_limit=None, meal_type_ids=None, department_id=None, event_name=None):
+        details = self._master_details(company_name, contact_name, email, phone, meal_limit, meal_type_ids,
+                                       department_id, event_name)
         with self.db.transaction() as tx:
             actor = require_actor(tx, context, {"ADMIN"})
             credential, _ = self._lock_credential(tx, qr_id)
@@ -258,7 +296,8 @@ class QrService:
                 raise DomainError("QR_REVOKED")
             self._revoke(tx, actor.staff_id, credential, "REPLACED")
             result = self._issue(tx, actor.staff_id, "MASTER", None, expires_at)
-            self._create_master_allocation(tx, actor.staff_id, result.qr_id, details)
+            visitor = self._create_master_allocation(tx, actor.staff_id, result.qr_id, details)
+            self.queue_visitor_email(tx, result.qr_id, result.token, details, visitor, expires_at)
         return result
 
     def resend_employee(self, context, employee_id):

@@ -49,9 +49,46 @@ def validate_email_recipient(value):
     return recipient
 
 
+def _visitor_message(sender, recipient, preview):
+    from email.utils import make_msgid
+
+    from . import visitor_email
+
+    import qrcode
+
+    output = io.BytesIO()
+    qrcode.make(preview.token).save(output, format="PNG")
+    domain = sender.rsplit("@", 1)[1]
+    content_id = make_msgid("visitor-qr", domain=domain)
+    message = EmailMessage(policy=SMTP)
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = visitor_email.subject(preview.visitor)
+    message["Date"] = formatdate(localtime=False)
+    identifier = "<" + secrets.token_hex(16) + "@" + domain + ">"
+    message["Message-ID"] = identifier
+    message.set_content(visitor_email.text_body(preview.employee_name, preview.visitor), cte="quoted-printable")
+    message.add_alternative(
+        visitor_email.html_body(preview.employee_name, preview.visitor, "cid:" + content_id[1:-1]),
+        subtype="html", cte="quoted-printable",
+    )
+    message.get_payload()[1].add_related(
+        output.getvalue(), maintype="image", subtype="png", cid=content_id,
+        filename="meal-qr.png", disposition="inline",
+    )
+    return identifier, message.as_bytes()
+
+
 def _qr_message(sender, preview):
     try:
         recipient = validate_email_recipient(preview.recipient_email)
+        if getattr(preview, "kind", "EMPLOYEE") == "VISITOR":
+            try:
+                token_digest(preview.token)
+                identifier, wire = _visitor_message(sender, recipient, preview)
+            except Exception:
+                raise DeliveryError("INVALID_EMAIL_CONTENT") from None
+            return recipient, identifier, wire
         try:
             name = required_text(preview.employee_name, "EMAIL_CONTENT", 150)
             token_digest(preview.token)
@@ -162,6 +199,11 @@ class GmailDelivery:
 
 class LocalEmailPreview:
     def render(self, preview):
+        if getattr(preview, "kind", "EMPLOYEE") == "VISITOR":
+            from . import visitor_email
+
+            image = base64.b64encode(preview.qr_svg.encode("utf-8")).decode("ascii")
+            return visitor_email.html_body(preview.employee_name, preview.visitor, "data:image/svg+xml;base64," + image)
         name = html.escape(preview.employee_name, quote=True)
         recipient = html.escape(preview.recipient_email, quote=True)
         image = base64.b64encode(preview.qr_svg.encode("utf-8")).decode("ascii")

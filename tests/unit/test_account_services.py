@@ -384,27 +384,37 @@ class EmployeeQrServiceTests(unittest.TestCase):
 
     def test_master_request_stores_normalized_group_details_and_meal_limit_atomically(self):
         self.tx.insert.return_value = 72
-        self.tx.all.return_value = [{"id": 1}, {"id": 3}]
+        self.tx.one.return_value = {"id": 4, "name": "Exhibition Centre"}
+        self.tx.all.return_value = [{"id": 1, "name": "Breakfast"}, {"id": 3, "name": "Lunch"}]
+        self.renderer.render.return_value = "<svg/>"
         with self._patch_actor("qr"), patch("meal_management.qr.audit"):
             issued = self.qr.issue_master(
                 self.context, company_name=" Example Company ", contact_name=" Ravi Patel ",
                 email=" RAVI@EXAMPLE.TEST ", phone=" +91 98765 43210 ", meal_limit=5, meal_type_ids=[3, 1],
+                department_id=4, event_name="  Expo  ",
             )
         self.assertEqual(issued.qr_id, 72)
         allocation = next(call for call in self.tx.execute.call_args_list if call.args[0].startswith("INSERT INTO master_qr_allocations"))
-        self.assertEqual(allocation.args[1], (72, "Example Company", "Ravi Patel", "ravi@example.test", "+91 98765 43210", 5, 7))
+        self.assertEqual(allocation.args[1], (72, "Example Company", "Ravi Patel", "ravi@example.test", "+91 98765 43210", 5, 7,
+                                              4, "Expo", None, None))
+        drafts = [call for call in self.tx.insert.call_args_list if call.args[0].startswith("INSERT INTO email_queue")]
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0].args[1][1], "ravi@example.test")
+        self.assertEqual(drafts[0].args[1][3], "DRAFT")
+        self.vault.encrypt.assert_called()
         allowances = [call.args[1][:3] for call in self.tx.execute.call_args_list if call.args[0].startswith("INSERT INTO master_qr_meal_types")]
         self.assertEqual(allowances, [(72, 1, 5), (72, 3, 5)])
         self.assertTrue(self.db.committed)
 
     def test_master_request_refuses_inactive_or_unknown_meal_types(self):
         self.tx.insert.return_value = 72
-        self.tx.all.return_value = [{"id": 1}]
+        self.tx.one.return_value = {"id": 4, "name": "Exhibition Centre"}
+        self.tx.all.return_value = [{"id": 1, "name": "Breakfast"}]
         with self._patch_actor("qr"), patch("meal_management.qr.audit"):
             with self.assertRaisesRegex(DomainError, "MEAL_TYPE_UNAVAILABLE"):
                 self.qr.issue_master(
                     self.context, company_name="Example", contact_name="Ravi", email="ravi@example.test",
-                    phone="+919876543210", meal_limit=5, meal_type_ids=[1, 9],
+                    phone="+919876543210", meal_limit=5, meal_type_ids=[1, 9], department_id=4,
                 )
         self.assertTrue(self.db.rolled_back)
 
@@ -424,20 +434,23 @@ class EmployeeQrServiceTests(unittest.TestCase):
 
     def test_master_allocation_failure_rolls_back_qr_creation(self):
         self.tx.insert.return_value = 72
+        self.tx.one.return_value = {"id": 4, "name": "Exhibition Centre"}
+        self.tx.all.return_value = [{"id": 1, "name": "Breakfast"}]
         self.tx.execute.side_effect = RuntimeError("ALLOCATION_INSERT_FAILED")
         with self._patch_actor("qr"), patch("meal_management.qr.audit"):
             with self.assertRaisesRegex(RuntimeError, "ALLOCATION_INSERT_FAILED"):
                 self.qr.issue_master(
                     self.context, company_name="Example Company", contact_name="Ravi Patel",
-                    email="ravi@example.test", phone="+919876543210", meal_limit=5, meal_type_ids=[1],
+                    email="ravi@example.test", phone="+919876543210", meal_limit=5, meal_type_ids=[1], department_id=4,
                 )
         self.assertTrue(self.db.rolled_back)
         self.assertFalse(self.db.committed)
 
     def test_master_request_rejects_incomplete_details_or_invalid_allowance_before_writing(self):
         valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test",
-                 "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1]}
+                 "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1], "department_id": 4}
         for values in (
+            {**valid, "department_id": None}, {**valid, "department_id": 0}, {**valid, "event_name": "x" * 151},
             {**valid, "company_name": ""}, {**valid, "email": "invalid"}, {**valid, "meal_limit": 0},
             {**valid, "meal_type_ids": None}, {**valid, "meal_type_ids": []}, {**valid, "meal_type_ids": [1, 1]},
             {**valid, "meal_type_ids": [0]}, {**valid, "meal_type_ids": ["1"]},

@@ -4,6 +4,7 @@ import { closeModal, errorMessage, formAction, icon, loading, notify } from "./u
 import { dashboard, employees, masters, reports, emails, settings } from "./screens.js";
 import { developmentGallery } from "./development.js";
 import { scannerAccess } from "./scanner_access.js";
+import { visitorBatches } from "./visitor_batches.js";
 import { loadApplication } from "./application.js";
 
 const root = document.getElementById("app");
@@ -11,6 +12,7 @@ const adminPages = new Map([
   ["dashboard", ["Overview", "grid", dashboard]],
   ["employees", ["Employees", "people", employees]],
   ["master", ["Master QR", "qr", masters]],
+  ["visitor-batches", ["Bulk visitor QRs", "qr", visitorBatches]],
   ["reports", ["Meal history", "chart", reports]],
   ["emails", ["Email queue", "mail", emails]],
   ["scanner-access", ["Scanner access", "scan", scannerAccess]],

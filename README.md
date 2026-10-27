@@ -142,6 +142,16 @@ The scanner automatically receives its own signed, HTTP-only browser cookie and 
 
 **Create visitor master QR** has a **Valid for** list of active meal types, all ticked by default; at least one is required. Each ticked meal type allows **Number of people** scans: a group of 5 valid for Lunch and Dinner can have 5 lunches and 5 dinners. The scanner refuses other meal types ("This visitor QR is not valid for Dinner.") and a type with none left ("All Lunch meals on this visitor QR have been used."), without using an allowance or recording a meal. The QR expires after its final allowed meal, when every ticked type has none left, or at its optional earlier expiry. Visitor QRs have no meal-type lock. The visitor list and QR details show what is left for each type. **Create another visitor QR** starts with the previous QR's types that are still active. Visitor QRs created before this change were given their remaining count for each meal type active at the time.
 
+### Visitor departments, bulk visitor QRs and visitor emails
+
+Every new visitor QR needs a **Department** (the same list as employees) and can have an **Event name**; both show on the QR card, the visitor list and QR details, and Meal records gain a Department column and filter covering employees and visitors. Email is optional: a visitor QR with an email gets a draft email, one without gets none. Visitor QRs created before this release keep an empty department.
+
+**Bulk visitor QRs** creates one individual visitor QR per person from a CSV or Excel (.xlsx) file with the columns `Sr. No., Person Name, Company Name, Phone, Email` (at most 200 rows and 1 MB). The administrator sets an expiry (required), the meal types (one meal of each per person), the department and an optional event. The file is checked first and every row problem is listed; one bad row stops the whole file. The server checks every row and setting again on creation. Re-submitting the same list, or the same content again, returns the existing batch instead of creating duplicates. Excel files are read without running macros or formulas, and files with formulas, macros or links to other workbooks are refused.
+
+Each visitor QR can be emailed as an HTML message with a plain-text alternative: name, company, department, event, approved meal types and the expiry in India time, with the QR as an inline image. Nothing is sent until an administrator chooses **Email QR** (one QR) or **Send emails** (a batch) and confirms the count. A QR can be emailed again at most three more times per address. `EMAIL_DAILY_LIMIT` (default 450 for Gmail, 200 for SES) caps all emails sent in the last 24 hours, employee and visitor together; a batch larger than what is left is refused, and the worker leaves remaining emails queued once the limit is reached. With `EMAIL_SEND_ENABLED=false` (the default), drafts are kept and nothing is sent.
+
+"AI Studio" is not part of the code; if a database has an "AI Studio" department, deactivate it in Office settings.
+
 ### Resetting test data
 
 Before go-live, `manage.py reset-test-data` removes all test records and keeps staff, settings and the schema; it is a dry run unless confirmed. See [Resetting test data](docs/ec2-deployment.md#resetting-test-data).

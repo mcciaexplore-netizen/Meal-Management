@@ -139,7 +139,7 @@ class MealTypeEligibilityMySQLTests(MealServicesFixture):
 
         credential = self.qr.issue_master(self.admin_context, company_name="Visitors", contact_name="Lead",
                                           email="visitors@example.test", phone="+91 98765 43210", meal_limit=3,
-                                          meal_type_ids=[self.type_ids["DINNER"]])
+                                          meal_type_ids=[self.type_ids["DINNER"]], department_id=self.department_id)
         shared = ScanAppService(self.db, self.locked_meals, ScanReceiptService(self.db))
         browser = secrets.token_bytes(32)
         results = [shared.read(browser, uuid4(), credential.token, self.type_ids["DINNER"]) for _ in range(3)]

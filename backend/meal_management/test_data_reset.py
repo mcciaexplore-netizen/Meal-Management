@@ -12,7 +12,7 @@ from .security import normalize_email
 
 WIPE_TABLES = (
     "meal_type_corrections", "meal_voids", "meals", "servings", "scan_attempts", "scan_app_requests",
-    "visitor_authorizations", "serving_requests", "master_qr_meal_types", "master_qr_allocations",
+    "visitor_authorizations", "serving_requests", "master_qr_meal_types", "master_qr_allocations", "visitor_qr_batches",
     "email_queue", "employee_email_batches", "development_seed_records", "development_seed_batches",
     "qr_credentials", "employee_meal_types", "employee_archives", "employees", "waiter_shifts",
     "audit_events", "staff_sessions", "login_rate_limits",
@@ -23,7 +23,7 @@ KEEP_TABLES = (
 )
 PHONE_TABLE = "scanner_phones"
 FRESH_COUNTER_TABLES = ("audit_events",)
-REQUIRED_MIGRATIONS = tuple(range(1, 15))
+REQUIRED_MIGRATIONS = tuple(range(1, 16))
 RUNTIME_USER = "meal_runtime"
 SNAPSHOT_ID = re.compile(r"(?:rds:)?[A-Za-z](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,254}")
 PHOTO_KEY = re.compile(r"(?:shift-selfies/)?[0-9a-f]{64}\.(?:jpg|png)")
@@ -96,7 +96,7 @@ class TestDataReset:
             raise DomainError("RESET_REQUIRES_ADMIN_ACCOUNT")
         ledger = tx.all("SELECT version, status FROM schema_migrations ORDER BY version")
         if tuple(row["version"] for row in ledger) != REQUIRED_MIGRATIONS or any(row["status"] != "APPLIED" for row in ledger):
-            raise DomainError("RESET_REQUIRES_MIGRATIONS_ONE_TO_FOURTEEN")
+            raise DomainError("RESET_REQUIRES_MIGRATIONS_ONE_TO_FIFTEEN")
         operator = tx.one(
             "SELECT s.id FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id "
             "WHERE s.email = %s AND s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'ADMIN'",

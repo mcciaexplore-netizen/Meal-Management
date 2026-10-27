@@ -50,6 +50,7 @@ class IndependentApplicationsMySQLTests(MealServicesFixture):
             phone=visitor["phone"],
             meal_limit=1,
             meal_type_ids=[self.meal_type_id],
+            department_id=self.department_id,
         )
         first_body = {"request_id": str(uuid4()), "token": employee_token, "meal_type_id": self.meal_type_id}
         master_body = {"request_id": str(uuid4()), "token": master.token, "meal_type_id": self.meal_type_id}

@@ -7,7 +7,7 @@ from .errors import DomainError
 
 _OUTCOMES = {
     "SENT": "sent", "ALREADY_SENT": "already_sent", "CANCELLED": "cancelled",
-    "FAILED": "failed", "NEEDS_REVIEW": "needs_review",
+    "FAILED": "failed", "NEEDS_REVIEW": "needs_review", "QUEUED": "deferred",
 }
 _CODES = frozenset({
     "EMAIL_DELIVERY_NEEDS_REVIEW", "INVALID_EMAIL_PAYLOAD", "INVALID_EMAIL_SENDER",
@@ -17,7 +17,7 @@ _CODES = frozenset({
     "EMAIL_DELIVERY_FAILED", "EMAIL_NOT_DELIVERABLE", "REAL_EMAIL_NOT_AUTHORIZED",
     "EMAIL_CLAIM_UNCONFIRMED", "EMAIL_CLAIM_LOST", "EMAIL_NOT_FOUND",
     "INVALID_EMAIL_STATUS", "EMAIL_QUEUE_UNAVAILABLE", "EMAIL_DISPATCH_FAILED",
-    "EMAIL_APPROVAL_REQUIRED",
+    "EMAIL_APPROVAL_REQUIRED", "EMAIL_DAILY_LIMIT_REACHED",
 })
 _GLOBAL_FAILURES = frozenset({
     "EMAIL_AUTHENTICATION_FAILED", "GMAIL_CONFIGURATION_REQUIRED", "INVALID_EMAIL_SENDER",
@@ -127,6 +127,9 @@ class EmailDispatcher:
                         result["last_error"] = code if isinstance(code, str) and code in _CODES else "EMAIL_DELIVERY_FAILED"
                         if result["last_error"] in _GLOBAL_FAILURES:
                             result["status"] = "HALTED"
+                            break
+                        if result["last_error"] == "EMAIL_DAILY_LIMIT_REACHED":
+                            result["status"] = "LIMITED"
                             break
                         if result["last_error"] in _PROVIDER_OUTAGES:
                             result["status"] = "ERROR"
