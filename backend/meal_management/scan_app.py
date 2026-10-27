@@ -102,9 +102,9 @@ class ScanAppService:
             scanner_code=row["scanner_code"], quantity=1, visitor_details=visitor_details,
         )
 
-    def read(self, browser_hash, request_id, token, meal_type_id, phone_id=None, waiter_shift_id=None):
+    def read(self, browser_hash, request_id, token, meal_type_id, phone_id=None):
         identifier, row = self._reserve(browser_hash, request_id, meal_type_id)
-        context = ScanAppContext(row["staff_id"], phone_id, waiter_shift_id)
+        context = ScanAppContext(row["staff_id"], phone_id)
         return self.meals.record(context, self._scan(identifier, row, token))
 
     def meal_types(self):

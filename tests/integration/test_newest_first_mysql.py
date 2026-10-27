@@ -1,9 +1,7 @@
 import secrets
-import tempfile
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, timedelta, timezone
-from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -194,26 +192,10 @@ class NewestFirstMySQLTests(MealServicesFixture):
         self.assert_newest_first(
             lambda **page: self.queries.visitor_authorizations(self.admin_context, status="all", **page), authorizations)
 
-    def test_waiter_shifts_and_scanner_codes_are_newest_first(self):
-        import base64
-        import io
-
-        from PIL import Image
-
+    def test_scanner_codes_are_newest_first(self):
         from meal_management.scanner_phones import ScannerPhoneService
-        from meal_management.storage import LocalFileStorage
-        from meal_management.waiter_shifts import NOTICE_VERSION, WaiterShiftService
 
-        output = io.BytesIO()
-        Image.new("RGB", (16, 16), "teal").save(output, format="JPEG")
-        selfie = base64.b64encode(output.getvalue()).decode()
-        root = tempfile.TemporaryDirectory()
-        self.addCleanup(root.cleanup)
-        shifts = WaiterShiftService(self.db, LocalFileStorage(str(Path(root.name).resolve() / "photos")), 3)
         phones = ScannerPhoneService(self.db, secrets.token_bytes(32))
-        phone_ids = [phones.register_secret_activation(secrets.token_bytes(32))["id"] for _ in OFFSETS]
-        started = self.created(lambda index: shifts.start(phone_ids[index], "Ravi", selfie, 18.5, 73.8, 10.0, True, NOTICE_VERSION)["id"])
-        self.assert_newest_first(lambda **page: shifts.list(self.admin_context, **page), started)
         codes = self.created(lambda index: phones.create_code(self.admin_context, f"Code {index}", date.today() + timedelta(days=30))["id"])
         with self.at(40):
             listed = [item["id"] for item in phones.list(self.admin_context)["codes"]]

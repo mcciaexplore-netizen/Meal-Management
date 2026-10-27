@@ -10,11 +10,9 @@ The scanner has no staff login or service-station selectors. Its `/api/scanner` 
 | --- | --- | --- | --- |
 | `GET` | `/api/scanner/session` | Public same-origin scanner bootstrap | Issue or renew a signed HTTP-only browser cookie; return `scope` and `csrf_token`, with no staff login or database write |
 | `POST` | `/api/scanner/activate` | Public same-origin scanner, rate-limited | Accept `activation_code`: an 8-character administrator code (case, spaces and dashes ignored) or, while configured, the emergency `SCANNER_ACTIVATION_SECRET`; issue the scanner cookie bound to a new scanner phone record |
-| `POST` | `/api/scanner/read` | Scanner cookie, scanner CSRF, exact origin, signed-in shift in production | Accept only `request_id`, `token` and `meal_type_id`; record one employee meal or consume one remaining master meal |
+| `POST` | `/api/scanner/read` | Scanner cookie, scanner CSRF, exact origin, activated phone in production | Accept only `request_id`, `token` and `meal_type_id`; record one employee meal or consume one remaining master meal |
 | `GET` | `/api/scanner/meal-types` | Activated scanner browser | Active meal types for the scanner's meal type picker |
-| `GET` | `/api/scanner/shift` | Activated scanner browser | `{required, shift, notice_version}`: whether shifts are required and the phone's open shift |
-| `POST` | `/api/scanner/shift` | Activated scanner browser, scanner CSRF | Start a shift: `waiter_name`, `selfie` (base64 JPEG), `latitude`, `longitude`, `accuracy_m`, `consent: true`, `notice_version` |
-| `POST` | `/api/scanner/shift/end` | Activated scanner browser, scanner CSRF | End the phone's open shift (`SIGNED_OUT`) |
+| `GET` | `/api/scanner/shift` | Activated scanner browser | Retired. Always `{"required": false, "shift": null}`, so scanner pages loaded before the change keep scanning |
 | `GET` | `/api/scanner/requests/{request_id}/result` | Original scanner browser | Recover only that browser's original committed result without recording another meal |
 | `GET` | `/api/scanner/recovery` | Original scanner browser | Find that browser's last saved request ID when local recovery storage is missing; return no QR token or visitor details |
 
@@ -32,18 +30,9 @@ The browser retains only scope, request UUID, and quantity one across reloads. A
 
 `POST /api/scanner/read` requires `meal_type_id`; a retry of the same `request_id` keeps the type it started with. Employee scans are refused with `MEAL_TYPE_NOT_ELIGIBLE` for types not granted to the employee, and with `MEAL_TYPE_ALREADY_RECORDED` (plus `previous_served_at` in UTC) when the same effective type was recorded within `MEAL_TYPE_LOCK_HOURS`. Administrators use `PATCH /api/employees/{id}/meal-types` (`meal_type_ids`), `POST /api/meals/{id}/meal-type` (`meal_type_id`, `reason`), and `GET /api/reports/meals?meal_type_id=`.
 
-### Waiter shifts
+### Waiter labels
 
-In production `POST /api/scanner/read` returns `SHIFT_SIGN_IN_REQUIRED` (403) unless the phone has an open, unexpired shift, and every scan attempt and serving stores `waiter_shift_id`. Starting a shift needs `consent: true` and the current `notice_version`, otherwise `SHIFT_CONSENT_REQUIRED` (403). The selfie is at most 1,000,000 bytes after decoding, and the sign-in request body may be up to 1,500,000 bytes; every other scanner request keeps the 64 KiB limit. A new sign-in ends the phone's open shift as `REPLACED`. Shifts expire `WAITER_SHIFT_HOURS` after sign-in. The scanner's `Permissions-Policy` allows `geolocation=(self)` and `camera=(self)`.
-
-Administrator routes:
-
-| Method | Path | Behavior |
-| --- | --- | --- |
-| `GET` | `/api/waiter-shifts?status=all\|active\|ended\|flagged&limit=&before=` | Shifts, newest first, with `status` `ACTIVE`, `EXPIRED` or `ENDED` |
-| `GET` | `/api/waiter-shifts/{id}/selfie` | The private selfie; `SHIFT_SELFIE_EXPIRED` (404) after the 90-day deletion |
-| `POST` | `/api/waiter-shifts/{id}/end` | End an active shift now (`ENDED_BY_ADMIN`); `SHIFT_ALREADY_ENDED` (409) otherwise |
-| `GET`, `PUT` | `/api/waiter-shift-settings` | Canteen `latitude`, `longitude` and `radius_m` (10 to 50,000), all together or all `null` |
+Scanning needs no waiter sign-in. `GET /api/reports/meals` and `GET /api/reports/scans` return `waiter_name` as the label of the scanner phone that made the request, and `scanner_phone_id`; the phone is found through `scan_app_requests.browser_hash`. Rows with no phone (development mode, the staff scanner, attempts with no linked request such as an unrecognized QR) return the scanner account's display name and a null `scanner_phone_id`. `GET /api/reports/totals` groups `by_waiter` by that same name. The shift endpoints `POST /api/scanner/shift`, `POST /api/scanner/shift/end`, `/api/waiter-shifts` and `/api/waiter-shift-settings` are removed. Both applications send `Permissions-Policy: camera=(self), microphone=(), geolocation=()`.
 
 ### Scanner phones
 

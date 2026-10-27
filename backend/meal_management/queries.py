@@ -7,7 +7,7 @@ from .email_queue import email_delivery_state
 from .errors import DomainError
 from .meals import EFFECTIVE_MEAL_TYPE, positive_integer
 from .paging import newest_first, next_cursor, parse_cursor
-from .reports import _date_range
+from .reports import _date_range, scanner_phone_join
 from .security import required_text
 
 
@@ -248,7 +248,8 @@ class QueryService:
                 "s.meal_type_id AS recorded_meal_type_id, ot.name AS recorded_meal_type_name, "
                 "(SELECT COUNT(*) FROM meal_type_corrections c WHERE c.meal_id = m.id) AS correction_count, "
                 "t.code AS meal_type_code, t.name AS meal_type_name, s.waiter_id, "
-                "w.display_name AS waiter_name, s.location_id, l.name AS location_name, "
+                "COALESCE(ph.label, w.display_name) AS waiter_name, ph.id AS scanner_phone_id, "
+                "s.location_id, l.name AS location_name, "
                 "s.scanner_id, d.code AS scanner_code, "
                 "COALESCE(s.visitor_company_name, a.visitor_organization) AS visitor_company_name, "
                 "COALESCE(s.visitor_name, a.visitor_name) AS visitor_name, "
@@ -259,6 +260,7 @@ class QueryService:
                 "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
                 "JOIN meal_types ot ON ot.id = s.meal_type_id "
                 "JOIN staff_accounts w ON w.id = s.waiter_id "
+                + scanner_phone_join("s.request_id") +
                 "JOIN locations l ON l.id = s.location_id "
                 "JOIN scanner_devices d ON d.id = s.scanner_id "
                 "LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id "
@@ -284,10 +286,12 @@ class QueryService:
             require_actor(tx, context, {"ADMIN"})
             rows = tx.all(
                 "SELECT a.id, a.request_id, a.qr_id, a.staff_id, s.display_name AS staff_name, "
+                "COALESCE(ph.label, s.display_name) AS waiter_name, ph.id AS scanner_phone_id, "
                 "a.scanner_id, a.reported_scanner_code AS scanner_code, a.location_id, "
                 "l.name AS location_name, a.outcome, a.serving_id, a.rejection_code, "
                 "a.received_at, a.completed_at FROM scan_attempts a "
                 "LEFT JOIN staff_accounts s ON s.id = a.staff_id "
+                + scanner_phone_join("a.request_id") +
                 "LEFT JOIN locations l ON l.id = a.location_id WHERE "
                 + " AND ".join(filters) + order,
                 params,

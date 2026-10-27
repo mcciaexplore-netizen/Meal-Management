@@ -410,7 +410,7 @@ class SeparateApplicationTests(ApiTestCase):
             "/", "/assets", "/health/live", "/health/ready", "/api/scanner/session",
             "/api/scanner/activate",
             "/api/scanner/read", "/api/scanner/visitors", "/api/scanner/requests/{request_id}/result",
-            "/api/scanner/meal-types", "/api/scanner/shift", "/api/scanner/shift/end",
+            "/api/scanner/meal-types", "/api/scanner/shift",
             "/api/scanner/recovery",
         }))
 

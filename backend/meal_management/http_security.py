@@ -37,11 +37,6 @@ def error_body(code, request_id=None):
         "ACTIVE_UNTIL_OUT_OF_RANGE": "Choose an active-until date from today up to six months ahead.",
         "SCANNER_PHONE_NOT_FOUND": "That scanner phone or code was not found.",
         "MEAL_TYPE_UNAVAILABLE": "This meal type is no longer offered. Ask the office administrator.",
-        "SHIFT_SIGN_IN_REQUIRED": "Sign in for your shift to continue scanning.",
-        "SHIFT_CONSENT_REQUIRED": "Tick “I agree” to sign in.",
-        "SHIFT_SELFIE_EXPIRED": "This selfie was deleted after 90 days. The shift record is kept.",
-        "SHIFT_ALREADY_ENDED": "This shift has already ended.",
-        "INVALID_SHIFT_SELFIE": "Take the selfie again.",
         "MEAL_TYPE_NOT_ELIGIBLE": "This employee is not eligible for this meal type.",
         "MEAL_TYPE_ALREADY_RECORDED": "This meal type was already recorded for this employee recently.",
         "MEAL_TYPE_UNCHANGED": "The meal already has that meal type.",
@@ -73,7 +68,7 @@ def error_body(code, request_id=None):
 def status_for(code):
     if code in {"AUTHENTICATION_REQUIRED", "INVALID_CREDENTIALS", "STAFF_INACTIVE", "SESSION_IDLE_EXPIRED", "SCANNER_BROWSER_REQUIRED", "SCANNER_ACTIVATION_REQUIRED", "SCANNER_ACTIVATION_INVALID"}:
         return 401
-    if code in {"ROLE_REQUIRED", "FORBIDDEN", "CSRF_REJECTED", "ORIGIN_REJECTED", "SHIFT_SIGN_IN_REQUIRED", "SHIFT_CONSENT_REQUIRED"}:
+    if code in {"ROLE_REQUIRED", "FORBIDDEN", "CSRF_REJECTED", "ORIGIN_REJECTED"}:
         return 403
     if code in {"RATE_LIMITED", "SCANNER_RATE_LIMITED"}:
         return 429
@@ -81,7 +76,7 @@ def status_for(code):
         return 503
     if code == "CLIENT_REFRESH_REQUIRED":
         return 409
-    if code in {"SCANNER_DISABLED", "SHIFT_SELFIE_EXPIRED"}:
+    if code == "SCANNER_DISABLED":
         return 404
     if code.endswith("NOT_FOUND") or code == "NOT_FOUND":
         return 404
@@ -153,7 +148,7 @@ class SecurityMiddleware:
                     (b"x-content-type-options", b"nosniff"),
                     (b"referrer-policy", b"no-referrer"),
                     (b"x-frame-options", b"SAMEORIGIN"),
-                    (b"permissions-policy", b"camera=(self), microphone=(), geolocation=(self)"),
+                    (b"permissions-policy", b"camera=(self), microphone=(), geolocation=()"),
                     (b"x-request-id", scope["state"]["request_id"].encode()),
                     (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; frame-src 'self' blob:"),
                 ]
@@ -181,7 +176,7 @@ class SecurityMiddleware:
             if headers.get("origin") != self.settings.app_origin:
                 await fail("ORIGIN_REJECTED", 403)
                 return
-            maximum = self.settings.max_photo_bytes if path.endswith("/photo") else 1_500_000 if path == "/api/scanner/shift" else 65536
+            maximum = self.settings.max_photo_bytes if path.endswith("/photo") else 65536
             try:
                 declared = int(headers.get("content-length", "0"))
                 if declared < 0 or declared > maximum:

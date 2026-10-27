@@ -286,29 +286,6 @@ class MealTypeCorrectionInput(InputModel):
     reason: Annotated[str, Field(min_length=1, max_length=255)]
 
 
-class ShiftStartInput(InputModel):
-    waiter_name: Name
-    latitude: Annotated[float, Field(ge=-90, le=90)]
-    longitude: Annotated[float, Field(ge=-180, le=180)]
-    accuracy_m: Annotated[float, Field(ge=0, le=1_000_000)]
-    consent: StrictBool
-    notice_version: Annotated[str, Field(min_length=1, max_length=32)]
-    selfie: Annotated[str, Field(min_length=1, max_length=1_400_000)]
-
-
-class CanteenLocationInput(InputModel):
-    latitude: Annotated[float, Field(ge=-90, le=90)] | None = None
-    longitude: Annotated[float, Field(ge=-180, le=180)] | None = None
-    radius_m: Annotated[StrictInt, Field(ge=10, le=50000)] | None = None
-
-    @model_validator(mode="after")
-    def complete(self):
-        values = (self.latitude, self.longitude, self.radius_m)
-        if any(value is None for value in values) and any(value is not None for value in values):
-            raise ValueError("Give latitude, longitude and radius together, or clear all three")
-        return self
-
-
 class DepartmentInput(InputModel):
     name: Annotated[str, Field(min_length=1, max_length=100)]
 

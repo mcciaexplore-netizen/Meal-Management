@@ -186,9 +186,6 @@ class ApiHarness:
         self.phones.authorize.return_value = {"id": 1, "active_until": None}
         self.phones.activate_code.return_value = {"id": 2, "active_until": None}
         self.phones.register_secret_activation.return_value = {"id": 3, "active_until": None}
-        self.shifts = Mock()
-        self.shifts.require.return_value = 11
-        self.shifts.current.return_value = None
         self.services = SimpleNamespace(
             staff=self.staff,
             meals=self.meals,
@@ -217,10 +214,10 @@ class ApiHarness:
             self.meals.employee_token, '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
         )
         if application == "scanner":
-            self.app = create_scanner_app(self.services, self.runtime, limiter=self.limiter, phones=self.phones, shifts=self.shifts)
+            self.app = create_scanner_app(self.services, self.runtime, limiter=self.limiter, phones=self.phones)
             self.runtime = self.app.state.runtime
         else:
-            self.app = create_app(self.services, self.runtime, self.queries, self.storage, self.limiter, scanner_phones=self.phones, waiter_shifts=self.shifts)
+            self.app = create_app(self.services, self.runtime, self.queries, self.storage, self.limiter, scanner_phones=self.phones)
         self.receipts = Mock()
         self.development_seed = Mock()
         self.development_seed.manifest.return_value = {"employees": [], "master": None, "waiters": []}
@@ -909,7 +906,7 @@ class ValidationAndReportApiTests(ApiTestCase):
 
     def test_list_routes_send_tabs_with_the_old_paging_code_to_refresh(self):
         routes = ("/api/staff", "/api/employees", "/api/master-qrs", "/api/visitor-authorizations?status=all",
-                  "/api/waiter-shifts", "/api/email-queue",
+                  "/api/email-queue",
                   "/api/reports/meals?start=2026-09-01T00:00:00Z&end=2026-09-02T00:00:00Z",
                   "/api/reports/scans?start=2026-09-01T00:00:00Z&end=2026-09-02T00:00:00Z")
         for route in routes:

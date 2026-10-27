@@ -385,12 +385,11 @@ class MealService:
             now = tx.now()
             attempt_id = tx.insert(
                 "INSERT INTO scan_attempts (request_id, payload_hash, token_hash, staff_id, scanner_id, "
-                "location_id, reported_scanner_code, outcome, rejection_code, received_at, completed_at, waiter_shift_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "location_id, reported_scanner_code, outcome, rejection_code, received_at, completed_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (linked_id, fingerprint, digest, actor.staff_id if actor else None,
                  scanner["id"] if scanner else None, scanner["location_id"] if scanner else None,
-                 code, "REJECTED" if error else "RECEIVED", error, now, now if error else None,
-                 getattr(context, "waiter_shift_id", None)),
+                 code, "REJECTED" if error else "RECEIVED", error, now, now if error else None),
             )
         return {"attempt_id": attempt_id, "request_id": linked_id,
                 "request_text": str(identifier) if identifier else None,
@@ -399,8 +398,7 @@ class MealService:
                 "scanner_id": scanner["id"] if scanner else None,
                 "location_id": scanner["location_id"] if scanner else None,
                 "visitor_details": visitor_details, "visitor_hash": visitor_hash, "reading": reading,
-                "public_scanner": isinstance(context, ScanAppContext),
-                "waiter_shift_id": getattr(context, "waiter_shift_id", None)}
+                "public_scanner": isinstance(context, ScanAppContext)}
 
     def _finish_attempt(self, tx, receipt, code, serving_id=None, qr_id=None):
         changed = tx.execute(
@@ -585,9 +583,6 @@ class MealService:
             receipt["request_id"], qr["id"], qr["kind"], employee_id, scan.meal_type_id, scan.quantity,
             actor.staff_id, scanner["id"], scanner["location_id"], scan.authorization_id, now,
         ]
-        if receipt.get("waiter_shift_id") is not None:
-            serving_columns += ", waiter_shift_id"
-            serving_values.append(receipt["waiter_shift_id"])
         if serving_visitor is not None:
             visitor = serving_visitor
             serving_columns += ", visitor_company_name, visitor_name, visitor_email, visitor_phone"
