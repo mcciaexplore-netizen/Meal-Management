@@ -53,7 +53,7 @@ def _rows_from_csv(data):
     return [[_cell(value) for value in row] for row in csv.reader(io.StringIO(text))]
 
 
-def _rows_from_xlsx(data):
+def _rows_from_xlsx(data, max_rows=MAX_ROWS):
     from openpyxl import load_workbook
 
     try:
@@ -84,7 +84,7 @@ def _rows_from_xlsx(data):
                     raise DomainError("VISITOR_FILE_FORMULAS")
                 values.append(_cell(cell.value))
             rows.append(values)
-            if len(rows) > MAX_ROWS + 50:
+            if len(rows) > max_rows + 50:
                 raise DomainError("VISITOR_FILE_TOO_MANY_ROWS")
         return rows
     finally:

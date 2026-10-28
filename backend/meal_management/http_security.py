@@ -55,6 +55,16 @@ def error_body(code, request_id=None):
         "VISITOR_FILE_HEADERS": "The columns must be exactly: Sr. No., Person Name, Company Name, Phone, Email.",
         "VISITOR_FILE_EMPTY": "The file has no visitor rows.",
         "VISITOR_FILE_TOO_MANY_ROWS": "A file can have at most 200 visitors.",
+        "EMPLOYEE_FILE_REQUIRED": "Choose a CSV or Excel (.xlsx) file.",
+        "EMPLOYEE_FILE_TOO_LARGE": "The Excel file is larger than 1 MB.",
+        "EMPLOYEE_FILE_TYPE": "Upload a .csv or .xlsx file. Older .xls and macro-enabled .xlsm files are not accepted.",
+        "EMPLOYEE_FILE_INVALID": "The Excel file could not be read. Save it again as .xlsx and retry.",
+        "EMPLOYEE_FILE_EXTERNAL_LINKS": "The workbook links to other files. Remove the external links and upload it again.",
+        "EMPLOYEE_FILE_MACROS": "The workbook contains macros. Save it as a plain .xlsx without macros.",
+        "EMPLOYEE_FILE_FORMULAS": "The sheet contains formulas. Replace formulas with plain values and upload it again.",
+        "EMPLOYEE_FILE_COLUMNS": "A row has values beyond the header columns. Remove them or add the missing header.",
+        "EMPLOYEE_FILE_EMPTY": "The first sheet has no rows.",
+        "EMPLOYEE_FILE_TOO_MANY_ROWS": "Import between 1 and 100 employees at a time.",
         "VISITOR_ROWS_INVALID": "Some rows are not valid. Preview the file again and correct every listed row.",
         "VISITOR_BATCH_EXPIRY_REQUIRED": "Set an expiry for the visitor QRs.",
         "VISITOR_BATCH_NOT_FOUND": "That visitor batch was not found.",
@@ -103,7 +113,7 @@ def status_for(code):
     if code in {"CLIENT_REFRESH_REQUIRED", "EMAIL_DAILY_LIMIT_EXCEEDED", "EMAIL_COUNT_CHANGED",
                 "EMAIL_RESEND_LIMIT_REACHED", "QR_NOT_ACTIVE", "VISITOR_BATCH_NOTHING_TO_SEND", "REQUEST_MISMATCH"}:
         return 409
-    if code == "VISITOR_FILE_TOO_LARGE":
+    if code in {"VISITOR_FILE_TOO_LARGE", "EMPLOYEE_FILE_TOO_LARGE"}:
         return 413
     if code == "SCANNER_DISABLED":
         return 404
@@ -205,7 +215,7 @@ class SecurityMiddleware:
             if headers.get("origin") != self.settings.app_origin:
                 await fail("ORIGIN_REJECTED", 403)
                 return
-            maximum = self.settings.max_photo_bytes if path.endswith("/photo") else 1_048_576 if path == "/api/visitor-batches/preview" else 524_288 if path == "/api/visitor-batches" else 65536
+            maximum = self.settings.max_photo_bytes if path.endswith("/photo") else 1_048_576 if path in {"/api/visitor-batches/preview", "/api/employees/import-file"} else 524_288 if path == "/api/visitor-batches" else 65536
             try:
                 declared = int(headers.get("content-length", "0"))
                 if declared < 0 or declared > maximum:

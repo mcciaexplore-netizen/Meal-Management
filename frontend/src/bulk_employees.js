@@ -55,10 +55,25 @@ function csvRows(text) {
   return rows;
 }
 
-export function parseEmployeeCsv(text, departments, { recovering = false, mealTypes = [] } = {}) {
-  const [headers, ...rows] = csvRows(text);
+export const EMPLOYEE_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const MAXIMUM_XLSX_BYTES = 1048576;
+
+export function employeeFileKind(file) {
+  const name = String(file?.name ?? "").toLowerCase();
+  if (name.endsWith(".csv")) return "csv";
+  if (name.endsWith(".xlsx")) return "xlsx";
+  throw new Error("Choose a .csv or .xlsx file. Older .xls and macro-enabled .xlsm files are not accepted.");
+}
+
+export function parseEmployeeCsv(text, departments, options = {}) {
+  return parseEmployeeRows(csvRows(text), departments, options);
+}
+
+export function parseEmployeeRows(table, departments, { recovering = false, mealTypes = [] } = {}) {
+  if (!Array.isArray(table) || table.some(row => !Array.isArray(row) || row.some(value => typeof value !== "string"))) throw new Error("The file could not be read. Save it again and retry.");
+  const [headers, ...rows] = table.map(row => row.map(value => value.trim()));
   const optional = headers?.includes("meal_types") ? ["meal_types"] : [];
-  if (!headers || headers.length !== employeeCsvHeaders.length + optional.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name)) || headers.some(name => !employeeCsvHeaders.includes(name) && !optional.includes(name))) throw new Error(`Use exactly these CSV headers: ${employeeCsvHeaders.join(",")}, optionally followed by meal_types.`);
+  if (!headers || headers.length !== employeeCsvHeaders.length + optional.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name)) || headers.some(name => !employeeCsvHeaders.includes(name) && !optional.includes(name))) throw new Error(`Use exactly these headers: ${employeeCsvHeaders.join(",")}, optionally followed by meal_types.`);
   if (!rows.length || rows.length > 100) throw new Error("Import between 1 and 100 employees at a time.");
   const codes = new Set();
   const activeDepartments = new Set((departments ?? []).filter(row => row.is_active !== false && row.is_active !== 0).map(row => row.id));
@@ -130,7 +145,7 @@ export class BulkEmployeeImport {
     const payload = employees.map(row => Object.freeze({ ...row }));
     if (new TextEncoder().encode(JSON.stringify({ request_id: "0".repeat(36), employees: payload })).length > maximumBytes) throw new Error("The import is too large. Use a smaller batch.");
     const digest = await this.fingerprint(payload);
-    if (this.submitted && (this.marker.payload_fingerprint !== digest || this.marker.employee_count !== payload.length)) throw new Error("An earlier import is not confirmed. Upload or paste the original CSV to retry that same import.");
+    if (this.submitted && (this.marker.payload_fingerprint !== digest || this.marker.employee_count !== payload.length)) throw new Error("An earlier import is not confirmed. Upload or paste the original file to retry that same import.");
     if (!this.submitted) this.marker = { request_id: this.createIdentifier(), payload_fingerprint: digest, employee_count: payload.length };
     this.payload = Object.freeze(payload);
     this.result = null;
@@ -160,7 +175,7 @@ export class BulkEmployeeImport {
         try { this.storage.removeItem(this.storageKey); } catch {}
         throw new Error(`The import was not accepted. ${rejectedImports.get(error.code) ?? "Correct the CSV."} Preview it again before retrying.`);
       }
-      throw new Error("The import result is not confirmed. Keep this request and retry the same import. After reloading, upload the original CSV again; do not create a replacement batch.");
+      throw new Error("The import result is not confirmed. Keep this request and retry the same import. After reloading, upload the original file again; do not create a replacement batch.");
     } finally {
       this.inFlight = false;
     }
