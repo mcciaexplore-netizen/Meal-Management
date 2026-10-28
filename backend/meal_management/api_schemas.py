@@ -86,7 +86,7 @@ class BulkEmployeeInput(InputModel):
     email: Annotated[str, Field(min_length=3, max_length=254)]
     company_name: Name
     phone: Annotated[str, Field(min_length=7, max_length=32)]
-    department_id: Identifier
+    department: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)] | None = None
 
     @field_validator("phone")

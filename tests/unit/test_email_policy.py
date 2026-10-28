@@ -266,10 +266,11 @@ class BulkRegistrationTests(unittest.TestCase):
         self.context = ServerContext(generate_token())
         self.service = EmployeeService(self.db, Mock())
         self.service._register = Mock(side_effect=[Registration(11, 12, 13), Registration(21, 22, 23)])
+        self.service._import_departments = Mock(return_value={"auditorium": 5})
         self.identifier = uuid4()
         self.employees = [
-            {"employee_code": "E1", "full_name": "First Employee", "email": "first@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department_id": 1},
-            {"employee_code": "E2", "full_name": "Second Employee", "email": "second@example.test", "company_name": "Example Company", "phone": "+1 202 555 0102", "department_id": 2},
+            {"employee_code": "E1", "full_name": "First Employee", "email": "first@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department": "Auditorium"},
+            {"employee_code": "E2", "full_name": "Second Employee", "email": "second@example.test", "company_name": "Example Company", "phone": "+1 202 555 0102", "department": None},
         ]
         self.actor_patch = patch("meal_management.employees.require_actor", return_value=self.actor)
         self.actor_patch.start()
@@ -336,8 +337,8 @@ class BulkRegistrationTests(unittest.TestCase):
         self.assertTrue(self.db.rolled_back)
 
     def test_bad_late_row_is_rejected_before_any_database_access(self):
-        self.employees[1]["department_id"] = True
-        with self.assertRaisesRegex(DomainError, "INVALID_DEPARTMENT_ID"):
+        self.employees[1]["department"] = True
+        with self.assertRaisesRegex(DomainError, "INVALID_DEPARTMENT_NAME"):
             self.register()
         self.tx.one.assert_not_called()
         self.tx.insert.assert_not_called()

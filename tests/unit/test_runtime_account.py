@@ -421,7 +421,7 @@ class RuntimeAccountTests(unittest.TestCase):
     def test_missing_reviewed_migration_stops_before_paths_and_database(self):
         migrations = load_migrations(MIGRATIONS)[:-1]
         with patch.object(runtime_account, "load_migrations", return_value=migrations), patch.object(runtime_account, "_paths") as paths:
-            with self.assertRaisesRegex(DomainError, "RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_FIFTEEN"):
+            with self.assertRaisesRegex(DomainError, "RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_SIXTEEN"):
                 self.fixture.run()
             paths.assert_not_called()
         self.assert_no_credentials_or_database()

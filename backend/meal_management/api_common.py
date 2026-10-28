@@ -22,7 +22,7 @@ def database_readiness(database):
             else:
                 version = tx.one("SELECT VERSION() AS version")["version"]
                 supported = version.startswith("8.4.")
-                required = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+                required = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
             applied = tx.all("SELECT version FROM schema_migrations WHERE status = 'APPLIED'")
         if not supported or not required.issubset({row["version"] for row in applied}):
             raise DomainError("DATABASE_NOT_READY")

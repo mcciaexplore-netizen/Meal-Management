@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { BulkEmployeeImport, employeeFileKind, employeePayloadFingerprint, parseEmployeeCsv, parseEmployeeRows } from "../src/bulk_employees.js";
+import { BulkEmployeeImport, employeeFileKind, employeePayloadFingerprint, parseEmployeeCsv, parseEmployeeCsvImport, parseEmployeeImport, parseEmployeeRows, sampleEmployeeCsv } from "../src/bulk_employees.js";
 import { readFile } from "node:fs/promises";
-import { employeeImportForm } from "../src/employee_import.js";
+import { employeeImportForm, ignoredColumnsNote } from "../src/employee_import.js";
 
-const headers = "employee_code,full_name,email,company_name,phone,department_id";
+const headers = "employee_code,full_name,email,company_name,phone,department";
 const departments = [{ id: 4, name: "Facilities", is_active: true }, { id: 6, name: "Inactive", is_active: false }];
-const csv = `${headers}\nEMP-01,Fictional Person,Person@example.test,Example Company,+1 202 555 0101,4`;
+const csv = `${headers}\nEMP-01,Fictional Person,Person@example.test,Example Company,+1 202 555 0101,Facilities`;
 const employees = parseEmployeeCsv(csv, departments);
 const requestId = "22222222-2222-4222-8222-222222222222";
 const result = { batch_id: 8, employees: [{ employee_id: 2, qr_id: 3, email_id: 4 }], replayed: false };
@@ -23,18 +23,18 @@ const setup = request => {
 };
 
 test("CSV parsing supports reordered headers, BOM, CRLF and quoted commas", () => {
-  const rows = parseEmployeeCsv('\uFEFFemail,department_id,phone,full_name,company_name,employee_code\r\nPerson@example.test,4,+1 202 555 0101,"Person, Fictional",Example Company,EMP-01\r\n', departments);
-  assert.deepEqual(rows, [{ employee_code: "EMP-01", full_name: "Person, Fictional", email: "person@example.test", company_name: "Example Company", phone: "+1 202 555 0101", department_id: 4 }]);
-  const quoted = parseEmployeeCsv(`${headers}\nEMP-01,"Fictional ""Name""",person@example.test,Example Company,+1 202 555 0101,4`, departments);
+  const rows = parseEmployeeCsv('\uFEFFemail,department,phone,full_name,company_name,employee_code\r\nPerson@example.test,Facilities,+1 202 555 0101,"Person, Fictional",Example Company,EMP-01\r\n', departments);
+  assert.deepEqual(rows, [{ employee_code: "EMP-01", full_name: "Person, Fictional", email: "person@example.test", company_name: "Example Company", phone: "+1 202 555 0101", department: "Facilities" }]);
+  const quoted = parseEmployeeCsv(`${headers}\nEMP-01,"Fictional ""Name""",person@example.test,Example Company,+1 202 555 0101,`, departments);
   assert.equal(quoted[0].full_name, 'Fictional "Name"');
 });
 
 test("invalid CSV structure and invalid employee fields fail before requests", () => {
-  for (const text of ["", headers, `wrong,headers\na,b`, `${headers},extra\na,b,c,d,e,4,extra`, `${headers}\na,b,c,d,e,4,extra`, `${headers}\na,"unfinished,c,d,e,4`, `${headers}\na,"name"bad,c,d,e,4`, `${headers}\n,Name,person@example.test,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,invalid-email,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,Example Company,invalid,4`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,6`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,99`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,1e2`, `${csv}\nemp-01,Other,other@example.test,Example Company,+1 202 555 0102,4`]) assert.throws(() => parseEmployeeCsv(text, departments));
+  for (const text of ["", headers, `wrong,headers\na,b`, `${headers},extra\na,b,c,d,e,4,extra`, `${headers}\na,b,c,d,e,4,extra`, `${headers}\na,"unfinished,c,d,e,4`, `${headers}\na,"name"bad,c,d,e,4`, `${headers}\n,Name,person@example.test,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,invalid-email,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,Example Company,invalid,4`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,Inactive`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,Nowhere`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,4`, `${csv}\nemp-01,Other,other@example.test,Example Company,+1 202 555 0102,4`]) assert.throws(() => parseEmployeeCsv(text, departments));
 });
 
 test("CSV enforces 100 rows and file size limits", () => {
-  const row = index => `E${index},Name ${index},p${index}@example.test,Example Company,+1 202 555 ${String(index).padStart(4, "0")},4`;
+  const row = index => `E${index},Name ${index},p${index}@example.test,Example Company,+1 202 555 ${String(index).padStart(4, "0")},`;
   assert.equal(parseEmployeeCsv(`${headers}\n${Array.from({ length: 100 }, (_, index) => row(index)).join("\n")}`, departments).length, 100);
   assert.throws(() => parseEmployeeCsv(`${headers}\n${Array.from({ length: 101 }, (_, index) => row(index)).join("\n")}`, departments), /100/);
   assert.throws(() => parseEmployeeCsv("x".repeat(65537), departments), /64 KB/);
@@ -48,8 +48,10 @@ test("bulk preview prepares data without any API or email action", async () => {
   assert.equal(operation.submitted, false);
   const html = employeeImportForm(departments);
   assert.match(html, /this import does not send email/);
-  assert.match(html, /department_id/);
-  assert.match(html, />4</);
+  assert.doesNotMatch(html, /department_id|Department ID|department ID/);
+  assert.match(html, /Department names<\/summary><p class="field-help">[^<]*Facilities/);
+  assert.doesNotMatch(html, /Department names<\/summary><p class="field-help">[^<]*Inactive/);
+  assert.match(html, /id="employee-sample">Download sample CSV/);
   assert.doesNotMatch(html, /type="submit"[^>]*>Send/);
 });
 
@@ -92,7 +94,7 @@ test("reload recovery keeps only opaque values and requires original CSV before 
   await operation.prepare(employees);
   await assert.rejects(() => operation.submit());
   const saved = storage.getItem(operation.storageKey);
-  assert.doesNotMatch(saved, /Fictional|EMP-01|example|department_id|email|full_name/);
+  assert.doesNotMatch(saved, /Fictional|EMP-01|example|department|Facilities|email|full_name/);
   assert.deepEqual(Object.keys(JSON.parse(saved)).sort(), ["employee_count", "payload_fingerprint", "request_id"]);
   const calls = [];
   const restored = new BulkEmployeeImport(1, async (...args) => { calls.push(args); return { ...result, replayed: true }; }, options);
@@ -182,18 +184,18 @@ test("recovery can validate the original fingerprint even after its department i
   await operation.prepare(employees);
   await assert.rejects(() => operation.submit());
   const inactive = [{ id: 4, name: "Facilities", is_active: false }];
-  assert.throws(() => parseEmployeeCsv(csv, inactive), /active department/);
+  assert.throws(() => parseEmployeeCsv(csv, inactive), /department "Facilities" is inactive/);
   const restored = new BulkEmployeeImport(1, async () => ({ ...result, replayed: true }), options);
   await restored.prepare(parseEmployeeCsv(csv, inactive, { recovering: true }));
   assert.equal((await restored.submit()).replayed, true);
 });
 
 test("Excel rows from the server go through the same checks as CSV", () => {
-  const table = [headers.split(","), ["EMP-01", "Fictional Person", "Person@example.test", "Example Company", "9876543210", "4"]];
-  assert.deepEqual(parseEmployeeRows(table, departments), [{ employee_code: "EMP-01", full_name: "Fictional Person", email: "person@example.test", company_name: "Example Company", phone: "9876543210", department_id: 4 }]);
+  const table = [headers.split(","), ["EMP-01", "Fictional Person", "Person@example.test", "Example Company", "9876543210", "facilities"]];
+  assert.deepEqual(parseEmployeeRows(table, departments), [{ employee_code: "EMP-01", full_name: "Fictional Person", email: "person@example.test", company_name: "Example Company", phone: "9876543210", department: "Facilities" }]);
   assert.deepEqual(parseEmployeeRows(table, departments), parseEmployeeCsv(table.map(row => row.join(",")).join("\n"), departments));
-  assert.throws(() => parseEmployeeRows([headers.split(","), ["EMP-01", "Fictional Person", "p@example.test", "Example Company", "9876543210", "6"]], departments), /Row 2: department_id must match an active department/);
-  assert.throws(() => parseEmployeeRows([["code", "name"], ["a", "b"]], departments), /Use exactly these headers/);
+  assert.throws(() => parseEmployeeRows([headers.split(","), ["EMP-01", "Fictional Person", "p@example.test", "Example Company", "9876543210", "Inactive"]], departments), /Row 2: department "Inactive" is inactive/);
+  assert.throws(() => parseEmployeeRows([["code", "name"], ["a", "b"]], departments), /Use these headers/);
   for (const bad of [null, [["a", 1]], ["row"]]) assert.throws(() => parseEmployeeRows(bad, departments), /could not be read/);
 });
 
@@ -206,5 +208,43 @@ test("the import accepts .csv and .xlsx only and reads Excel through the server"
   assert.match(form, /an Excel file is sent to the server only to read it for the preview/);
   const source = await readFile(new URL("../src/employee_import.js", import.meta.url), "utf8");
   assert.match(source, /api\(`\/employees\/import-file\?\$\{query\(\{ filename: selectedFile\.name \}\)\}`, \{ method: "POST", body: new Blob\(\[selectedFile\], \{ type: EMPLOYEE_XLSX \}\) \}\)/);
-  assert.match(source, /parseEmployeeRows\(result\.rows, context\.catalog\.departments, options\)/);
+  assert.match(source, /parseEmployeeImport\(result\.rows, context\.catalog\.departments, options\)/);
+});
+
+const clientDepartments = [{ id: 3, name: "Exhibition Centre", is_active: true }, { id: 9, name: "AI Studio", is_active: false }, { id: 11, name: "Quality Office", is_active: true }];
+const base = "employee_code,full_name,email,company_name,phone";
+
+test("a department_id column is ignored and named in the preview note", () => {
+  const parsed = parseEmployeeCsvImport(`${base},department_id\nE-1,Asha Rao,asha@mcciapune.in,MCCIA,+91 98765 43210,7\nE-2,Ravi,ravi@mcciapune.in,MCCIA,+91 98765 43211,16\n`, clientDepartments);
+  assert.deepEqual(parsed.ignored, ["department_id"]);
+  assert.deepEqual(parsed.employees.map(row => row.department), [null, null]);
+  assert.ok(parsed.employees.every(row => !("department_id" in row)));
+  assert.equal(ignoredColumnsNote(parsed.ignored), "Ignored column: department_id. Departments come from the optional department column.");
+  assert.equal(ignoredColumnsNote([]), "");
+  const both = parseEmployeeCsvImport(`${base},department_id,department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,4,Quality Office\n`, clientDepartments);
+  assert.equal(both.employees[0].department, "Quality Office");
+});
+
+test("department names match ignoring case, accents and extra spaces, including built-in facilities", () => {
+  const names = ["  exhibition   CENTRE ", "quality office", "Rubber & Polymer Testing Lab", "AUDITORIUM", "", "   ", "Éxhibition Centre"];
+  const table = [[...base.split(","), "department"], ...names.map((department, index) => [`E-${index}`, "Name", `p${index}@mcciapune.in`, "MCCIA", `+91 98765 4321${index}`, department])];
+  assert.deepEqual(parseEmployeeImport(table, clientDepartments).employees.map(row => row.department),
+    ["Exhibition Centre", "Quality Office", "Rubber & Polymer Testing Lab", "Auditorium", null, null, "Exhibition Centre"]);
+});
+
+test("unknown and deactivated department names are row errors listing the valid names", () => {
+  const file = name => `${base},department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,${name}\n`;
+  assert.throws(() => parseEmployeeCsv(file("AI Studio"), clientDepartments), /Row 2: department "AI Studio" is inactive\. Use one of: .*Exhibition Centre.*Quality Office, or leave it blank\./);
+  assert.throws(() => parseEmployeeCsv(file("Department 7"), clientDepartments), /Row 2: department "Department 7" is not a known department\. Use one of: Prototype Production Facility, /);
+  assert.throws(() => parseEmployeeCsv(file("Department 7"), clientDepartments), error => !/AI Studio/.test(error.message));
+  assert.doesNotThrow(() => parseEmployeeCsv(file(""), clientDepartments));
+});
+
+test("the sample file uses the new headers and parses cleanly", () => {
+  const sample = sampleEmployeeCsv(clientDepartments);
+  assert.match(sample, /^employee_code,full_name,email,company_name,phone,department,meal_types\r\n/);
+  assert.doesNotMatch(sample, /department_id/);
+  const parsed = parseEmployeeCsvImport(sample, clientDepartments);
+  assert.deepEqual(parsed.employees.map(row => row.department), ["Prototype Production Facility", null]);
+  assert.deepEqual(parsed.ignored, []);
 });

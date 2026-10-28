@@ -30,14 +30,14 @@ test("CSV meal type codes map to active ids and reject unknown or inactive codes
   assert.throws(() => mealTypeIdsFromCodes("LUNCH;SUPPER", types), /SUPPER/);
   assert.throws(() => mealTypeIdsFromCodes("SCANNER-MEAL", types), /SCANNER-MEAL/);
   const departments = [{ id: 7, name: "Auditorium", is_active: true }];
-  const base = "employee_code,full_name,email,company_name,phone,department_id";
-  const plain = parseEmployeeCsv(`${base}\nE-1,Asha,asha@example.com,Example,+91 98765 43210,7\n`, departments, { mealTypes: types });
+  const base = "employee_code,full_name,email,company_name,phone,department";
+  const plain = parseEmployeeCsv(`${base}\nE-1,Asha,asha@example.com,Example,+91 98765 43210,Auditorium\n`, departments, { mealTypes: types });
   assert.equal(plain[0].meal_type_ids, undefined);
-  const typed = parseEmployeeCsv(`${base},meal_types\nE-1,Asha,asha@example.com,Example,+91 98765 43210,7,LUNCH;DINNER\nE-2,Ravi,ravi@example.com,Example,+91 98765 43211,7,\n`, departments, { mealTypes: types });
+  const typed = parseEmployeeCsv(`${base},meal_types\nE-1,Asha,asha@example.com,Example,+91 98765 43210,Auditorium,LUNCH;DINNER\nE-2,Ravi,ravi@example.com,Example,+91 98765 43211,Auditorium,\n`, departments, { mealTypes: types });
   assert.deepEqual(typed[0].meal_type_ids, [3, 4]);
   assert.equal(typed[1].meal_type_ids, undefined);
-  assert.throws(() => parseEmployeeCsv(`${base},meal_types\nE-1,Asha,asha@example.com,Example,+91 98765 43210,7,SUPPER\n`, departments, { mealTypes: types }), /Row 2: .*SUPPER/);
-  assert.throws(() => parseEmployeeCsv(`${base},other\nE-1,Asha,asha@example.com,Example,+91 98765 43210,7,x\n`, departments, { mealTypes: types }), /optionally followed by meal_types/);
+  assert.throws(() => parseEmployeeCsv(`${base},meal_types\nE-1,Asha,asha@example.com,Example,+91 98765 43210,Auditorium,SUPPER\n`, departments, { mealTypes: types }), /Row 2: .*SUPPER/);
+  assert.throws(() => parseEmployeeCsv(`${base},other\nE-1,Asha,asha@example.com,Example,+91 98765 43210,Auditorium,x\n`, departments, { mealTypes: types }), /optionally followed by department and meal_types/);
 });
 
 test("scanner refusals name the meal type and show the earlier time in India time", () => {

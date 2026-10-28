@@ -19,7 +19,7 @@ class EmployeeEmailApiTests(unittest.TestCase):
         self.harness.app.state.email_actions = self.actions
         self.bulk = {
             "request_id": str(uuid4()),
-            "employees": [{"employee_code": "TEST-ONE", "full_name": "Fictional Employee", "email": "one@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department_id": 1}],
+            "employees": [{"employee_code": "TEST-ONE", "full_name": "Fictional Employee", "email": "one@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department": "Auditorium"}],
         }
         self.harness.services.employees.register_bulk.return_value = {
             "batch_id": 4, "employees": [{"employee_id": 7, "qr_id": 101, "email_id": 20}], "replayed": False,
@@ -122,7 +122,8 @@ class EmployeeEmailApiTests(unittest.TestCase):
 
     def test_single_registration_and_bulk_import_do_not_send(self):
         self.harness.login()
-        self.assertEqual(self.harness.post("/api/employees", json=self.bulk["employees"][0]).status_code, 201)
+        single = {**{key: value for key, value in self.bulk["employees"][0].items() if key != "department"}, "department_id": 1}
+        self.assertEqual(self.harness.post("/api/employees", json=single).status_code, 201)
         response = self.harness.post("/api/employees/bulk", json=self.bulk)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["batch_id"], 4)
@@ -162,7 +163,7 @@ class EmployeeEmailApiTests(unittest.TestCase):
             {**self.bulk, "employees": self.bulk["employees"] * 101},
             {**self.bulk, "request_id": "not-a-uuid"},
             {**self.bulk, "approved_by_staff_id": 1},
-            {**self.bulk, "employees": [{**self.bulk["employees"][0], "department_id": True}]},
+            {**self.bulk, "employees": [{**self.bulk["employees"][0], "department": True}]},
             {**self.bulk, "employees": [{**self.bulk["employees"][0], "role": "ADMIN"}]},
         ):
             with self.subTest(body_keys=list(body)):

@@ -1,4 +1,5 @@
 import hmac
+import unicodedata
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
@@ -32,6 +33,27 @@ def _selfie_key(value):
     if value.lower().startswith("data:"):
         raise DomainError("INVALID_SELFIE_OBJECT_KEY")
     return value
+
+
+FACILITY_DEPARTMENTS = (
+    "Prototype Production Facility", "Rapid Prototype Centre", "Environmental Testing",
+    "Rubber & Polymer Testing Lab", "Large Bed CMM & Metrology Services", "Exhibition Centre",
+    "Auditorium", "Training & Seminar Hall",
+)
+
+
+def department_key(value):
+    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    return " ".join("".join(character for character in decomposed if not unicodedata.combining(character)).split()).lower()
+
+
+def _department_name(value):
+    if value is None:
+        return None
+    name = " ".join(required_text(value, "department_name", 100).split())
+    if not department_key(name):
+        raise DomainError("INVALID_DEPARTMENT_NAME")
+    return name
 
 
 def _meal_type_ids(values):
@@ -122,7 +144,8 @@ class EmployeeService:
         return result
 
     def _register(self, tx, actor, employee_code, full_name, email, department_id, *, company_name=None, phone=None, selfie_object_key=None, expires_at=None, bulk_batch_id=None, meal_type_ids=None):
-        self._department(tx, department_id)
+        if department_id is not None or bulk_batch_id is None:
+            self._department(tx, department_id)
         now = tx.now()
         try:
             employee_id = tx.insert(
@@ -229,8 +252,8 @@ class EmployeeService:
             raise DomainError("INVALID_EMPLOYEE_BATCH")
         normalized = []
         for employee in employees:
-            keys = {"employee_code", "full_name", "email", "company_name", "phone", "department_id"}
-            if not isinstance(employee, dict) or set(employee) not in (keys, keys | {"meal_type_ids"}):
+            keys = {"employee_code", "full_name", "email", "company_name", "phone"}
+            if not isinstance(employee, dict) or not keys <= set(employee) <= keys | {"department", "meal_type_ids"}:
                 raise DomainError("INVALID_EMPLOYEE_BATCH")
             item = {
                 "employee_code": required_text(employee["employee_code"], "employee_code", 32),
@@ -238,7 +261,7 @@ class EmployeeService:
                 "email": normalize_email(employee["email"]),
                 "company_name": required_text(employee["company_name"], "company_name", 150),
                 "phone": normalize_phone(employee["phone"], "EMPLOYEE_PHONE"),
-                "department_id": _positive_id(employee["department_id"], "department_id"),
+                "department": _department_name(employee.get("department")),
             }
             if employee.get("meal_type_ids") is not None:
                 item["meal_type_ids"] = _meal_type_ids(employee["meal_type_ids"])
@@ -272,9 +295,45 @@ class EmployeeService:
                         raise DomainError("EMPLOYEE_BATCH_UNCONFIRMED") from None
                     result = self._bulk_replay(tx, batch, fingerprint, len(normalized))
                 else:
-                    registrations = [asdict(self._register(tx, actor, **employee, bulk_batch_id=batch_id)) for employee in normalized]
+                    departments = self._import_departments(tx, actor, {row["department"] for row in normalized} - {None})
+                    registrations = [
+                        asdict(self._register(
+                            tx, actor, **{key: value for key, value in employee.items() if key != "department"},
+                            department_id=None if employee["department"] is None else departments[department_key(employee["department"])],
+                            bulk_batch_id=batch_id,
+                        ))
+                        for employee in normalized
+                    ]
                     result = {"batch_id": batch_id, "employees": registrations, "replayed": False}
         return result
+
+    def _import_departments(self, tx, actor, names):
+        if not names:
+            return {}
+        rows = tx.all("SELECT id, name, is_active FROM departments ORDER BY id FOR SHARE")
+        existing = {}
+        for row in rows:
+            existing.setdefault(department_key(row["name"]), row)
+        facilities = {department_key(name): name for name in FACILITY_DEPARTMENTS}
+        resolved = {}
+        for key in sorted({department_key(name) for name in names}):
+            row = existing.get(key)
+            if row is not None:
+                if not row["is_active"]:
+                    raise DomainError("DEPARTMENT_UNAVAILABLE")
+                resolved[key] = row["id"]
+            elif key in facilities:
+                try:
+                    with savepoint(tx):
+                        resolved[key] = tx.insert("INSERT INTO departments (name, is_active) VALUES (%s, %s)", (facilities[key], True))
+                except Exception as exc:
+                    if getattr(exc, "errno", None) == 1062:
+                        raise DomainError("TRANSACTION_RETRY_REQUIRED") from None
+                    raise
+                audit(tx, actor.staff_id, "DEPARTMENT_CREATED", "departments", resolved[key], after={"name": facilities[key]})
+            else:
+                raise DomainError("DEPARTMENT_NOT_FOUND")
+        return resolved
 
     def update(
         self,

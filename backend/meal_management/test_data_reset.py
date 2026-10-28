@@ -23,7 +23,7 @@ KEEP_TABLES = (
 )
 PHONE_TABLE = "scanner_phones"
 FRESH_COUNTER_TABLES = ("audit_events",)
-REQUIRED_MIGRATIONS = tuple(range(1, 16))
+REQUIRED_MIGRATIONS = tuple(range(1, 17))
 RUNTIME_USER = "meal_runtime"
 SNAPSHOT_ID = re.compile(r"(?:rds:)?[A-Za-z](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,254}")
 PHOTO_KEY = re.compile(r"(?:shift-selfies/)?[0-9a-f]{64}\.(?:jpg|png)")
@@ -145,7 +145,7 @@ class TestDataReset:
             pending = [str(row["version"]) + " (" + str(row["status"]) + ")" for row in ledger if row["status"] != "APPLIED"]
             reasons = (["missing " + ", ".join(missing)] if missing else []) + (["unexpected " + ", ".join(extra)] if extra else []) \
                 + (["not applied " + ", ".join(pending)] if pending else [])
-            raise ResetRefused("RESET_REQUIRES_MIGRATIONS_ONE_TO_FIFTEEN", "; ".join(reasons))
+            raise ResetRefused("RESET_REQUIRES_MIGRATIONS_ONE_TO_SIXTEEN", "; ".join(reasons))
         operator_id = self._check_operator(tx)
         phones = tx.all(
             "SELECT id, label, source, activated_at, active_until, revoked_at FROM scanner_phones ORDER BY id"
