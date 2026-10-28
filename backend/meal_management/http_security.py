@@ -83,6 +83,8 @@ def error_body(code, request_id=None):
         "SCANNER_INACTIVE": "This scanning counter has been deactivated. Ask the office administrator.",
         "LOCATION_INACTIVE": "This serving location has been deactivated. Ask the office administrator.",
         "DEPARTMENT_UNAVAILABLE": "That department is inactive. Choose an active department.",
+        "DEPARTMENT_NOT_FOUND": "A department name is not one of the available departments. Preview the file again to see the valid names.",
+        "INVALID_DEPARTMENT_NAME": "Correct the department names in the file.",
         "DEPARTMENT_HAS_ACTIVE_EMPLOYEES": "This department still has active employees. Confirm to deactivate it anyway.",
         "DEPARTMENT_NAME_EXISTS": "Another department already uses that name.",
         "MEAL_TYPE_CODE_EXISTS": "Another meal type already uses that code.",

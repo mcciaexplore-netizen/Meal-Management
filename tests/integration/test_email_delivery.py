@@ -176,7 +176,7 @@ class EmailDispatcherMySQLTests(MealServicesFixture):
         result = self.employees.register_bulk(self.admin_context, uuid4(), [{
             "employee_code": "AUTO-" + suffix[:20], "full_name": "Fictional Automatic Email",
             "email": "meal-dispatch-test-" + suffix + "@gmail.com", "company_name": "Fictional Example Company",
-            "phone": "+1 202 555 0101", "department_id": self.department_id,
+            "phone": "+1 202 555 0101", "department": "Integration Department",
         }])
         registration = Registration(**result["employees"][0])
         if approve:

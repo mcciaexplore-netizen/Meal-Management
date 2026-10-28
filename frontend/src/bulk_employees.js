@@ -1,21 +1,25 @@
 import { randomIdentifier } from "./core.js";
+import { departmentKey, employeeDepartmentOptions } from "./facility_departments.js";
 import { mealTypeIdsFromCodes } from "./meal_types.js";
 
-export const employeeCsvHeaders = ["employee_code", "full_name", "email", "company_name", "phone", "department_id"];
+export const employeeCsvHeaders = ["employee_code", "full_name", "email", "company_name", "phone"];
+export const optionalEmployeeHeaders = ["department", "meal_types"];
+const ignoredEmployeeHeaders = ["department_id"];
 const maximumBytes = 65536;
 const requestPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const imports = new Map();
 const rejectedImports = new Map([
-  ["EMPLOYEE_CODE_EXISTS", "An employee code already exists. Correct that code or remove the existing employee from the CSV."],
-  ["DEPARTMENT_UNAVAILABLE", "A department is unavailable. Choose an active department ID."],
-  ["INVALID_EMAIL", "Correct the email addresses in the CSV."],
-  ["INVALID_EMPLOYEE_CODE", "Correct the employee codes in the CSV."],
-  ["INVALID_FULL_NAME", "Correct the employee names in the CSV."],
-  ["INVALID_COMPANY_NAME", "Correct the company names in the CSV."],
-  ["INVALID_EMPLOYEE_PHONE", "Correct the phone numbers in the CSV."],
-  ["INVALID_DEPARTMENT_ID", "Correct the department IDs in the CSV."],
+  ["EMPLOYEE_CODE_EXISTS", "An employee code already exists. Correct that code or remove the existing employee from the file."],
+  ["DEPARTMENT_UNAVAILABLE", "A department in the file is inactive. Preview the file again to see the valid names."],
+  ["DEPARTMENT_NOT_FOUND", "A department name is not one of the available departments. Preview the file again to see the valid names."],
+  ["INVALID_DEPARTMENT_NAME", "Correct the department names in the file."],
+  ["INVALID_EMAIL", "Correct the email addresses in the file."],
+  ["INVALID_EMPLOYEE_CODE", "Correct the employee codes in the file."],
+  ["INVALID_FULL_NAME", "Correct the employee names in the file."],
+  ["INVALID_COMPANY_NAME", "Correct the company names in the file."],
+  ["INVALID_EMPLOYEE_PHONE", "Correct the phone numbers in the file."],
   ["INVALID_EMPLOYEE_BATCH", "Correct the employee batch before importing."],
-  ["INVALID_REQUEST_ID", "Preview the CSV again to create a valid import request."],
+  ["INVALID_REQUEST_ID", "Preview the file again to create a valid import request."],
 ]);
 
 function csvRows(text) {
@@ -69,15 +73,32 @@ export function parseEmployeeCsv(text, departments, options = {}) {
   return parseEmployeeRows(csvRows(text), departments, options);
 }
 
-export function parseEmployeeRows(table, departments, { recovering = false, mealTypes = [] } = {}) {
+export function parseEmployeeRows(table, departments, options = {}) {
+  return parseEmployeeImport(table, departments, options).employees;
+}
+
+export function parseEmployeeCsvImport(text, departments, options = {}) {
+  return parseEmployeeImport(csvRows(text), departments, options);
+}
+
+export function departmentChoices(departments) {
+  return employeeDepartmentOptions(departments ?? []).map(row => row.name);
+}
+
+export function parseEmployeeImport(table, departments, { recovering = false, mealTypes = [] } = {}) {
   if (!Array.isArray(table) || table.some(row => !Array.isArray(row) || row.some(value => typeof value !== "string"))) throw new Error("The file could not be read. Save it again and retry.");
-  const [headers, ...rows] = table.map(row => row.map(value => value.trim()));
-  const optional = headers?.includes("meal_types") ? ["meal_types"] : [];
-  if (!headers || headers.length !== employeeCsvHeaders.length + optional.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name)) || headers.some(name => !employeeCsvHeaders.includes(name) && !optional.includes(name))) throw new Error(`Use exactly these headers: ${employeeCsvHeaders.join(",")}, optionally followed by meal_types.`);
+  const [rawHeaders, ...rows] = table.map(row => row.map(value => value.trim()));
+  const headers = (rawHeaders ?? []).map(name => name.toLowerCase());
+  const allowed = [...employeeCsvHeaders, ...optionalEmployeeHeaders, ...ignoredEmployeeHeaders];
+  if (!headers.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name)) || headers.some(name => !allowed.includes(name))) throw new Error(`Use these headers: ${employeeCsvHeaders.join(",")}, optionally followed by department and meal_types.`);
   if (!rows.length || rows.length > 100) throw new Error("Import between 1 and 100 employees at a time.");
+  const names = departmentChoices(departments);
+  const inactiveRows = (departments ?? []).filter(row => row.is_active === false || row.is_active === 0);
+  const byKey = new Map(names.map(name => [departmentKey(name), name]));
+  if (recovering) for (const row of inactiveRows) if (!byKey.has(departmentKey(row.name))) byKey.set(departmentKey(row.name), row.name);
+  const inactive = new Set(inactiveRows.map(row => departmentKey(row.name)));
   const codes = new Set();
-  const activeDepartments = new Set((departments ?? []).filter(row => row.is_active !== false && row.is_active !== 0).map(row => row.id));
-  return rows.map((values, index) => {
+  const employees = rows.map((values, index) => {
     const fail = message => { throw new Error(`Row ${index + 2}: ${message}`); };
     if (values.length !== headers.length) fail("the number of columns does not match the headers.");
     const fields = Object.fromEntries(headers.map((name, position) => [name, values[position]]));
@@ -89,18 +110,31 @@ export function parseEmployeeRows(table, departments, { recovering = false, meal
     const phone = fields.phone;
     const phoneDigits = Array.from(phone).filter(character => /[0-9]/.test(character)).length;
     if (phone.length > 32 || !/^\+?[0-9 ()\-.]+$/.test(phone) || phoneDigits < 7 || phoneDigits > 15) fail("provide a valid phone number containing 7 to 15 digits.");
-    if (!/^[1-9]\d*$/.test(fields.department_id)) fail("department_id must be an active department ID.");
-    const departmentId = Number(fields.department_id);
-    if (!Number.isSafeInteger(departmentId) || !recovering && !activeDepartments.has(departmentId)) fail("department_id must match an active department in the reference list.");
     const code = fields.employee_code.normalize("NFKC").toLowerCase();
     if (codes.has(code)) fail("employee_code is repeated in this import.");
     codes.add(code);
-    const employee = { employee_code: fields.employee_code, full_name: fields.full_name, email, company_name: fields.company_name, phone, department_id: departmentId };
+    const written = (fields.department ?? "").replace(/\s+/g, " ").trim();
+    let department = null;
+    if (written) {
+      department = byKey.get(departmentKey(written)) ?? null;
+      if (department === null) fail(`department "${written}" is ${inactive.has(departmentKey(written)) ? "inactive" : "not a known department"}. Use one of: ${names.join(", ")}, or leave it blank.`);
+    }
+    const employee = { employee_code: fields.employee_code, full_name: fields.full_name, email, company_name: fields.company_name, phone, department };
     let mealTypeIds = null;
     try { mealTypeIds = mealTypeIdsFromCodes(fields.meal_types, mealTypes); } catch (error) { fail(error.message); }
     if (mealTypeIds) employee.meal_type_ids = mealTypeIds;
     return employee;
   });
+  return { employees, ignored: headers.filter(name => ignoredEmployeeHeaders.includes(name)) };
+}
+
+export function sampleEmployeeCsv(departments) {
+  const department = departmentChoices(departments)[0] ?? "";
+  return [
+    [...employeeCsvHeaders, ...optionalEmployeeHeaders].join(","),
+    `EMP-001,Asha Rao,asha.rao@company.example,Company Name,+91 98765 43210,${department.includes(",") ? `"${department}"` : department},`,
+    "EMP-002,Ravi Kulkarni,ravi.kulkarni@company.example,Company Name,+91 98765 43211,,",
+  ].join("\r\n") + "\r\n";
 }
 
 export async function employeePayloadFingerprint(employees, crypto = globalThis.crypto) {

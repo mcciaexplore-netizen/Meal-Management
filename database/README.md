@@ -12,6 +12,8 @@ Migration `014_master_qr_meal_types.sql` adds `master_qr_meal_types`: one row pe
 
 Migration `015_visitor_departments_batches.sql` adds `visitor_qr_batches` (one row per bulk upload, unique per administrator and request, never updated or deleted) and gives `master_qr_allocations` a nullable `department_id`, `event_name`, `batch_id` and `batch_row`. Visitor email becomes optional: the allocation email is nullable, and the direct-visitor branch of `servings.chk_serving_kind` accepts a NULL `visitor_email`. Existing visitor QRs keep a NULL department; the application requires one for new QRs. The runtime account needs `INSERT` on `visitor_qr_batches`.
 
+Migration `016_optional_employee_department.sql` makes `employees.department_id` nullable (the foreign key to `departments` stays) so a bulk import can leave the department blank. No data changes and no grant changes.
+
 Migration `010_scanner_phones.sql` adds `scanner_phones`: one row per administrator activation code, which becomes the phone's record when it is used, plus rows for phones activated with the emergency secret or before records existed. Codes are stored only as keyed hashes. Triggers forbid deletes, changes to a row's identity fields and expiry, re-activation, and un-revoking. The runtime account needs `INSERT` and `UPDATE` on this table. Code that requires migration 010 refuses readiness until it is applied, while earlier code still reports ready afterwards, so roll back by redeploying the earlier image.
 
 Migration `011_settings_guards.sql` adds update triggers that stop the Meal Scanner's shared location, counter and meal type from being deactivated or recoded, and the built-in scanner account from being deactivated or given another email. No rows change.

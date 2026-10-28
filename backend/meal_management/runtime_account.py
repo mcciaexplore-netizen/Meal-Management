@@ -170,8 +170,8 @@ def create_aiven_runtime_account(settings, runtime, migration_directory, output_
     if confirmation != expected:
         raise DomainError("RUNTIME_ACCOUNT_TARGET_NOT_CONFIRMED")
     migrations = load_migrations(migration_directory)
-    if [migration.version for migration in migrations] != [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]:
-        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_FIFTEEN")
+    if [migration.version for migration in migrations] != [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]:
+        raise DomainError("RUNTIME_ACCOUNT_REQUIRES_REVIEWED_MIGRATIONS_ONE_TO_SIXTEEN")
     output, pending = _paths(output_path)
     connection = None
     runtime_connection = None

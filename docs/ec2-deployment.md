@@ -217,6 +217,19 @@ UPDATE email_queue q JOIN qr_credentials c ON c.id = q.qr_id
 SET q.status = 'CANCELLED' WHERE c.kind = 'MASTER' AND q.status IN ('DRAFT', 'PENDING_APPROVAL', 'QUEUED');
 ```
 
+### Optional employee department (migration 016)
+
+Migration 016 makes `employees.department_id` nullable so the employee import can leave the department blank; the foreign key stays. It needs no grant or revoke. Follow the steps under "Releases with a new migration" (snapshot, build, migrate as the master user, `up -d`).
+
+The previous image (checked against eb7e5fb) still reports ready after 016, scans every employee QR and shows their meals, but its employee list and details use a plain join and hide employees that have no department. Before rolling back, give those employees a department as the master user, for example an active one chosen in Office settings:
+
+```sql
+SELECT COUNT(*) FROM employees WHERE department_id IS NULL;
+UPDATE employees SET department_id = <active department id> WHERE department_id IS NULL;
+```
+
+The column can stay nullable; the previous image works with it once no row is NULL.
+
 ### Removing waiter sign-in
 
 This release removes waiter sign-in and needs no migration and no grant change. The scanner opens straight to scanning after activation, and both applications refuse location access. Then:

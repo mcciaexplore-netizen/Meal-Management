@@ -305,7 +305,7 @@ class VisitorMigrationMySQLTests(MealServicesFixture):
             tx.execute("INSERT INTO master_qr_allocations (qr_id, company_name, contact_name, email, phone, meal_limit, "
                        "created_by_staff_id) VALUES (%s, 'Example', 'Lead', 'lead@example.test', '+919876543210', 3, %s)",
                        (qr_id, admin))
-        self.assertEqual(MigrationRunner(database, MIGRATIONS).apply(), (15,))
+        self.assertEqual(MigrationRunner(database, MIGRATIONS).apply(), (15, 16))
         with database.transaction() as tx:
             row = tx.one("SELECT email, department_id, event_name, batch_id, batch_row, meal_limit FROM master_qr_allocations WHERE qr_id = %s", (qr_id,))
             self.assertEqual(row, {"email": "lead@example.test", "department_id": None, "event_name": None, "batch_id": None,

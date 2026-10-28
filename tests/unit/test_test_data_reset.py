@@ -95,7 +95,7 @@ class FakeSession:
             lines = self.direct + (self.from_role if " USING " in sql else [])
             return [{"Grants for " + self.user: line} for line in lines]
         if sql.startswith("SELECT version, status FROM schema_migrations"):
-            return [{"version": version, "status": "APPLIED"} for version in range(1, 16)]
+            return [{"version": version, "status": "APPLIED"} for version in range(1, 17)]
         if sql.startswith("SELECT role_code FROM staff_account_roles"):
             return [{"role_code": code} for code in self.staff_roles.get(params[0], [])]
         if sql.startswith("SELECT id, label, source"):

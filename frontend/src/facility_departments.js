@@ -11,7 +11,10 @@ export const facilityDepartments = Object.freeze([
   { key: "training-seminar", name: "Training & Seminar Hall" }
 ].map(item => Object.freeze(item)));
 
-const nameKey = value => String(value ?? "").trim().normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+export const NO_DEPARTMENT = "No department";
+
+export const departmentKey = value => String(value ?? "").normalize("NFKD").replace(/\p{M}/gu, "").trim().replace(/\s+/g, " ").toLowerCase();
+const nameKey = departmentKey;
 const enabled = row => row.is_active !== false && row.is_active !== 0;
 const isCurrent = (row, currentId) => currentId !== null && currentId !== undefined && Number(row.id) === Number(currentId);
 

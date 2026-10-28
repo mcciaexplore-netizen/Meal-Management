@@ -120,7 +120,7 @@ class QueryService:
             rows = tx.all(
                 "SELECT e.id, e.employee_code, e.full_name, e.email, e.company_name, e.phone, e.department_id, "
                 "d.name AS department_name, e.is_active, e.selfie_object_key, e.created_at, e.updated_at "
-                "FROM employees e JOIN departments d ON d.id = e.department_id WHERE "
+                "FROM employees e LEFT JOIN departments d ON d.id = e.department_id WHERE "
                 + " AND ".join(filters) + order,
                 params,
             )
@@ -133,7 +133,7 @@ class QueryService:
             row = tx.one(
                 "SELECT e.id, e.employee_code, e.full_name, e.email, e.company_name, e.phone, e.department_id, "
                 "d.name AS department_name, e.is_active, e.selfie_object_key, e.created_at, e.updated_at "
-                "FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.id = %s "
+                "FROM employees e LEFT JOIN departments d ON d.id = e.department_id WHERE e.id = %s "
                 "AND NOT EXISTS (SELECT 1 FROM employee_archives x WHERE x.employee_id = e.id)",
                 (employee_id,),
             )
