@@ -37,6 +37,60 @@ RUN_ORDER = (
 )
 
 
+GRANT_LINE = re.compile(r"GRANT (.+?) ON (\*\.\*|`(?:[^`]|``)+`\.\*) TO ", re.S)
+ROLE_GRANT = re.compile(r"GRANT (`[^`]+`@`[^`]*`(?:, ?`[^`]+`@`[^`]*`)*) TO ")
+ROLE_LIST = re.compile(r"`[^`]+`@`[^`]*`(?:,`[^`]+`@`[^`]*`)*")
+
+
+class ResetRefused(DomainError):
+    def __init__(self, code, detail):
+        super().__init__(code)
+        self.detail = detail
+
+    def __str__(self):
+        return self.code + ": " + self.detail
+
+
+def _like(pattern, value):
+    expression, escaped = "", False
+    for character in pattern:
+        if escaped:
+            expression += re.escape(character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == "%":
+            expression += ".*"
+        elif character == "_":
+            expression += "."
+        else:
+            expression += re.escape(character)
+    return re.fullmatch(expression, value, re.S) is not None
+
+
+def grants_allow_drop(lines, database):
+    for line in lines:
+        match = GRANT_LINE.match(line)
+        if not match:
+            continue
+        privileges = {part.strip().upper() for part in match[1].split(",")}
+        if not privileges & {"ALL PRIVILEGES", "ALL", "DROP"}:
+            continue
+        scope = match[2]
+        if scope == "*.*" or _like(scope[1:-3].replace("``", "`"), database):
+            return True
+    return False
+
+
+def granted_roles(lines):
+    roles = []
+    for line in lines:
+        match = ROLE_GRANT.match(line)
+        if match:
+            roles += [role.strip() for role in match[1].split(",")]
+    return roles
+
+
 def confirmation_text(database, host):
     return "WIPE " + database + " ON " + host
 
@@ -70,49 +124,90 @@ class TestDataReset:
 
     def _connect(self):
         if self.settings.db_host != self.expect_host:
-            raise DomainError("RESET_HOST_MISMATCH")
+            raise ResetRefused("RESET_HOST_MISMATCH", "DB_HOST is " + self.settings.db_host + " but --expect-host is " + self.expect_host)
         if self.settings.db_name != self.expect_db:
-            raise DomainError("RESET_DATABASE_MISMATCH")
+            raise ResetRefused("RESET_DATABASE_MISMATCH", "DB_NAME is " + self.settings.db_name + " but --expect-db is " + self.expect_db)
         connection = Database(self.settings)._connect()
         return connection, Session(connection)
 
     def _preflight(self, tx):
         server = tx.one("SELECT VERSION() AS version, DATABASE() AS name, CURRENT_USER() AS user")
         if not re.match(r"^8\.4(?:\.|$)", server["version"]):
-            raise DomainError("RESET_REQUIRES_MYSQL_8_4")
+            raise ResetRefused("RESET_REQUIRES_MYSQL_8_4", "the server is MySQL " + str(server["version"]))
         if server["name"] != self.expect_db:
-            raise DomainError("RESET_DATABASE_MISMATCH")
-        user, _, host = server["user"].rpartition("@")
-        if user == RUNTIME_USER:
-            raise DomainError("RESET_REQUIRES_ADMIN_ACCOUNT")
-        grantee = "'" + user + "'@'" + host + "'"
-        can_drop = tx.one(
-            "SELECT (EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = %s AND PRIVILEGE_TYPE = 'DROP') "
-            "OR EXISTS (SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE = %s AND PRIVILEGE_TYPE = 'DROP' "
-            "AND %s LIKE TABLE_SCHEMA)) AS allowed",
-            (grantee, grantee, self.expect_db),
-        )
-        if not can_drop or not can_drop["allowed"]:
-            raise DomainError("RESET_REQUIRES_ADMIN_ACCOUNT")
+            raise ResetRefused("RESET_DATABASE_MISMATCH", "connected to " + str(server["name"]) + " but --expect-db is " + self.expect_db)
+        self._check_database_account(tx, server["user"])
         ledger = tx.all("SELECT version, status FROM schema_migrations ORDER BY version")
-        if tuple(row["version"] for row in ledger) != REQUIRED_MIGRATIONS or any(row["status"] != "APPLIED" for row in ledger):
-            raise DomainError("RESET_REQUIRES_MIGRATIONS_ONE_TO_FIFTEEN")
-        operator = tx.one(
-            "SELECT s.id FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id "
-            "WHERE s.email = %s AND s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'ADMIN'",
-            (self.operator_email,),
-        )
-        if operator is None:
-            raise DomainError("RESET_OPERATOR_MUST_BE_ACTIVE_ADMIN")
+        versions = [row["version"] for row in ledger]
+        if tuple(versions) != REQUIRED_MIGRATIONS or any(row["status"] != "APPLIED" for row in ledger):
+            missing = [str(version) for version in REQUIRED_MIGRATIONS if version not in versions]
+            extra = [str(version) for version in versions if version not in REQUIRED_MIGRATIONS]
+            pending = [str(row["version"]) + " (" + str(row["status"]) + ")" for row in ledger if row["status"] != "APPLIED"]
+            reasons = (["missing " + ", ".join(missing)] if missing else []) + (["unexpected " + ", ".join(extra)] if extra else []) \
+                + (["not applied " + ", ".join(pending)] if pending else [])
+            raise ResetRefused("RESET_REQUIRES_MIGRATIONS_ONE_TO_FIFTEEN", "; ".join(reasons))
+        operator_id = self._check_operator(tx)
         phones = tx.all(
             "SELECT id, label, source, activated_at, active_until, revoked_at FROM scanner_phones ORDER BY id"
         )
         by_id = {row["id"]: row for row in phones}
         for identifier in self.keep_phones:
             row = by_id.get(identifier)
-            if row is None or row["revoked_at"] is not None or row["activated_at"] is None:
-                raise DomainError("RESET_KEEP_PHONE_NOT_ACTIVE")
-        return {"server": server, "operator_id": operator["id"], "phones": phones}
+            if row is None:
+                raise ResetRefused("RESET_KEEP_PHONE_NOT_ACTIVE", "scanner phone " + str(identifier) + " does not exist")
+            if row["revoked_at"] is not None:
+                raise ResetRefused("RESET_KEEP_PHONE_NOT_ACTIVE", "scanner phone " + str(identifier) + " is revoked")
+            if row["activated_at"] is None:
+                raise ResetRefused("RESET_KEEP_PHONE_NOT_ACTIVE", str(identifier) + " is an unused activation code, not an activated phone")
+        return {"server": server, "operator_id": operator_id, "phones": phones}
+
+    def _check_database_account(self, tx, current_user):
+        user, _, host = current_user.rpartition("@")
+        account = user + "@" + host
+        if user == RUNTIME_USER:
+            raise ResetRefused(
+                "RESET_DB_ACCOUNT_IS_RUNTIME",
+                "connected as " + account + ", the application's restricted account. Use the RDS master account env file.",
+            )
+        roles = tx.one("SELECT CURRENT_ROLE() AS roles")["roles"]
+        active = None if roles in (None, "", "NONE") else roles
+        if active is not None and not ROLE_LIST.fullmatch(active):
+            raise ResetRefused("RESET_DB_ROLES_UNREADABLE", "could not read the active roles of " + account)
+        lines = [next(iter(row.values())) for row in tx.all("SHOW GRANTS FOR CURRENT_USER()" + (" USING " + active if active else ""))]
+        if grants_allow_drop(lines, self.expect_db):
+            return
+        inactive = [role for role in granted_roles(lines) if active is None or role not in active.split(",")]
+        if inactive:
+            raise ResetRefused(
+                "RESET_DB_ROLE_NOT_ACTIVE",
+                account + " has no DROP privilege on " + self.expect_db + " from direct grants or active roles ("
+                + (active or "none") + "); granted but inactive roles: " + ", ".join(inactive)
+                + ". Make them default roles (SET DEFAULT ROLE ALL TO the account) and reconnect.",
+            )
+        raise ResetRefused(
+            "RESET_DB_ACCOUNT_LACKS_DROP",
+            account + " has no DROP privilege on " + self.expect_db + " (checked direct grants and active roles: "
+            + (active or "none") + "). TRUNCATE needs DROP; use the RDS master account.",
+        )
+
+    def _check_operator(self, tx):
+        email = self.operator_email
+        staff = tx.one("SELECT id, is_active, is_scanner FROM staff_accounts WHERE email = %s", (email,))
+        if staff is None:
+            raise ResetRefused("RESET_OPERATOR_NOT_FOUND", "no staff account has the email " + email)
+        if not staff["is_active"]:
+            raise ResetRefused("RESET_OPERATOR_INACTIVE", "staff account " + str(staff["id"]) + " (" + email + ") is inactive")
+        if staff["is_scanner"]:
+            raise ResetRefused("RESET_OPERATOR_IS_SCANNER", "staff account " + str(staff["id"]) + " (" + email + ") is a scanner account")
+        roles = [row["role_code"] for row in tx.all(
+            "SELECT role_code FROM staff_account_roles WHERE staff_id = %s ORDER BY role_code", (staff["id"],),
+        )]
+        if "ADMIN" not in roles:
+            raise ResetRefused(
+                "RESET_OPERATOR_NOT_ADMIN",
+                "staff account " + str(staff["id"]) + " (" + email + ") has roles " + (", ".join(roles) or "none") + ", not ADMIN",
+            )
+        return staff["id"]
 
     def _state(self, tx):
         tx.execute("SET SESSION information_schema_stats_expiry = 0")
@@ -121,7 +216,10 @@ class TestDataReset:
         )}
         expected = set(WIPE_TABLES) | set(KEEP_TABLES) | {PHONE_TABLE}
         if tables != expected:
-            raise DomainError("RESET_UNEXPECTED_TABLES")
+            missing, extra = sorted(expected - tables), sorted(tables - expected)
+            raise ResetRefused("RESET_UNEXPECTED_TABLES", "; ".join(
+                (["missing " + ", ".join(missing)] if missing else []) + (["unexpected " + ", ".join(extra)] if extra else [])
+            ))
         counts = {name: tx.one("SELECT COUNT(*) AS count FROM " + _quote_identifier(name))["count"] for name in sorted(tables)}
         checksums = {}
         for name in KEEP_TABLES:

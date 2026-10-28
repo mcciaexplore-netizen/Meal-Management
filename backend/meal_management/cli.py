@@ -446,7 +446,8 @@ def main(argv=None):
         return 0
     except DomainError as error:
         missing = getattr(error, "missing", ())
-        print(error.code + (": " + ", ".join(missing) if missing else ""), file=sys.stderr)
+        detail = getattr(error, "detail", None)
+        print(error.code + (": " + ", ".join(missing) if missing else "") + (": " + detail if detail else ""), file=sys.stderr)
         if args.command == "backup-local":
             from .backup import backup_failure_message
 
