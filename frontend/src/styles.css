@@ -148,6 +148,9 @@ form input[type="file"]::file-selector-button { border: 0; border-radius: 3px; p
 .bulk-removal-actions .button { margin-top: 12px; }
 .bulk-removal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 12px; }
 .bulk-removal-toolbar strong { margin-left: auto; font-size: 12px; color: #744143; }
+.bulk-removal-toolbar > label.grow { flex: 1 1 100%; margin: 0; }
+.meal-type-employees { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.meal-type-employees .table-scroll { overflow: visible; }
 .bulk-record-selection { width: 20px; height: 20px; margin: 0; }
 form .confirmation-check { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; }
 form .confirmation-check input { width: 19px; min-height: 19px; height: 19px; margin: 0; flex: 0 0 auto; }

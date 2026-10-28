@@ -20,6 +20,7 @@ class EmployeeEmailPolicyMySQLTests(MealServicesFixture):
             "company_name": "Fictional Example Company",
             "phone": "+1 202 555 0101",
             "department": "Integration Department",
+            "meal_type_ids": [self.meal_type_id],
         } for index in range(count)]
 
     def batch(self):

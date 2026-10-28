@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { BulkEmployeeImport, employeeFileKind, employeePayloadFingerprint, parseEmployeeCsv, parseEmployeeCsvImport, parseEmployeeImport, parseEmployeeRows, sampleEmployeeCsv } from "../src/bulk_employees.js";
+import { BulkEmployeeImport, employeeFileKind, employeePayloadFingerprint, parseEmployeeCsv as parseCsv, parseEmployeeCsvImport as parseCsvImport, parseEmployeeImport as parseImport, parseEmployeeRows as parseRows, sampleEmployeeCsv as sampleCsv } from "../src/bulk_employees.js";
 import { readFile } from "node:fs/promises";
 import { employeeImportForm, ignoredColumnsNote } from "../src/employee_import.js";
 
-const headers = "employee_code,full_name,email,company_name,phone,department";
+const mealTypes = [{ id: 2, code: "BREAKFAST", name: "Breakfast", is_active: true }, { id: 3, code: "LUNCH", name: "Lunch", is_active: true }, { id: 4, code: "HIGH-TEA", name: "High Tea", is_active: true }, { id: 5, code: "DINNER", name: "Dinner", is_active: true }, { id: 1, code: "SCANNER-MEAL", name: "Scanner meal", is_active: false }];
+const withMeals = (options = {}) => ({ mealTypes, ...options });
+const parseEmployeeCsv = (text, rows, options) => parseCsv(text, rows, withMeals(options));
+const parseEmployeeCsvImport = (text, rows, options) => parseCsvImport(text, rows, withMeals(options));
+const parseEmployeeImport = (table, rows, options) => parseImport(table, rows, withMeals(options));
+const parseEmployeeRows = (table, rows, options) => parseRows(table, rows, withMeals(options));
+const sampleEmployeeCsv = rows => sampleCsv(rows, mealTypes);
+const headers = "employee_code,full_name,email,company_name,phone,meal_types,department";
 const departments = [{ id: 4, name: "Facilities", is_active: true }, { id: 6, name: "Inactive", is_active: false }];
-const csv = `${headers}\nEMP-01,Fictional Person,Person@example.test,Example Company,+1 202 555 0101,Facilities`;
+const csv = `${headers}\nEMP-01,Fictional Person,Person@example.test,Example Company,+1 202 555 0101,BREAKFAST,Facilities`;
 const employees = parseEmployeeCsv(csv, departments);
 const requestId = "22222222-2222-4222-8222-222222222222";
 const result = { batch_id: 8, employees: [{ employee_id: 2, qr_id: 3, email_id: 4 }], replayed: false };
@@ -23,18 +30,18 @@ const setup = request => {
 };
 
 test("CSV parsing supports reordered headers, BOM, CRLF and quoted commas", () => {
-  const rows = parseEmployeeCsv('\uFEFFemail,department,phone,full_name,company_name,employee_code\r\nPerson@example.test,Facilities,+1 202 555 0101,"Person, Fictional",Example Company,EMP-01\r\n', departments);
-  assert.deepEqual(rows, [{ employee_code: "EMP-01", full_name: "Person, Fictional", email: "person@example.test", company_name: "Example Company", phone: "+1 202 555 0101", department: "Facilities" }]);
-  const quoted = parseEmployeeCsv(`${headers}\nEMP-01,"Fictional ""Name""",person@example.test,Example Company,+1 202 555 0101,`, departments);
+  const rows = parseEmployeeCsv('\uFEFFemail,department,phone,full_name,company_name,employee_code,meal_types\r\nPerson@example.test,Facilities,+1 202 555 0101,"Person, Fictional",Example Company,EMP-01, breakfast ; High-Tea \r\n', departments);
+  assert.deepEqual(rows, [{ employee_code: "EMP-01", full_name: "Person, Fictional", email: "person@example.test", company_name: "Example Company", phone: "+1 202 555 0101", department: "Facilities", meal_type_ids: [2, 4] }]);
+  const quoted = parseEmployeeCsv(`${headers}\nEMP-01,"Fictional ""Name""",person@example.test,Example Company,+1 202 555 0101,BREAKFAST,`, departments);
   assert.equal(quoted[0].full_name, 'Fictional "Name"');
 });
 
 test("invalid CSV structure and invalid employee fields fail before requests", () => {
-  for (const text of ["", headers, `wrong,headers\na,b`, `${headers},extra\na,b,c,d,e,4,extra`, `${headers}\na,b,c,d,e,4,extra`, `${headers}\na,"unfinished,c,d,e,4`, `${headers}\na,"name"bad,c,d,e,4`, `${headers}\n,Name,person@example.test,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,invalid-email,Example Company,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,,+1 202 555 0101,4`, `${headers}\nA,Name,person@example.test,Example Company,invalid,4`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,Inactive`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,Nowhere`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,4`, `${csv}\nemp-01,Other,other@example.test,Example Company,+1 202 555 0102,4`]) assert.throws(() => parseEmployeeCsv(text, departments));
+  for (const text of ["", headers, `wrong,headers\na,b`, `${headers},extra\na,b,c,d,e,4,extra`, `${headers}\na,b,c,d,e,4,extra`, `${headers}\na,"unfinished,c,d,e,4`, `${headers}\na,"name"bad,c,d,e,4`, `${headers}\n,Name,person@example.test,Example Company,+1 202 555 0101,BREAKFAST,4`, `${headers}\nA,Name,invalid-email,Example Company,+1 202 555 0101,BREAKFAST,4`, `${headers}\nA,Name,person@example.test,,+1 202 555 0101,BREAKFAST,4`, `${headers}\nA,Name,person@example.test,Example Company,invalid,BREAKFAST,4`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,BREAKFAST,Inactive`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,BREAKFAST,Nowhere`, `${headers}\nA,Name,person@example.test,Example Company,+1 202 555 0101,BREAKFAST,4`, `${csv}\nemp-01,Other,other@example.test,Example Company,+1 202 555 0102,BREAKFAST,4`]) assert.throws(() => parseEmployeeCsv(text, departments));
 });
 
 test("CSV enforces 100 rows and file size limits", () => {
-  const row = index => `E${index},Name ${index},p${index}@example.test,Example Company,+1 202 555 ${String(index).padStart(4, "0")},`;
+  const row = index => `E${index},Name ${index},p${index}@example.test,Example Company,+1 202 555 ${String(index).padStart(4, "0")},BREAKFAST,`;
   assert.equal(parseEmployeeCsv(`${headers}\n${Array.from({ length: 100 }, (_, index) => row(index)).join("\n")}`, departments).length, 100);
   assert.throws(() => parseEmployeeCsv(`${headers}\n${Array.from({ length: 101 }, (_, index) => row(index)).join("\n")}`, departments), /100/);
   assert.throws(() => parseEmployeeCsv("x".repeat(65537), departments), /64 KB/);
@@ -191,10 +198,10 @@ test("recovery can validate the original fingerprint even after its department i
 });
 
 test("Excel rows from the server go through the same checks as CSV", () => {
-  const table = [headers.split(","), ["EMP-01", "Fictional Person", "Person@example.test", "Example Company", "9876543210", "facilities"]];
-  assert.deepEqual(parseEmployeeRows(table, departments), [{ employee_code: "EMP-01", full_name: "Fictional Person", email: "person@example.test", company_name: "Example Company", phone: "9876543210", department: "Facilities" }]);
+  const table = [headers.split(","), ["EMP-01", "Fictional Person", "Person@example.test", "Example Company", "9876543210", "BREAKFAST", "facilities"]];
+  assert.deepEqual(parseEmployeeRows(table, departments), [{ employee_code: "EMP-01", full_name: "Fictional Person", email: "person@example.test", company_name: "Example Company", phone: "9876543210", department: "Facilities", meal_type_ids: [2] }]);
   assert.deepEqual(parseEmployeeRows(table, departments), parseEmployeeCsv(table.map(row => row.join(",")).join("\n"), departments));
-  assert.throws(() => parseEmployeeRows([headers.split(","), ["EMP-01", "Fictional Person", "p@example.test", "Example Company", "9876543210", "Inactive"]], departments), /Row 2: department "Inactive" is inactive/);
+  assert.throws(() => parseEmployeeRows([headers.split(","), ["EMP-01", "Fictional Person", "p@example.test", "Example Company", "9876543210", "BREAKFAST", "Inactive"]], departments), /Row 2: department "Inactive" is inactive/);
   assert.throws(() => parseEmployeeRows([["code", "name"], ["a", "b"]], departments), /Use these headers/);
   for (const bad of [null, [["a", 1]], ["row"]]) assert.throws(() => parseEmployeeRows(bad, departments), /could not be read/);
 });
@@ -212,28 +219,28 @@ test("the import accepts .csv and .xlsx only and reads Excel through the server"
 });
 
 const clientDepartments = [{ id: 3, name: "Exhibition Centre", is_active: true }, { id: 9, name: "AI Studio", is_active: false }, { id: 11, name: "Quality Office", is_active: true }];
-const base = "employee_code,full_name,email,company_name,phone";
+const base = "employee_code,full_name,email,company_name,phone,meal_types";
 
 test("a department_id column is ignored and named in the preview note", () => {
-  const parsed = parseEmployeeCsvImport(`${base},department_id\nE-1,Asha Rao,asha@mcciapune.in,MCCIA,+91 98765 43210,7\nE-2,Ravi,ravi@mcciapune.in,MCCIA,+91 98765 43211,16\n`, clientDepartments);
+  const parsed = parseEmployeeCsvImport(`${base},department_id\nE-1,Asha Rao,asha@mcciapune.in,MCCIA,+91 98765 43210,BREAKFAST,7\nE-2,Ravi,ravi@mcciapune.in,MCCIA,+91 98765 43211,BREAKFAST,16\n`, clientDepartments);
   assert.deepEqual(parsed.ignored, ["department_id"]);
   assert.deepEqual(parsed.employees.map(row => row.department), [null, null]);
   assert.ok(parsed.employees.every(row => !("department_id" in row)));
   assert.equal(ignoredColumnsNote(parsed.ignored), "Ignored column: department_id. Departments come from the optional department column.");
   assert.equal(ignoredColumnsNote([]), "");
-  const both = parseEmployeeCsvImport(`${base},department_id,department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,4,Quality Office\n`, clientDepartments);
+  const both = parseEmployeeCsvImport(`${base},department_id,department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,BREAKFAST,4,Quality Office\n`, clientDepartments);
   assert.equal(both.employees[0].department, "Quality Office");
 });
 
 test("department names match ignoring case, accents and extra spaces, including built-in facilities", () => {
   const names = ["  exhibition   CENTRE ", "quality office", "Rubber & Polymer Testing Lab", "AUDITORIUM", "", "   ", "Éxhibition Centre"];
-  const table = [[...base.split(","), "department"], ...names.map((department, index) => [`E-${index}`, "Name", `p${index}@mcciapune.in`, "MCCIA", `+91 98765 4321${index}`, department])];
+  const table = [[...base.split(","), "department"], ...names.map((department, index) => [`E-${index}`, "Name", `p${index}@mcciapune.in`, "MCCIA", `+91 98765 4321${index}`, "BREAKFAST", department])];
   assert.deepEqual(parseEmployeeImport(table, clientDepartments).employees.map(row => row.department),
     ["Exhibition Centre", "Quality Office", "Rubber & Polymer Testing Lab", "Auditorium", null, null, "Exhibition Centre"]);
 });
 
 test("unknown and deactivated department names are row errors listing the valid names", () => {
-  const file = name => `${base},department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,${name}\n`;
+  const file = name => `${base},department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,BREAKFAST,${name}\n`;
   assert.throws(() => parseEmployeeCsv(file("AI Studio"), clientDepartments), /Row 2: department "AI Studio" is inactive\. Use one of: .*Exhibition Centre.*Quality Office, or leave it blank\./);
   assert.throws(() => parseEmployeeCsv(file("Department 7"), clientDepartments), /Row 2: department "Department 7" is not a known department\. Use one of: Prototype Production Facility, /);
   assert.throws(() => parseEmployeeCsv(file("Department 7"), clientDepartments), error => !/AI Studio/.test(error.message));
@@ -243,8 +250,26 @@ test("unknown and deactivated department names are row errors listing the valid 
 test("the sample file uses the new headers and parses cleanly", () => {
   const sample = sampleEmployeeCsv(clientDepartments);
   assert.match(sample, /^employee_code,full_name,email,company_name,phone,department,meal_types\r\n/);
+  assert.equal(sample.match(/,BREAKFAST;HIGH-TEA\r\n/g).length, 2);
+  assert.deepEqual(parseEmployeeCsvImport(sample, clientDepartments).employees.map(row => row.meal_type_ids), [[2, 4], [2, 4]]);
   assert.doesNotMatch(sample, /department_id/);
   const parsed = parseEmployeeCsvImport(sample, clientDepartments);
   assert.deepEqual(parsed.employees.map(row => row.department), ["Prototype Production Facility", null]);
   assert.deepEqual(parsed.ignored, []);
+});
+
+test("meal_types is required: a missing column or blank cell lists the valid codes", () => {
+  const noColumn = "employee_code,full_name,email,company_name,phone,department\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,\n";
+  assert.throws(() => parseEmployeeCsv(noColumn, departments), /^Error: Add a meal_types column\. .*Valid codes: BREAKFAST, LUNCH, HIGH-TEA, DINNER\.$/);
+  const blank = `${headers}\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,,\nE-2,Ravi,ravi@mcciapune.in,MCCIA,+91 98765 43211, ; ,\n`;
+  assert.throws(() => parseEmployeeCsv(blank, departments), /^Error: Row 2: meal_types is required\. Use codes separated by ;\. Valid codes: BREAKFAST, LUNCH, HIGH-TEA, DINNER\.$/);
+  assert.throws(() => parseEmployeeCsv(`${headers}\nE-2,Ravi,ravi@mcciapune.in,MCCIA,+91 98765 43211, ; ,\n`, departments), /Row 2: meal_types is required/);
+  assert.throws(() => parseEmployeeCsv(`${headers}\nE-1,Asha,asha@mcciapune.in,MCCIA,+91 98765 43210,SCANNER-MEAL,\n`, departments), /Row 2: meal_types contains an unknown or inactive meal type code: SCANNER-MEAL\. Valid codes: BREAKFAST, LUNCH, HIGH-TEA, DINNER\./);
+  const excel = [headers.split(","), ["E-1", "Asha", "asha@mcciapune.in", "MCCIA", "9876543210", "", ""]];
+  assert.throws(() => parseEmployeeRows(excel, departments), /Row 2: meal_types is required/);
+  assert.throws(() => parseEmployeeRows([excel[0].filter(name => name !== "meal_types"), ["E-1", "Asha", "asha@mcciapune.in", "MCCIA", "9876543210", ""]], departments), /Add a meal_types column/);
+  const form = employeeImportForm(departments, false, mealTypes);
+  assert.match(form, /meal_types<\/span> is required on every row/);
+  assert.match(form, /Valid codes: <span class="mono">BREAKFAST, LUNCH, HIGH-TEA, DINNER<\/span>/);
+  assert.doesNotMatch(form, /blank means all active meal types/);
 });

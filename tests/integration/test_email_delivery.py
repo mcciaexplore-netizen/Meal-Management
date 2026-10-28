@@ -177,6 +177,7 @@ class EmailDispatcherMySQLTests(MealServicesFixture):
             "employee_code": "AUTO-" + suffix[:20], "full_name": "Fictional Automatic Email",
             "email": "meal-dispatch-test-" + suffix + "@gmail.com", "company_name": "Fictional Example Company",
             "phone": "+1 202 555 0101", "department": "Integration Department",
+            "meal_type_ids": [self.meal_type_id],
         }])
         registration = Registration(**result["employees"][0])
         if approve:

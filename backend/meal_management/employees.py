@@ -67,8 +67,12 @@ def _meal_type_ids(values):
     return sorted(identifiers)
 
 
-def _employee_ids(values):
-    if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= 100:
+MAX_MEAL_TYPE_EMPLOYEES = 500
+PREVIEW_EXAMPLES = 10
+
+
+def _employee_ids(values, maximum=100):
+    if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= maximum:
         raise DomainError("INVALID_EMPLOYEE_IDS")
     identifiers = tuple(_positive_id(value, "employee_id") for value in values)
     if len(set(identifiers)) != len(identifiers):
@@ -229,6 +233,78 @@ class EmployeeService:
                       before={"meal_type_ids": current}, after={"meal_type_ids": sorted(meal_type_ids)})
         return {"employee_id": employee_id, "meal_type_ids": sorted(meal_type_ids)}
 
+    def _meal_type_plan(self, tx, employee_ids, meal_type_ids, lock):
+        placeholders = ", ".join(["%s"] * len(employee_ids))
+        employees = tx.all(
+            f"SELECT id, employee_code, full_name, is_active FROM employees WHERE id IN ({placeholders}) ORDER BY id"
+            + (" FOR UPDATE" if lock else ""),
+            employee_ids,
+        )
+        if tuple(row["id"] for row in employees) != employee_ids or tx.all(
+            f"SELECT employee_id FROM employee_archives WHERE employee_id IN ({placeholders})", employee_ids,
+        ):
+            raise DomainError("EMPLOYEE_NOT_FOUND")
+        type_placeholders = ", ".join(["%s"] * len(meal_type_ids))
+        if len(tx.all(
+            f"SELECT id FROM meal_types WHERE is_active = 1 AND id IN ({type_placeholders})" + (" FOR SHARE" if lock else ""),
+            meal_type_ids,
+        )) != len(meal_type_ids):
+            raise DomainError("MEAL_TYPE_UNAVAILABLE")
+        current = {}
+        for row in tx.all(
+            f"SELECT employee_id, meal_type_id FROM employee_meal_types WHERE employee_id IN ({placeholders}) "
+            "ORDER BY employee_id, meal_type_id",
+            employee_ids,
+        ):
+            current.setdefault(row["employee_id"], []).append(row["meal_type_id"])
+        changing = [row for row in employees if current.get(row["id"], []) != list(meal_type_ids)]
+        return employees, current, changing
+
+    def preview_meal_types_bulk(self, context, employee_ids, meal_type_ids):
+        employee_ids = _employee_ids(employee_ids, MAX_MEAL_TYPE_EMPLOYEES)
+        meal_type_ids = _meal_type_ids(meal_type_ids)
+        if meal_type_ids is None:
+            raise DomainError("INVALID_MEAL_TYPE_IDS")
+        with self.db.transaction() as tx:
+            require_actor(tx, context, {"ADMIN"})
+            employees, current, changing = self._meal_type_plan(tx, employee_ids, tuple(meal_type_ids), lock=False)
+            names = {row["id"]: row["name"] for row in tx.all("SELECT id, name FROM meal_types")}
+        return {
+            "selected": len(employees), "changing": len(changing), "unchanged": len(employees) - len(changing),
+            "examples": [
+                {"employee_id": row["id"], "employee_code": row["employee_code"], "full_name": row["full_name"],
+                 "is_active": bool(row["is_active"]),
+                 "current_meal_types": [names.get(identifier, str(identifier)) for identifier in current.get(row["id"], [])]}
+                for row in changing[:PREVIEW_EXAMPLES]
+            ],
+        }
+
+    def set_meal_types_bulk(self, context, employee_ids, meal_type_ids, expected_changes):
+        employee_ids = _employee_ids(employee_ids, MAX_MEAL_TYPE_EMPLOYEES)
+        meal_type_ids = _meal_type_ids(meal_type_ids)
+        if meal_type_ids is None:
+            raise DomainError("INVALID_MEAL_TYPE_IDS")
+        if type(expected_changes) is not int or not 0 <= expected_changes <= len(employee_ids):
+            raise DomainError("INVALID_EXPECTED_CHANGES")
+        with self.db.transaction() as tx:
+            actor = require_actor(tx, context, {"ADMIN"})
+            employees, current, changing = self._meal_type_plan(tx, employee_ids, tuple(meal_type_ids), lock=True)
+            if len(changing) != expected_changes:
+                raise DomainError("EMPLOYEE_MEAL_TYPES_COUNT_CHANGED")
+            now = tx.now()
+            for row in changing:
+                before = current.get(row["id"], [])
+                for meal_type_id in sorted(set(before) - set(meal_type_ids)):
+                    tx.execute("DELETE FROM employee_meal_types WHERE employee_id = %s AND meal_type_id = %s", (row["id"], meal_type_id))
+                for meal_type_id in sorted(set(meal_type_ids) - set(before)):
+                    tx.execute(
+                        "INSERT INTO employee_meal_types (employee_id, meal_type_id, created_at) VALUES (%s, %s, %s)",
+                        (row["id"], meal_type_id, now),
+                    )
+                audit(tx, actor.staff_id, "EMPLOYEE_MEAL_TYPES_CHANGED", "employees", row["id"],
+                      before={"meal_type_ids": before}, after={"meal_type_ids": list(meal_type_ids)})
+        return {"selected": len(employees), "changed": len(changing), "meal_type_ids": list(meal_type_ids)}
+
     def _bulk_replay(self, tx, batch, fingerprint, expected_count):
         if not hmac.compare_digest(bytes(batch["request_hash"]), fingerprint):
             raise DomainError("IDEMPOTENCY_KEY_REUSED")
@@ -252,8 +328,8 @@ class EmployeeService:
             raise DomainError("INVALID_EMPLOYEE_BATCH")
         normalized = []
         for employee in employees:
-            keys = {"employee_code", "full_name", "email", "company_name", "phone"}
-            if not isinstance(employee, dict) or not keys <= set(employee) <= keys | {"department", "meal_type_ids"}:
+            keys = {"employee_code", "full_name", "email", "company_name", "phone", "meal_type_ids"}
+            if not isinstance(employee, dict) or not keys <= set(employee) <= keys | {"department"}:
                 raise DomainError("INVALID_EMPLOYEE_BATCH")
             item = {
                 "employee_code": required_text(employee["employee_code"], "employee_code", 32),
@@ -263,8 +339,9 @@ class EmployeeService:
                 "phone": normalize_phone(employee["phone"], "EMPLOYEE_PHONE"),
                 "department": _department_name(employee.get("department")),
             }
-            if employee.get("meal_type_ids") is not None:
-                item["meal_type_ids"] = _meal_type_ids(employee["meal_type_ids"])
+            item["meal_type_ids"] = _meal_type_ids(employee["meal_type_ids"])
+            if item["meal_type_ids"] is None:
+                raise DomainError("INVALID_MEAL_TYPE_IDS")
             normalized.append(item)
         if len({row["employee_code"].casefold() for row in normalized}) != len(normalized):
             raise DomainError("EMPLOYEE_CODE_EXISTS")

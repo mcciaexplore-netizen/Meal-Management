@@ -67,7 +67,7 @@ class BulkRowShapeTests(unittest.TestCase):
         self.service = EmployeeService(Mock(), Mock())
 
     def row(self, **changes):
-        values = {"employee_code": "E1", "full_name": "Asha", "email": "asha@mcciapune.in", "company_name": "MCCIA", "phone": "+91 98765 43210"}
+        values = {"employee_code": "E1", "full_name": "Asha", "email": "asha@mcciapune.in", "company_name": "MCCIA", "phone": "+91 98765 43210", "meal_type_ids": [2]}
         values.update(changes)
         return values
 
@@ -94,7 +94,7 @@ class ExcelTemplateTests(unittest.TestCase):
 
 class BulkApiTests(ApiTestCase):
     def body(self, **changes):
-        row = {"employee_code": "E1", "full_name": "Asha", "email": "asha@mcciapune.in", "company_name": "MCCIA", "phone": "+91 98765 43210"}
+        row = {"employee_code": "E1", "full_name": "Asha", "email": "asha@mcciapune.in", "company_name": "MCCIA", "phone": "+91 98765 43210", "meal_type_ids": [2]}
         row.update(changes)
         return {"request_id": str(uuid4()), "employees": [row]}
 

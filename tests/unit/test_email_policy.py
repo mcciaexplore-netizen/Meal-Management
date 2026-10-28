@@ -269,8 +269,8 @@ class BulkRegistrationTests(unittest.TestCase):
         self.service._import_departments = Mock(return_value={"auditorium": 5})
         self.identifier = uuid4()
         self.employees = [
-            {"employee_code": "E1", "full_name": "First Employee", "email": "first@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department": "Auditorium"},
-            {"employee_code": "E2", "full_name": "Second Employee", "email": "second@example.test", "company_name": "Example Company", "phone": "+1 202 555 0102", "department": None},
+            {"employee_code": "E1", "full_name": "First Employee", "email": "first@example.test", "company_name": "Example Company", "phone": "+1 202 555 0101", "department": "Auditorium", "meal_type_ids": [2, 4]},
+            {"employee_code": "E2", "full_name": "Second Employee", "email": "second@example.test", "company_name": "Example Company", "phone": "+1 202 555 0102", "department": None, "meal_type_ids": [2]},
         ]
         self.actor_patch = patch("meal_management.employees.require_actor", return_value=self.actor)
         self.actor_patch.start()

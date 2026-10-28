@@ -24,7 +24,7 @@ class ImportDepartmentsMySQLTests(MealServicesFixture):
     def person(self, department=None, **extra):
         tag = uuid4().hex[:10]
         row = {"employee_code": f"IMP-{tag}", "full_name": f"Imported {tag}", "email": f"imp-{tag}@mcciapune.in",
-               "company_name": "MCCIA", "phone": "+91 98765 43210", **extra}
+               "company_name": "MCCIA", "phone": "+91 98765 43210", "meal_type_ids": [self.meal_type_id], **extra}
         if department is not None:
             row["department"] = department
         return row

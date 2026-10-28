@@ -49,7 +49,7 @@ class EmployeeInput(InputModel):
     department_id: Identifier
     selfie_object_key: Annotated[str, Field(min_length=1, max_length=512)] | None = None
     expires_at: datetime | None = None
-    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)] | None = None
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
 
     @field_validator("phone")
     @classmethod
@@ -87,7 +87,7 @@ class BulkEmployeeInput(InputModel):
     company_name: Name
     phone: Annotated[str, Field(min_length=7, max_length=32)]
     department: Annotated[str, Field(min_length=1, max_length=100)] | None = None
-    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)] | None = None
+    meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
 
     @field_validator("phone")
     @classmethod
@@ -308,6 +308,14 @@ class StaffRolesInput(InputModel):
 
 class MealTypeIdsInput(InputModel):
     meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
+
+
+class BulkMealTypesInput(MealTypeIdsInput):
+    employee_ids: Annotated[list[Identifier], Field(min_length=1, max_length=500)]
+
+
+class BulkMealTypesApplyInput(BulkMealTypesInput):
+    expected_changes: Annotated[int, Field(ge=0, le=500)]
 
 
 class MealTypeCorrectionInput(InputModel):

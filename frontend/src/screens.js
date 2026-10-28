@@ -6,6 +6,7 @@ import { bindEmployeePhoto, employeePhotoField, employeePhotoLimitLabel, validat
 import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailDeliverySettings, emailModeDescription, emailModeLabel, emailStatusDetail } from "./email_delivery.js";
 import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
+import { openBulkMealTypes } from "./employee_meal_types.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
 import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
 import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds, visitorMealTypeLines } from "./meal_types.js";
@@ -30,11 +31,11 @@ export async function dashboard(target, context) {
 }
 
 function employeeForm(catalog, employee = {}) {
-  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${employee.id && employee.department_id == null ? selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments), "", { required: false, placeholder: NO_DEPARTMENT }) : selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments, employee.department_id), employee.department_id)}</div>${mealTypeCheckboxes(catalog.meal_types, employee.meal_type_ids ?? null)}`;
+  return `<div class="form-grid">${field("Employee code", "employee_code", employee.employee_code, "text", 'required maxlength="32" autocomplete="off"')}${field("Full name", "full_name", employee.full_name, "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", employee.email, "email", 'required maxlength="254" autocomplete="email"')}${field("Phone number", "phone", employee.phone, "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Company name", "company_name", employee.company_name, "text", 'required maxlength="150" autocomplete="organization"')}${employee.id && employee.department_id == null ? selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments), "", { required: false, placeholder: NO_DEPARTMENT }) : selectField("Department", "department_id", employeeDepartmentOptions(catalog.departments, employee.department_id), employee.department_id)}</div>${mealTypeCheckboxes(catalog.meal_types, employee.id ? employee.meal_type_ids ?? null : [])}`;
 }
 
 export async function employees(target, context) {
-  target.innerHTML = `${heading("PEOPLE & ACCESS", "Employees", "Personal reusable QRs. A separate record for every meal.", '<div class="inline-actions"><button class="button" id="import-employees">Import employees</button><button class="button primary" id="new-employee">' + icon("plus") + ' Add employee</button></div>')}<section class="panel"><form id="employee-filters" class="filter-bar"><label class="grow">Search employees<input name="q" type="search" placeholder="Name, email, or employee code" maxlength="150"></label><label>Status<select name="active"><option value="">All employees</option><option value="true" selected>Active</option><option value="false">Inactive</option></select></label><button class="button" type="submit">Apply</button></form><div id="employee-list">${loading()}</div><div class="pagination" id="employee-pagination"></div></section>`;
+  target.innerHTML = `${heading("PEOPLE & ACCESS", "Employees", "Personal reusable QRs. A separate record for every meal.", '<div class="inline-actions"><button class="button" id="set-meal-types">Set meal types</button><button class="button" id="import-employees">Import employees</button><button class="button primary" id="new-employee">' + icon("plus") + ' Add employee</button></div>')}<section class="panel"><form id="employee-filters" class="filter-bar"><label class="grow">Search employees<input name="q" type="search" placeholder="Name, email, or employee code" maxlength="150"></label><label>Status<select name="active"><option value="">All employees</option><option value="true" selected>Active</option><option value="false">Inactive</option></select></label><button class="button" type="submit">Apply</button></form><div id="employee-list">${loading()}</div><div class="pagination" id="employee-pagination"></div></section>`;
   let cursor = null;
   let rows = [];
   let photoEditor = null;
@@ -50,6 +51,10 @@ export async function employees(target, context) {
     target.querySelectorAll('[data-action="employee-open"]').forEach(button => button.onclick = () => employeeDetail(Number(button.dataset.id), context, load));
   }
   formAction(target.querySelector("#employee-filters"), () => load());
+  target.querySelector("#set-meal-types").onclick = () => {
+    photoEditor?.dispose();
+    openBulkMealTypes(context, load);
+  };
   target.querySelector("#import-employees").onclick = () => {
     photoEditor?.dispose();
     showEmployeeImport(context, load);

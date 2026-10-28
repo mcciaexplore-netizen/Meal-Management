@@ -25,12 +25,16 @@ export function sameMealTypes(left = [], right = []) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
+export function mealTypeCodes(rows = []) {
+  return activeMealTypes(rows).map(row => String(row.code).toUpperCase());
+}
+
 export function mealTypeIdsFromCodes(text, rows = []) {
   const value = String(text ?? "").trim();
   if (!value) return null;
   const byCode = new Map(activeMealTypes(rows).map(row => [String(row.code).toUpperCase(), Number(row.id)]));
   const ids = value.split(";").map(code => code.trim().toUpperCase()).filter(Boolean).map(code => {
-    if (!byCode.has(code)) throw new Error(`meal_types contains an unknown or inactive meal type code: ${code}.`);
+    if (!byCode.has(code)) throw new Error(`meal_types contains an unknown or inactive meal type code: ${code}. Valid codes: ${mealTypeCodes(rows).join(", ")}.`);
     return byCode.get(code);
   });
   if (!ids.length) return null;
