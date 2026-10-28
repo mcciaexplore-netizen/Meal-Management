@@ -111,6 +111,7 @@ Registration requires `employee_code`, `full_name`, `company_name`, `email`, `ph
 | Method | Path | Access | Behavior |
 | --- | --- | --- | --- |
 | `POST` | `/api/employees/bulk` | Admin | Atomically import 1–100 employees with personal QRs and pending approval emails |
+| `POST` | `/api/employees/import-file?filename=` | Admin | Read the first sheet of an `.xlsx` file (raw body, up to 1 MB) and return its rows as text for the import preview; saves nothing |
 | `POST` | `/api/employees/{employee_id}/emails/{email_id}/send` | Admin | Approve only this employee's SINGLE draft, send synchronously, and return a committed delivery result |
 | `GET` | `/api/employees/{employee_id}/emails/{email_id}` | Admin | Recover safe status for the exact employee/email pair without sending |
 

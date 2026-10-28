@@ -1,11 +1,11 @@
 import { api } from "./api.js";
-import { escape } from "./core.js";
-import { employeeCsvHeaders, employeeImportFor, parseEmployeeCsv } from "./bulk_employees.js";
+import { escape, query } from "./core.js";
+import { EMPLOYEE_XLSX, MAXIMUM_XLSX_BYTES, employeeCsvHeaders, employeeFileKind, employeeImportFor, parseEmployeeCsv, parseEmployeeRows } from "./bulk_employees.js";
 import { errorMessage, modal, table } from "./ui.js";
 
 export function employeeImportForm(departments, recovering = false) {
   const rows = (departments ?? []).filter(row => row.is_active !== false && row.is_active !== 0);
-  return `<p class="muted">Import up to 100 employees. Each receives a personal QR. Bulk emails wait for your approval; this import does not send email.</p>${recovering ? '<div class="alert" role="status">A previous import is not confirmed. Use the original CSV to recover the same request.</div>' : ""}<form id="bulk-employee-form"><label>Upload CSV<input name="csv_file" type="file" accept=".csv,text/csv"></label><label>Or paste CSV<textarea name="csv_text" rows="7" spellcheck="false" placeholder="${escape(employeeCsvHeaders.join(","))}" maxlength="65536"></textarea></label><p class="field-help">Required headers: <span class="mono">${escape(employeeCsvHeaders.join(","))}</span>. Optional <span class="mono">meal_types</span> column: meal type codes separated by <span class="mono">;</span>, for example <span class="mono">LUNCH;DINNER</span>. Blank means all active meal types. Files and pasted data stay in this browser until you choose Import employees.</p><details><summary>Active department IDs</summary>${rows.length ? table(["Department ID", "Department"], rows.map(row => `<tr><td class="mono">${escape(row.id)}</td><td>${escape(row.name)}</td></tr>`), "Department IDs for import") : '<p class="muted">Add an active department in Office settings first.</p>'}</details><div data-import-error></div><div class="form-actions"><button type="submit" class="button">Preview employees</button></div></form><div id="bulk-preview"></div><div id="bulk-import-status" role="status" aria-live="polite"></div>`;
+  return `<p class="muted">Import up to 100 employees. Each receives a personal QR. Bulk emails wait for your approval; this import does not send email.</p>${recovering ? '<div class="alert" role="status">A previous import is not confirmed. Use the original file to recover the same request.</div>' : ""}<form id="bulk-employee-form"><label>Upload CSV or Excel<input name="csv_file" type="file" accept=".csv,.xlsx,text/csv,${EMPLOYEE_XLSX}"></label><label>Or paste CSV<textarea name="csv_text" rows="7" spellcheck="false" placeholder="${escape(employeeCsvHeaders.join(","))}" maxlength="65536"></textarea></label><p class="field-help">Required headers: <span class="mono">${escape(employeeCsvHeaders.join(","))}</span>. Optional <span class="mono">meal_types</span> column: meal type codes separated by <span class="mono">;</span>, for example <span class="mono">LUNCH;DINNER</span>. Blank means all active meal types. In Excel, use the first sheet with the headers in row 1 and plain values, not formulas. CSV files and pasted data stay in this browser until you choose Import employees; an Excel file is sent to the server only to read it for the preview, and nothing is saved until you import.</p><details><summary>Active department IDs</summary>${rows.length ? table(["Department ID", "Department"], rows.map(row => `<tr><td class="mono">${escape(row.id)}</td><td>${escape(row.name)}</td></tr>`), "Department IDs for import") : '<p class="muted">Add an active department in Office settings first.</p>'}</details><div data-import-error></div><div class="form-actions"><button type="submit" class="button">Preview employees</button></div></form><div id="bulk-preview"></div><div id="bulk-import-status" role="status" aria-live="polite"></div>`;
 }
 
 export function showEmployeeImport(context, onChange) {
@@ -48,7 +48,7 @@ export function showEmployeeImport(context, onChange) {
       } catch (error) {
         if (ownsDialog()) {
           errors.innerHTML = errorMessage(error);
-          status.textContent = operation.submitted ? "Import not confirmed. Reuse the same request until its result is known." : "No employees were imported. Correct the CSV and preview it again.";
+          status.textContent = operation.submitted ? "Import not confirmed. Reuse the same request until its result is known." : "No employees were imported. Correct the file and preview it again.";
           drawPreview();
         }
       } finally {
@@ -63,9 +63,16 @@ export function showEmployeeImport(context, onChange) {
     busy(true);
     try {
       const selectedFile = file.files?.[0];
-      if (selectedFile?.size > 65536) throw new Error("Choose a CSV smaller than 64 KB.");
-      const source = selectedFile ? await selectedFile.text() : text.value;
-      const rows = parseEmployeeCsv(source, context.catalog.departments, { recovering: operation.submitted, mealTypes: context.catalog.meal_types });
+      const options = { recovering: operation.submitted, mealTypes: context.catalog.meal_types };
+      let rows;
+      if (selectedFile && employeeFileKind(selectedFile) === "xlsx") {
+        if (selectedFile.size > MAXIMUM_XLSX_BYTES) throw new Error("Choose an Excel file smaller than 1 MB.");
+        const result = await api(`/employees/import-file?${query({ filename: selectedFile.name })}`, { method: "POST", body: new Blob([selectedFile], { type: EMPLOYEE_XLSX }) });
+        rows = parseEmployeeRows(result.rows, context.catalog.departments, options);
+      } else {
+        if (selectedFile?.size > 65536) throw new Error("Choose a CSV smaller than 64 KB.");
+        rows = parseEmployeeCsv(selectedFile ? await selectedFile.text() : text.value, context.catalog.departments, options);
+      }
       await operation.prepare(rows);
       if (ownsDialog()) { drawPreview(); status.textContent = "Preview only. No employee or email has been created yet."; }
     } catch (error) {

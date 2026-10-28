@@ -4,6 +4,7 @@ from uuid import UUID
 
 from .auth import audit, require_actor
 from .database import savepoint
+from .employee_sheet import read_employee_sheet
 from .errors import DomainError
 from .security import normalize_email, normalize_phone, payload_digest, required_text
 
@@ -371,6 +372,12 @@ class EmployeeService:
                 before={key: employee[key] for key in supplied},
                 after=supplied,
             )
+
+    def read_import_file(self, context, data, content_type, filename):
+        rows = read_employee_sheet(data, content_type, filename)
+        with self.db.transaction() as tx:
+            require_actor(tx, context, {"ADMIN"})
+        return {"rows": rows}
 
     def set_active(self, context, employee_id, is_active):
         _positive_id(employee_id, "employee_id")

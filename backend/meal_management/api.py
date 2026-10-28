@@ -310,6 +310,13 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def employee_bulk_create(body: BulkEmployeesInput, ctx=Depends(admin)):
         return services.employees.register_bulk(ctx, str(body.request_id), [item.model_dump(exclude_none=True) for item in body.employees])
 
+    @app.post("/api/employees/import-file")
+    async def employee_import_file(request: Request, filename: Annotated[str, Query(min_length=1, max_length=255)],
+                                   ctx=Depends(admin)):
+        data = await request.body()
+        content_type = request.headers.get("content-type", "")
+        return await run_in_threadpool(services.employees.read_import_file, ctx, data, content_type, filename)
+
     @app.post("/api/employees/bulk-remove")
     def employee_bulk_remove(body: BulkEmployeeRemovalInput, ctx=Depends(admin)):
         return services.employees.archive_bulk(ctx, body.employee_ids, body.reason)

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { BulkEmployeeImport, employeePayloadFingerprint, parseEmployeeCsv } from "../src/bulk_employees.js";
+import { BulkEmployeeImport, employeeFileKind, employeePayloadFingerprint, parseEmployeeCsv, parseEmployeeRows } from "../src/bulk_employees.js";
+import { readFile } from "node:fs/promises";
 import { employeeImportForm } from "../src/employee_import.js";
 
 const headers = "employee_code,full_name,email,company_name,phone,department_id";
@@ -81,7 +82,7 @@ test("unknown bulk submission freezes UUID and payload across a retry", async ()
   const { operation } = setup(async (...args) => { calls.push(args); if (calls.length === 1) throw new Error("offline"); return { ...result, replayed: true }; });
   await operation.prepare(employees);
   await assert.rejects(() => operation.submit(), /not confirmed/);
-  await assert.rejects(() => operation.prepare([{ ...employees[0], employee_code: "DIFFERENT" }]), /original CSV/);
+  await assert.rejects(() => operation.prepare([{ ...employees[0], employee_code: "DIFFERENT" }]), /original file/);
   await operation.submit();
   assert.deepEqual(calls[0], calls[1]);
 });
@@ -96,7 +97,7 @@ test("reload recovery keeps only opaque values and requires original CSV before 
   const calls = [];
   const restored = new BulkEmployeeImport(1, async (...args) => { calls.push(args); return { ...result, replayed: true }; }, options);
   await assert.rejects(() => restored.submit(), /original employee CSV/);
-  await assert.rejects(() => restored.prepare([{ ...employees[0], employee_code: "OTHER" }]), /original CSV/);
+  await assert.rejects(() => restored.prepare([{ ...employees[0], employee_code: "OTHER" }]), /original file/);
   await restored.prepare(employees);
   await restored.submit();
   assert.equal(calls[0][1].body.request_id, requestId);
@@ -185,4 +186,25 @@ test("recovery can validate the original fingerprint even after its department i
   const restored = new BulkEmployeeImport(1, async () => ({ ...result, replayed: true }), options);
   await restored.prepare(parseEmployeeCsv(csv, inactive, { recovering: true }));
   assert.equal((await restored.submit()).replayed, true);
+});
+
+test("Excel rows from the server go through the same checks as CSV", () => {
+  const table = [headers.split(","), ["EMP-01", "Fictional Person", "Person@example.test", "Example Company", "9876543210", "4"]];
+  assert.deepEqual(parseEmployeeRows(table, departments), [{ employee_code: "EMP-01", full_name: "Fictional Person", email: "person@example.test", company_name: "Example Company", phone: "9876543210", department_id: 4 }]);
+  assert.deepEqual(parseEmployeeRows(table, departments), parseEmployeeCsv(table.map(row => row.join(",")).join("\n"), departments));
+  assert.throws(() => parseEmployeeRows([headers.split(","), ["EMP-01", "Fictional Person", "p@example.test", "Example Company", "9876543210", "6"]], departments), /Row 2: department_id must match an active department/);
+  assert.throws(() => parseEmployeeRows([["code", "name"], ["a", "b"]], departments), /Use exactly these headers/);
+  for (const bad of [null, [["a", 1]], ["row"]]) assert.throws(() => parseEmployeeRows(bad, departments), /could not be read/);
+});
+
+test("the import accepts .csv and .xlsx only and reads Excel through the server", async () => {
+  assert.equal(employeeFileKind({ name: "Staff.CSV" }), "csv");
+  assert.equal(employeeFileKind({ name: "staff.xlsx" }), "xlsx");
+  for (const name of ["staff.xls", "staff.xlsm", "staff.ods", "staff.txt", ""]) assert.throws(() => employeeFileKind({ name }), /\.csv or \.xlsx/);
+  const form = employeeImportForm(departments);
+  assert.match(form, /Upload CSV or Excel<input name="csv_file" type="file" accept="\.csv,\.xlsx,text\/csv,application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet">/);
+  assert.match(form, /an Excel file is sent to the server only to read it for the preview/);
+  const source = await readFile(new URL("../src/employee_import.js", import.meta.url), "utf8");
+  assert.match(source, /api\(`\/employees\/import-file\?\$\{query\(\{ filename: selectedFile\.name \}\)\}`, \{ method: "POST", body: new Blob\(\[selectedFile\], \{ type: EMPLOYEE_XLSX \}\) \}\)/);
+  assert.match(source, /parseEmployeeRows\(result\.rows, context\.catalog\.departments, options\)/);
 });
