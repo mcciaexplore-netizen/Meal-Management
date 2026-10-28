@@ -62,6 +62,14 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
         finally:
             cursor.close()
 
+    def rows(self, sql):
+        cursor = self.admin_connection.cursor()
+        try:
+            cursor.execute(sql)
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
     def query(self, sql, params=()):
         cursor = self.admin_connection.cursor(dictionary=True)
         try:
@@ -225,14 +233,84 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
             (lambda: self.reset(expect_db="meal_management").dry_run(), "RESET_DATABASE_MISMATCH"),
             (lambda: self.reset(keep_phones=(999999,)).dry_run(), "RESET_KEEP_PHONE_NOT_ACTIVE"),
             (lambda: self.reset(keep_phones=(self.code,)).dry_run(), "RESET_KEEP_PHONE_NOT_ACTIVE"),
-            (lambda: self.reset(operator_email="reset-waiter@example.test").dry_run(), "RESET_OPERATOR_MUST_BE_ACTIVE_ADMIN"),
-            (lambda: self.reset(settings=self.restricted_settings()).dry_run(), "RESET_REQUIRES_ADMIN_ACCOUNT"),
+            (lambda: self.reset(operator_email="reset-waiter@example.test").dry_run(), "RESET_OPERATOR_NOT_ADMIN"),
+            (lambda: self.reset(operator_email="nobody@example.test").dry_run(), "RESET_OPERATOR_NOT_FOUND"),
+            (lambda: self.reset(settings=self.restricted_settings()).dry_run(), "RESET_DB_ACCOUNT_LACKS_DROP"),
             (lambda: self.reset().run(True, "snap-1", self.confirmation(), directory, include_s3=True), "RESET_S3_BUCKET_REQUIRED"),
         )
         for call, code in cases:
             with self.subTest(code=code), self.assertRaisesRegex(DomainError, code):
                 call()
         self.assertEqual(self.every_table(), before)
+
+    def production_staff_shape(self):
+        self.execute(f"UPDATE `{self.name}`.staff_accounts SET display_name = 'admin', email = 'mcciaexplore@gmail.com' WHERE id = 2")
+        rows = self.query("SELECT s.id, s.display_name, s.email, s.is_active, s.is_scanner, r.role_code FROM staff_accounts s "
+                          "JOIN staff_account_roles r ON r.staff_id = s.id WHERE s.id IN (1, 2) ORDER BY s.id")
+        self.assertEqual([(row["id"], row["is_active"], row["is_scanner"], row["role_code"]) for row in rows],
+                         [(1, 1, 1, "WAITER"), (2, 1, 0, "ADMIN")])
+        self.assertEqual((rows[1]["display_name"], rows[1]["email"]), ("admin", "mcciaexplore@gmail.com"))
+        self.assertEqual({row["code"] for row in self.query("SELECT code FROM roles")}, {"ADMIN", "AUDITOR", "WAITER"})
+
+    def role_settings(self, default_role=True):
+        grants = " ".join(row[0] for row in self.rows("SHOW GRANTS"))
+        if "ROLE_ADMIN" not in grants and "ALL PRIVILEGES ON *.*" not in grants:
+            self.skipTest("the MySQL test account needs ROLE_ADMIN to grant a role (GRANT ROLE_ADMIN ON *.* TO <test account>)")
+        suffix = uuid.uuid4().hex[:10]
+        role, user = "rrole_" + suffix, "rmaster_" + suffix
+        password = secrets.token_urlsafe(24) + "aA1!"
+        self.execute("CREATE ROLE %s@%s", (role, "%"))
+        self.addCleanup(self.execute, "DROP ROLE IF EXISTS %s@%s", (role, "%"))
+        self.assertTrue(self.name.startswith("meal_management_test_"))
+        self.execute("GRANT SELECT, INSERT, UPDATE, DELETE, DROP, ALTER ON `meal\\_management\\_test\\_%`.* TO %s@%s",
+                     (role, "%"))
+        self.execute("CREATE USER %s@%s IDENTIFIED BY %s", (user, "%", password))
+        self.addCleanup(self.execute, "DROP USER IF EXISTS %s@%s", (user, "%"))
+        self.execute("GRANT %s@%s TO %s@%s", (role, "%", user, "%"))
+        if default_role:
+            self.execute("SET DEFAULT ROLE ALL TO %s@%s", (user, "%"))
+        return replace(self.settings, db_user=user, db_password=password), user
+
+    def test_role_based_master_account_and_production_staff_rows_can_reset(self):
+        from meal_management.database import Database
+        from meal_management.errors import DomainError
+
+        self.production_staff_shape()
+        settings, user = self.role_settings()
+        grantee = "'" + user + "'@'%'"
+        with Database(settings).transaction() as tx:
+            old = tx.one(
+                "SELECT (EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = %s AND PRIVILEGE_TYPE = 'DROP') "
+                "OR EXISTS (SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE = %s AND PRIVILEGE_TYPE = 'DROP' "
+                "AND %s LIKE TABLE_SCHEMA)) AS allowed", (grantee, grantee, self.name))
+            self.assertEqual(old["allowed"], 0)
+        self.reset(settings=settings, operator_email="mcciaexplore@gmail.com").dry_run()
+        self.assertIn("Dry run only: nothing was changed.", "\n".join(self.lines))
+        result = self.reset(settings=settings, operator_email="mcciaexplore@gmail.com").run(
+            True, "snap-role", self.confirmation(), self.output_dir.name)
+        self.assertEqual(result["event_id"], 1)
+        self.assertEqual(self.query("SELECT actor_staff_id FROM audit_events"), [{"actor_staff_id": 2}])
+        self.assertEqual(self.count("employees"), 0)
+
+        inactive, _ = self.role_settings(default_role=False)
+        with self.assertRaisesRegex(DomainError, "RESET_DB_ROLE_NOT_ACTIVE: .*granted but inactive roles: `rrole_"):
+            self.reset(settings=inactive, operator_email="mcciaexplore@gmail.com").dry_run()
+
+    def test_production_staff_rows_pass_and_operator_refusals_name_the_condition(self):
+        from meal_management.test_data_reset import ResetRefused
+
+        self.production_staff_shape()
+        self.reset(operator_email="mcciaexplore@gmail.com").dry_run()
+        self.assertIn("Dry run only: nothing was changed.", "\n".join(self.lines))
+        self.execute(f"UPDATE `{self.name}`.staff_accounts SET is_active = 0 WHERE id = 2")
+        with self.assertRaises(ResetRefused) as caught:
+            self.reset(operator_email="mcciaexplore@gmail.com").dry_run()
+        self.assertEqual((caught.exception.code, caught.exception.detail),
+                         ("RESET_OPERATOR_INACTIVE", "staff account 2 (mcciaexplore@gmail.com) is inactive"))
+        with self.assertRaises(ResetRefused) as caught:
+            self.reset(operator_email="meal-scanner@system.invalid").dry_run()
+        self.assertEqual((caught.exception.code, caught.exception.detail),
+                         ("RESET_OPERATOR_IS_SCANNER", "staff account 1 (meal-scanner@system.invalid) is a scanner account"))
 
     def restricted_settings(self):
         from meal_management import runtime_account
