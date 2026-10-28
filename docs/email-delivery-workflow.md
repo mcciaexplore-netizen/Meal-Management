@@ -16,10 +16,10 @@ Use the bulk import action on the Employees page. Upload a CSV or Excel (.xlsx) 
 
 ```csv
 employee_code,full_name,email,company_name,phone,department,meal_types
-TEST-EXAMPLE-01,Fictional Employee,employee@example.test,Example Company,+91 98765 43210,Exhibition Centre,
+TEST-EXAMPLE-01,Fictional Employee,employee@example.test,Example Company,+91 98765 43210,Exhibition Centre,BREAKFAST;HIGH-TEA
 ```
 
-Replace the fictional row with reviewed records. `department` and `meal_types` are optional. `department` holds a department name, matched ignoring case and extra spaces against the built-in facilities and active departments; a built-in facility is created the first time it is used. Leave it blank for no department; the administrator can set one later in the employee's details. An unknown or deactivated name is a row error that lists the valid names. A `department_id` column, if present, is ignored and the preview says so. A batch supports 1–100 employees; this is a batch size, not a limit on the total employee population. Preview and validate all rows before importing. The example address is intentionally blocked from real delivery.
+Replace the fictional row with reviewed records. `meal_types` is required on every row: active meal type codes separated by `;` (today `BREAKFAST`, `LUNCH`, `HIGH-TEA`, `DINNER`). A missing column or blank cell is an error that lists the valid codes. `department` is optional. `department` holds a department name, matched ignoring case and extra spaces against the built-in facilities and active departments; a built-in facility is created the first time it is used. Leave it blank for no department; the administrator can set one later in the employee's details. An unknown or deactivated name is a row error that lists the valid names. A `department_id` column, if present, is ignored and the preview says so. A batch supports 1–100 employees; this is a batch size, not a limit on the total employee population. Preview and validate all rows before importing. The example address is intentionally blocked from real delivery.
 
 Importing creates every employee, personal QR, and pending email in one transaction. If any row fails, no employee from that batch is committed. Retrying an uncertain import keeps the original caller-bound request UUID and payload. After a reload, provide the original file again so its fingerprint can be matched; only the recovery UUID and fingerprint are stored in the browser, not employee records. Do not clear recovery storage while an import outcome is unknown.
 

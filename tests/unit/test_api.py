@@ -460,8 +460,11 @@ class EmployeeAdminApiTests(ApiTestCase):
 
     def test_registration_reuses_service_and_returns_identifiers_only(self):
         body = {"employee_code": "EMP-007", "full_name": "Asha Rao", "email": "asha@example.com", "company_name": "Example Company", "phone": "+1 202 555 0107", "department_id": 1}
+        self.assert_error(self.harness.post("/api/employees", json=body), 422, "INVALID_INPUT")
+        body["meal_type_ids"] = [2, 4]
         response = self.harness.post("/api/employees", json=body)
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.harness.services.employees.register.call_args.kwargs["meal_type_ids"], [2, 4])
         self.assertEqual(response.json(), {"employee_id": 7, "qr_id": 101, "email_id": 1})
         context = self.harness.services.employees.register.call_args.args[0]
         self.assertEqual(self.harness.staff.current(context)["staff_id"], 1)

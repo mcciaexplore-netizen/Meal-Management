@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, MealTypeCorrectionInput, MealTypeIdsInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput, StaffRolesInput, StaffUpdateInput, VisitorBatchEmailInput, VisitorBatchInput, VisitorEmailInput
+from .api_schemas import ActiveInput, AuthorizationInput, BulkEmployeeRemovalInput, BulkEmployeesInput, BulkMealTypesApplyInput, BulkMealTypesInput, CatalogActiveInput, CatalogInput, CatalogUpdateInput, DepartmentInput, EmailApprovalInput, EmailProcessInput, EmployeeInput, EmployeeUpdate, ExpiryInput, LoginInput, MasterQrInput, MealTypeCorrectionInput, MealTypeIdsInput, RemovalInput, RevokeInput, ScanBody, ScanReadBody, ScannerCodeInput, ScannerInput, StaffInput, StaffRolesInput, StaffUpdateInput, VisitorBatchEmailInput, VisitorBatchInput, VisitorEmailInput
 from .api_common import database_readiness, scan_response
 from .application import create_services
 from .delivery import LocalEmailPreview
@@ -316,6 +316,14 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         data = await request.body()
         content_type = request.headers.get("content-type", "")
         return await run_in_threadpool(services.employees.read_import_file, ctx, data, content_type, filename)
+
+    @app.post("/api/employees/meal-types/preview")
+    def employee_meal_types_preview(body: BulkMealTypesInput, ctx=Depends(admin)):
+        return services.employees.preview_meal_types_bulk(ctx, body.employee_ids, body.meal_type_ids)
+
+    @app.post("/api/employees/meal-types")
+    def employee_meal_types_bulk(body: BulkMealTypesApplyInput, ctx=Depends(admin)):
+        return services.employees.set_meal_types_bulk(ctx, body.employee_ids, body.meal_type_ids, body.expected_changes)
 
     @app.post("/api/employees/bulk-remove")
     def employee_bulk_remove(body: BulkEmployeeRemovalInput, ctx=Depends(admin)):

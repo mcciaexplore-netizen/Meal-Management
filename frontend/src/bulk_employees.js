@@ -1,9 +1,10 @@
 import { randomIdentifier } from "./core.js";
 import { departmentKey, employeeDepartmentOptions } from "./facility_departments.js";
-import { mealTypeIdsFromCodes } from "./meal_types.js";
+import { mealTypeCodes, mealTypeIdsFromCodes } from "./meal_types.js";
 
-export const employeeCsvHeaders = ["employee_code", "full_name", "email", "company_name", "phone"];
-export const optionalEmployeeHeaders = ["department", "meal_types"];
+export const employeeCsvHeaders = ["employee_code", "full_name", "email", "company_name", "phone", "meal_types"];
+export const optionalEmployeeHeaders = ["department"];
+const sampleHeaders = ["employee_code", "full_name", "email", "company_name", "phone", "department", "meal_types"];
 const ignoredEmployeeHeaders = ["department_id"];
 const maximumBytes = 65536;
 const requestPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -90,14 +91,16 @@ export function parseEmployeeImport(table, departments, { recovering = false, me
   const [rawHeaders, ...rows] = table.map(row => row.map(value => value.trim()));
   const headers = (rawHeaders ?? []).map(name => name.toLowerCase());
   const allowed = [...employeeCsvHeaders, ...optionalEmployeeHeaders, ...ignoredEmployeeHeaders];
-  if (!headers.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => !headers.includes(name)) || headers.some(name => !allowed.includes(name))) throw new Error(`Use these headers: ${employeeCsvHeaders.join(",")}, optionally followed by department and meal_types.`);
+  const codes = mealTypeCodes(mealTypes).join(", ");
+  if (!headers.length || new Set(headers).size !== headers.length || employeeCsvHeaders.some(name => name !== "meal_types" && !headers.includes(name)) || headers.some(name => !allowed.includes(name))) throw new Error(`Use these headers: ${employeeCsvHeaders.join(",")}, with an optional department column.`);
+  if (!headers.includes("meal_types")) throw new Error(`Add a meal_types column. Use meal type codes separated by ;, for example BREAKFAST;HIGH-TEA. Valid codes: ${codes}.`);
   if (!rows.length || rows.length > 100) throw new Error("Import between 1 and 100 employees at a time.");
   const names = departmentChoices(departments);
   const inactiveRows = (departments ?? []).filter(row => row.is_active === false || row.is_active === 0);
   const byKey = new Map(names.map(name => [departmentKey(name), name]));
   if (recovering) for (const row of inactiveRows) if (!byKey.has(departmentKey(row.name))) byKey.set(departmentKey(row.name), row.name);
   const inactive = new Set(inactiveRows.map(row => departmentKey(row.name)));
-  const codes = new Set();
+  const seenCodes = new Set();
   const employees = rows.map((values, index) => {
     const fail = message => { throw new Error(`Row ${index + 2}: ${message}`); };
     if (values.length !== headers.length) fail("the number of columns does not match the headers.");
@@ -111,8 +114,8 @@ export function parseEmployeeImport(table, departments, { recovering = false, me
     const phoneDigits = Array.from(phone).filter(character => /[0-9]/.test(character)).length;
     if (phone.length > 32 || !/^\+?[0-9 ()\-.]+$/.test(phone) || phoneDigits < 7 || phoneDigits > 15) fail("provide a valid phone number containing 7 to 15 digits.");
     const code = fields.employee_code.normalize("NFKC").toLowerCase();
-    if (codes.has(code)) fail("employee_code is repeated in this import.");
-    codes.add(code);
+    if (seenCodes.has(code)) fail("employee_code is repeated in this import.");
+    seenCodes.add(code);
     const written = (fields.department ?? "").replace(/\s+/g, " ").trim();
     let department = null;
     if (written) {
@@ -122,18 +125,22 @@ export function parseEmployeeImport(table, departments, { recovering = false, me
     const employee = { employee_code: fields.employee_code, full_name: fields.full_name, email, company_name: fields.company_name, phone, department };
     let mealTypeIds = null;
     try { mealTypeIds = mealTypeIdsFromCodes(fields.meal_types, mealTypes); } catch (error) { fail(error.message); }
-    if (mealTypeIds) employee.meal_type_ids = mealTypeIds;
+    if (!mealTypeIds) fail(`meal_types is required. Use codes separated by ;. Valid codes: ${codes}.`);
+    employee.meal_type_ids = mealTypeIds;
     return employee;
   });
   return { employees, ignored: headers.filter(name => ignoredEmployeeHeaders.includes(name)) };
 }
 
-export function sampleEmployeeCsv(departments) {
+export function sampleEmployeeCsv(departments, mealTypes = []) {
   const department = departmentChoices(departments)[0] ?? "";
+  const active = mealTypeCodes(mealTypes);
+  const preferred = ["BREAKFAST", "HIGH-TEA"].filter(code => active.includes(code));
+  const meals = (preferred.length ? preferred : active).join(";");
   return [
-    [...employeeCsvHeaders, ...optionalEmployeeHeaders].join(","),
-    `EMP-001,Asha Rao,asha.rao@company.example,Company Name,+91 98765 43210,${department.includes(",") ? `"${department}"` : department},`,
-    "EMP-002,Ravi Kulkarni,ravi.kulkarni@company.example,Company Name,+91 98765 43211,,",
+    sampleHeaders.join(","),
+    `EMP-001,Asha Rao,asha.rao@company.example,Company Name,+91 98765 43210,${department.includes(",") ? `"${department}"` : department},${meals}`,
+    `EMP-002,Ravi Kulkarni,ravi.kulkarni@company.example,Company Name,+91 98765 43211,,${meals}`,
   ].join("\r\n") + "\r\n";
 }
 

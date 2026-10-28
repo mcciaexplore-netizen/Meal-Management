@@ -83,6 +83,8 @@ def error_body(code, request_id=None):
         "SCANNER_INACTIVE": "This scanning counter has been deactivated. Ask the office administrator.",
         "LOCATION_INACTIVE": "This serving location has been deactivated. Ask the office administrator.",
         "DEPARTMENT_UNAVAILABLE": "That department is inactive. Choose an active department.",
+        "EMPLOYEE_MEAL_TYPES_COUNT_CHANGED": "The number of employees to change has changed. Preview again.",
+        "INVALID_EXPECTED_CHANGES": "Preview again before changing meal types.",
         "DEPARTMENT_NOT_FOUND": "A department name is not one of the available departments. Preview the file again to see the valid names.",
         "INVALID_DEPARTMENT_NAME": "Correct the department names in the file.",
         "DEPARTMENT_HAS_ACTIVE_EMPLOYEES": "This department still has active employees. Confirm to deactivate it anyway.",
@@ -113,7 +115,8 @@ def status_for(code):
     if code in {"SERVICE_UNAVAILABLE", "PROCESSING_UNCONFIRMED", "SCAN_RECEIPT_UNCONFIRMED", "TRANSACTION_RETRY_REQUIRED", "DATABASE_NOT_READY", "SCANNER_NOT_CONFIGURED"}:
         return 503
     if code in {"CLIENT_REFRESH_REQUIRED", "EMAIL_DAILY_LIMIT_EXCEEDED", "EMAIL_COUNT_CHANGED",
-                "EMAIL_RESEND_LIMIT_REACHED", "QR_NOT_ACTIVE", "VISITOR_BATCH_NOTHING_TO_SEND", "REQUEST_MISMATCH"}:
+                "EMAIL_RESEND_LIMIT_REACHED", "QR_NOT_ACTIVE", "VISITOR_BATCH_NOTHING_TO_SEND", "REQUEST_MISMATCH",
+                "EMPLOYEE_MEAL_TYPES_COUNT_CHANGED"}:
         return 409
     if code in {"VISITOR_FILE_TOO_LARGE", "EMPLOYEE_FILE_TOO_LARGE"}:
         return 413

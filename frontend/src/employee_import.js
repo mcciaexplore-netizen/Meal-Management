@@ -1,12 +1,14 @@
 import { api } from "./api.js";
 import { escape, query } from "./core.js";
-import { EMPLOYEE_XLSX, MAXIMUM_XLSX_BYTES, departmentChoices, employeeCsvHeaders, employeeFileKind, employeeImportFor, optionalEmployeeHeaders, parseEmployeeCsvImport, parseEmployeeImport, sampleEmployeeCsv } from "./bulk_employees.js";
+import { EMPLOYEE_XLSX, MAXIMUM_XLSX_BYTES, departmentChoices, employeeCsvHeaders, employeeFileKind, employeeImportFor, parseEmployeeCsvImport, parseEmployeeImport, sampleEmployeeCsv } from "./bulk_employees.js";
 import { NO_DEPARTMENT } from "./facility_departments.js";
+import { mealTypeCodes } from "./meal_types.js";
 import { errorMessage, modal, table } from "./ui.js";
 
-export function employeeImportForm(departments, recovering = false) {
-  const headers = [...employeeCsvHeaders, ...optionalEmployeeHeaders].join(",");
-  return `<p class="muted">Import up to 100 employees. Each receives a personal QR. Bulk emails wait for your approval; this import does not send email.</p>${recovering ? '<div class="alert" role="status">A previous import is not confirmed. Use the original file to recover the same request.</div>' : ""}<form id="bulk-employee-form"><label>Upload CSV or Excel<input name="csv_file" type="file" accept=".csv,.xlsx,text/csv,${EMPLOYEE_XLSX}"></label><label>Or paste CSV<textarea name="csv_text" rows="7" spellcheck="false" placeholder="${escape(headers)}" maxlength="65536"></textarea></label><p class="field-help">Required headers: <span class="mono">${escape(employeeCsvHeaders.join(","))}</span>. Optional <span class="mono">department</span> column: the department name, or blank for no department. Optional <span class="mono">meal_types</span> column: meal type codes separated by <span class="mono">;</span>, for example <span class="mono">LUNCH;DINNER</span>; blank means all active meal types. In Excel, use the first sheet with the headers in row 1 and plain values, not formulas. CSV files and pasted data stay in this browser until you choose Import employees; an Excel file is sent to the server only to read it for the preview, and nothing is saved until you import.</p><details><summary>Department names</summary><p class="field-help">${escape(departmentChoices(departments).join(", ") || "None yet. Leave the department blank.")}</p></details><div data-import-error></div><div class="form-actions"><button type="button" class="button" id="employee-sample">Download sample CSV</button><button type="submit" class="button">Preview employees</button></div></form><div id="bulk-preview"></div><div id="bulk-import-status" role="status" aria-live="polite"></div>`;
+export function employeeImportForm(departments, recovering = false, mealTypes = []) {
+  const headers = ["employee_code", "full_name", "email", "company_name", "phone", "department", "meal_types"].join(",");
+  const codes = mealTypeCodes(mealTypes).join(", ");
+  return `<p class="muted">Import up to 100 employees. Each receives a personal QR. Bulk emails wait for your approval; this import does not send email.</p>${recovering ? '<div class="alert" role="status">A previous import is not confirmed. Use the original file to recover the same request.</div>' : ""}<form id="bulk-employee-form"><label>Upload CSV or Excel<input name="csv_file" type="file" accept=".csv,.xlsx,text/csv,${EMPLOYEE_XLSX}"></label><label>Or paste CSV<textarea name="csv_text" rows="7" spellcheck="false" placeholder="${escape(headers)}" maxlength="65536"></textarea></label><p class="field-help">Required headers: <span class="mono">${escape(employeeCsvHeaders.join(","))}</span>. <span class="mono">meal_types</span> is required on every row: meal type codes separated by <span class="mono">;</span>, for example <span class="mono">BREAKFAST;HIGH-TEA</span>. Valid codes: <span class="mono">${escape(codes || "none active")}</span>. Optional <span class="mono">department</span> column: the department name, or blank for no department. In Excel, use the first sheet with the headers in row 1 and plain values, not formulas. CSV files and pasted data stay in this browser until you choose Import employees; an Excel file is sent to the server only to read it for the preview, and nothing is saved until you import.</p><details><summary>Department names</summary><p class="field-help">${escape(departmentChoices(departments).join(", ") || "None yet. Leave the department blank.")}</p></details><div data-import-error></div><div class="form-actions"><button type="button" class="button" id="employee-sample">Download sample CSV</button><button type="submit" class="button">Preview employees</button></div></form><div id="bulk-preview"></div><div id="bulk-import-status" role="status" aria-live="polite"></div>`;
 }
 
 export function ignoredColumnsNote(ignored) {
@@ -15,7 +17,7 @@ export function ignoredColumnsNote(ignored) {
 
 export function showEmployeeImport(context, onChange) {
   const operation = employeeImportFor(context.user.staff_id, api);
-  const dialog = modal("Import employees", employeeImportForm(context.catalog.departments, operation.submitted), true);
+  const dialog = modal("Import employees", employeeImportForm(context.catalog.departments, operation.submitted, context.catalog.meal_types), true);
   const content = dialog.querySelector(".modal-content");
   const ownsDialog = () => dialog.open && dialog.querySelector(".modal-content") === content && context.isCurrent();
   const form = content.querySelector("#bulk-employee-form");
@@ -34,7 +36,7 @@ export function showEmployeeImport(context, onChange) {
   let ignored = [];
   form.querySelector("#employee-sample").onclick = () => {
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([sampleEmployeeCsv(context.catalog.departments)], { type: "text/csv" }));
+    link.href = URL.createObjectURL(new Blob([sampleEmployeeCsv(context.catalog.departments, context.catalog.meal_types)], { type: "text/csv" }));
     link.download = "employee-import-sample.csv";
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 0);
