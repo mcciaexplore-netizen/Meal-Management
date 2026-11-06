@@ -7,6 +7,7 @@ import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailD
 import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
 import { openBulkMealTypes } from "./employee_meal_types.js";
+import { downloadMealReport } from "./meal_export.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
 import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
 import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds, visitorMealTypeLines } from "./meal_types.js";
@@ -318,7 +319,7 @@ export async function reports(target, context) {
   const month = new Date();
   month.setDate(1);
   let view = location.hash.includes("view=rejected") ? "rejected" : "meals";
-  target.innerHTML = `${heading("HISTORY & ACCOUNTABILITY", "Meal history", "Filter individual meal records and review rejected scan attempts.")}<form id="report-filters" class="panel filter-bar"><label>From<input name="start" type="date" value="${dateInput(month)}" required></label><label>Through<input name="end" type="date" value="${dateInput()}" required></label><label>Employee ID <span class="optional">Optional</span><input name="employee_id" type="number" min="1" step="1" placeholder="All employees and visitors"></label><label>Department<select name="department_id"><option value="">All departments</option>${options((context.catalog.departments ?? []).filter(row => row.is_active !== false), "")}</select></label><label>Meal type<select name="meal_type_id"><option value="">All meal types</option>${(context.catalog.meal_types ?? []).map(row => `<option value="${escape(row.id)}">${escape(row.name)}${row.is_active ? "" : " (inactive)"}</option>`).join("")}</select></label><button class="button primary" type="submit">Apply filters</button><div data-form-error></div></form><p class="field-help">Dates include the full local day. Totals cover all employees and visitors in the selected dates.</p><div id="report-totals">${stats()}</div><section class="panel"><div class="tabs" role="tablist" aria-label="Report type"><button role="tab" data-report="meals">Meal records</button><button role="tab" data-report="rejected">Rejected scans</button></div><div id="report-results">${loading()}</div><div class="pagination" id="report-pagination"></div></section>`;
+  target.innerHTML = `${heading("HISTORY & ACCOUNTABILITY", "Meal history", "Filter individual meal records and review rejected scan attempts.")}<form id="report-filters" class="panel filter-bar"><label>From<input name="start" type="date" value="${dateInput(month)}" required></label><label>Through<input name="end" type="date" value="${dateInput()}" required></label><label>Employee ID <span class="optional">Optional</span><input name="employee_id" type="number" min="1" step="1" placeholder="All employees and visitors"></label><label>Department<select name="department_id"><option value="">All departments</option>${options((context.catalog.departments ?? []).filter(row => row.is_active !== false), "")}</select></label><label>Meal type<select name="meal_type_id"><option value="">All meal types</option>${(context.catalog.meal_types ?? []).map(row => `<option value="${escape(row.id)}">${escape(row.name)}${row.is_active ? "" : " (inactive)"}</option>`).join("")}</select></label><button class="button primary" type="submit">Apply filters</button><button class="button" type="button" id="export-report">Export to Excel</button><div data-form-error></div></form><p class="field-help">Dates include the full local day. Totals cover all employees and visitors in the selected dates.</p><div id="report-totals">${stats()}</div><section class="panel"><div class="tabs" role="tablist" aria-label="Report type"><button role="tab" data-report="meals">Meal records</button><button role="tab" data-report="rejected">Rejected scans</button></div><div id="report-results">${loading()}</div><div class="pagination" id="report-pagination"></div></section>`;
   let rows = [];
   let cursor = null;
   let loadVersion = 0;
@@ -353,6 +354,10 @@ export async function reports(target, context) {
     target.querySelector("#more-reports")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
   }
   formAction(target.querySelector("#report-filters"), () => load());
+  target.querySelector("#export-report").onclick = event => {
+    const form = target.querySelector("#report-filters");
+    downloadMealReport(form, event.currentTarget, form.querySelector("[data-form-error]"));
+  };
   target.querySelectorAll("[data-report]").forEach(button => button.onclick = () => { view = button.dataset.report; load().catch(error => notify(error.message, "error")); });
   await load();
 }

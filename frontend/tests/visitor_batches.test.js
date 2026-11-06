@@ -18,7 +18,8 @@ test("only small csv and xlsx files are accepted", () => {
 
 test("bulk expiry is required and row errors are escaped", () => {
   assert.throws(() => requiredExpiry(""), /expiry/);
-  assert.match(requiredExpiry("2026-10-31T18:00"), /^2026-10-31T\d\d:\d\d:00\.000Z$/);
+  const year = new Date().getFullYear() + 1;
+  assert.match(requiredExpiry(`${year}-10-31T18:00`), new RegExp(`^${year}-10-31T\\d\\d:\\d\\d:00\\.000Z$`));
   const html = errorRows([{ row: 3, column: "Email", message: "Email <b>bad</b>" }]).join("");
   assert.match(html, /Email &lt;b&gt;bad&lt;\/b&gt;/);
   assert.equal(batchSummary({ emails_pending: 2, emails_sent: 1, emails_failed: 0 }), "2 to send · 1 sent");

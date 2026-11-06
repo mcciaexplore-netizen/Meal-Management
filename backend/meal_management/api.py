@@ -2,7 +2,8 @@ import hmac
 import secrets
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import datetime
+import os
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
@@ -11,6 +12,7 @@ from fastapi import Depends, FastAPI, Path as ApiPath, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -26,6 +28,7 @@ from .errors import ConfigurationError, DomainError
 from .http_security import DatabaseLoginLimiter, SecurityMiddleware, csrf_token, error_body, status_for
 from .models import ScanInput, ServerContext
 from .paging import CURSOR_PATTERN
+from .meal_export import XLSX_TYPE, MealReportExport
 from .visitor_batches import VisitorBatchService
 from .queries import QueryService
 from .runtime import RuntimeSettings
@@ -64,6 +67,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         if visitor_batches is None else visitor_batches
     )
     app.state.queries = QueryService(services.database) if queries is None else queries
+    app.state.meal_export = MealReportExport(services.database)
     app.state.storage = storage_from_settings(runtime) if storage is None else storage
     app.state.limiter = DatabaseLoginLimiter(services.database, runtime) if limiter is None else limiter
     app.state.scan_receipts = ScanReceiptService(services.database)
@@ -553,6 +557,16 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
                      meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
         return app.state.queries.meal_history(ctx, start, end, limit=limit, before=before, employee_id=employee_id,
                                               meal_type_id=meal_type_id, department_id=department_id)
+
+    @app.get("/api/reports/meals/export")
+    def meal_history_export(start: Annotated[date, Query(alias="from")], through: date,
+                            department_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
+                            employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
+                            meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
+        result = app.state.meal_export.export(ctx, start, through, employee_id=employee_id,
+                                              department_id=department_id, meal_type_id=meal_type_id)
+        return FileResponse(result["path"], media_type=XLSX_TYPE, filename=result["filename"],
+                            background=BackgroundTask(os.unlink, result["path"]))
 
     @app.get("/api/reports/totals")
     def totals(start: datetime, end: datetime, ctx=Depends(admin)):

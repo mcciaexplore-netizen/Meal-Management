@@ -84,6 +84,12 @@ def error_body(code, request_id=None):
         "LOCATION_INACTIVE": "This serving location has been deactivated. Ask the office administrator.",
         "DEPARTMENT_UNAVAILABLE": "That department is inactive. Choose an active department.",
         "EMPLOYEE_MEAL_TYPES_COUNT_CHANGED": "The number of employees to change has changed. Preview again.",
+        "REPORT_TOO_LARGE": "More than 50,000 rows match. Narrow the dates and export again.",
+        "REPORT_EMPTY": "No meals match these filters.",
+        "REPORT_RANGE_TOO_LONG": "Choose at most 366 days for an export.",
+        "INVALID_DATE_RANGE": "The end date must be on or after the start date.",
+        "REPORT_EXPORT_RUNNING": "A report is already being prepared. Try again in a minute.",
+        "REPORT_UNCONFIRMED": "The report could not be confirmed. Try again.",
         "INVALID_EXPECTED_CHANGES": "Preview again before changing meal types.",
         "DEPARTMENT_NOT_FOUND": "A department name is not one of the available departments. Preview the file again to see the valid names.",
         "INVALID_DEPARTMENT_NAME": "Correct the department names in the file.",
@@ -116,10 +122,12 @@ def status_for(code):
         return 503
     if code in {"CLIENT_REFRESH_REQUIRED", "EMAIL_DAILY_LIMIT_EXCEEDED", "EMAIL_COUNT_CHANGED",
                 "EMAIL_RESEND_LIMIT_REACHED", "QR_NOT_ACTIVE", "VISITOR_BATCH_NOTHING_TO_SEND", "REQUEST_MISMATCH",
-                "EMPLOYEE_MEAL_TYPES_COUNT_CHANGED"}:
+                "EMPLOYEE_MEAL_TYPES_COUNT_CHANGED", "REPORT_EXPORT_RUNNING"}:
         return 409
-    if code in {"VISITOR_FILE_TOO_LARGE", "EMPLOYEE_FILE_TOO_LARGE"}:
+    if code in {"VISITOR_FILE_TOO_LARGE", "EMPLOYEE_FILE_TOO_LARGE", "REPORT_TOO_LARGE"}:
         return 413
+    if code == "REPORT_EMPTY":
+        return 404
     if code == "SCANNER_DISABLED":
         return 404
     if code.endswith("NOT_FOUND") or code == "NOT_FOUND":
