@@ -74,7 +74,7 @@ class ExportApiTests(ApiTestCase):
         return "/api/reports/meals/export?from=2026-11-01&through=2026-11-05" + extra
 
     def test_admin_gets_the_file_with_filters_passed_through_and_the_temp_file_removed(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         response = self.client.get(self.url("&employee_id=7&department_id=3&meal_type_id=2"))
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"], XLSX_TYPE)
@@ -88,7 +88,7 @@ class ExportApiTests(ApiTestCase):
         self.assertFalse(os.path.exists(self.path))
 
     def test_errors_are_json_with_clear_messages(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         for code, status, words in (("REPORT_TOO_LARGE", 413, "Narrow the dates"), ("REPORT_EMPTY", 404, "No meals match"),
                                     ("REPORT_EXPORT_RUNNING", 409, "already being prepared"),
                                     ("REPORT_RANGE_TOO_LONG", 400, "366 days")):
@@ -99,13 +99,15 @@ class ExportApiTests(ApiTestCase):
                 self.assertIn(words, response.text)
 
     def test_inputs_and_role_are_checked(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         for url in ("/api/reports/meals/export?through=2026-11-05", "/api/reports/meals/export?from=2026-11-01",
                     "/api/reports/meals/export?from=05-11-2026&through=2026-11-05", self.url("&employee_id=0")):
             with self.subTest(url=url):
                 self.assert_error(self.client.get(url), 422, "INVALID_INPUT")
-        self.harness.login("waiter")
-        self.assert_error(self.client.get(self.url()), 403, "ROLE_REQUIRED")
+        for role in ("admin", "waiter"):
+            with self.subTest(role=role):
+                self.harness.login(role)
+                self.assert_error(self.client.get(self.url()), 403, "ROLE_REQUIRED")
         self.export.export.assert_not_called()
 
 

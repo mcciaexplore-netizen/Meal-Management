@@ -59,44 +59,85 @@ function requestId(file) {
   return value;
 }
 
+export async function downloadVisitorSample(kind, button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const ext = kind === "xlsx" ? "xlsx" : "csv";
+    const filename = `visitor-import-sample.${ext}`;
+    const blob = await api(`/visitor-batches/sample.${ext}`, { responseType: "blob" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  } catch (error) {
+    notify(error.message || "Failed to download sample file.", "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 export async function visitorBatches(target, context) {
   let emailSettings = null;
   try { emailSettings = await api("/email-settings"); } catch { emailSettings = null; }
   const sending = emailSettings?.sending_enabled === true;
-  target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Bulk visitor QRs", "Create one visitor QR per person from a CSV or Excel list. Every row is checked before anything is created.")}<section class="panel padded"><h2>Upload a visitor list</h2><p class="muted small">Columns, in this order: ${escape(COLUMNS.join(", "))}. Up to 200 people and 1 MB. Email is optional; people without one get no email.</p><form id="visitor-batch-form"><div class="form-grid"><label>Visitor list<input type="file" name="file" accept=".csv,.xlsx,text/csv,${XLSX}" required></label>${field("Expiry, local time", "expires_at", "", "datetime-local", "required")}${selectField("Department", "department_id", employeeDepartmentOptions(context.catalog?.departments ?? []), "")}${field("Event name (optional)", "event_name", "", "text", 'maxlength="150"')}</div>${mealTypeCheckboxes(context.catalog?.meal_types ?? [], null, "Each person can have one meal of each ticked type.")}<div data-form-error></div><div class="form-actions"><button type="submit" class="button primary">Check list</button></div></form><div id="visitor-batch-preview"></div></section><section class="panel"><div class="panel-heading"><div><h2>Batches</h2><p class="muted small" id="email-allowance"></p></div></div><div id="visitor-batch-list">${loading()}</div><div class="pagination" id="visitor-batch-pagination"></div></section>`;
+  const isSuperAdmin = (context.user.roles ?? []).includes("SUPER_ADMIN");
+  const hasDept = Boolean(context.user.department_id);
+  const blockedFromCreation = !isSuperAdmin && !hasDept;
+
+  const departmentField = !isSuperAdmin
+    ? `<label>Department<input type="text" value="${escape(context.user.department_name || 'Department')}" readonly><input type="hidden" name="department_id" value="${context.user.department_id}"></label>`
+    : selectField("Department", "department_id", employeeDepartmentOptions(context.catalog?.departments ?? []), "");
+
+  const uploadSection = blockedFromCreation
+    ? `<section class="panel padded"><h2>Upload a visitor list</h2><div class="alert warning" role="status">Your administrator account has no department assigned. Ask a super admin to assign a department before creating visitor QRs.</div><div class="form-actions"><button type="button" class="button" id="visitor-sample-excel">Download sample Excel</button><button type="button" class="button" id="visitor-sample-csv">Download sample CSV</button></div></section>`
+    : `<section class="panel padded"><h2>Upload a visitor list</h2><p class="muted small">Columns, in this order: ${escape(COLUMNS.join(", "))}. Up to 200 people and 1 MB. Email is optional; people without one get no email.</p><form id="visitor-batch-form"><div class="form-grid"><label>Visitor list<input type="file" name="file" accept=".csv,.xlsx,text/csv,${XLSX}" required></label>${field("Expiry, local time", "expires_at", "", "datetime-local", "required")}${departmentField}${field("Event name (optional)", "event_name", "", "text", 'maxlength="150"')}</div>${mealTypeCheckboxes(context.catalog?.meal_types ?? [], null, "Each person can have one meal of each ticked type.")}<div data-form-error></div><div class="form-actions"><button type="button" class="button" id="visitor-sample-excel">Download sample Excel</button><button type="button" class="button" id="visitor-sample-csv">Download sample CSV</button><button type="submit" class="button primary">Check list</button></div></form><div id="visitor-batch-preview"></div></section>`;
+
+  target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Bulk visitor QRs", "Create one visitor QR per person from a CSV or Excel list. Every row is checked before anything is created.")}${uploadSection}<section class="panel"><div class="panel-heading"><div><h2>Batches</h2><p class="muted small" id="email-allowance"></p></div></div><div id="visitor-batch-list">${loading()}</div><div class="pagination" id="visitor-batch-pagination"></div></section>`;
+
+  target.querySelector("#visitor-sample-excel")?.addEventListener("click", e => downloadVisitorSample("xlsx", e.currentTarget));
+  target.querySelector("#visitor-sample-csv")?.addEventListener("click", e => downloadVisitorSample("csv", e.currentTarget));
+
   const form = target.querySelector("#visitor-batch-form");
   const preview = target.querySelector("#visitor-batch-preview");
-  formAction(form, async data => {
-    const file = form.elements.file.files[0];
-    const type = checkFile(file);
-    const settings = {
-      expires_at: requiredExpiry(data.get("expires_at")),
-      meal_type_ids: selectedMealTypeIds(data.getAll("meal_type_ids"), "Tick at least one meal type."),
-      event_name: String(data.get("event_name") ?? "").trim() || null,
-      department_id: await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog })
-    };
-    const result = await api(`/visitor-batches/preview?${query({ filename: file.name })}`, { method: "POST", body: new Blob([file], { type }) });
-    if (!context.isCurrent()) return;
-    if (!result.valid) {
-      preview.innerHTML = `<div class="alert error" role="alert"><strong>${escape(result.errors.length)} problem${result.errors.length === 1 ? "" : "s"} found. Nothing was created.</strong> Correct the file and check it again.</div>${table(["Row", "Column", "Problem"], errorRows(result.errors), "Problems")}`;
-      return;
-    }
-    preview.innerHTML = `<p><strong>${escape(result.row_count)} visitors</strong>, ${escape(result.email_count)} with an email address.</p>${previewTable(result.rows)}<div class="form-actions"><button type="button" class="button primary" id="create-visitor-batch">Create ${escape(result.row_count)} visitor QRs</button></div><div data-create-error></div>`;
-    preview.querySelector("#create-visitor-batch").onclick = async event => {
-      event.currentTarget.disabled = true;
-      try {
-        const created = await api("/visitor-batches", { method: "POST", body: { request_id: requestId(file), source_name: file.name, rows: result.rows, ...settings } });
-        notify(created.duplicate ? `This list was already created as batch ${created.batch_id}.` : `Batch ${created.batch_id} created.`);
-        preview.innerHTML = "";
-        form.reset();
-        await load();
-        await detail(created.batch_id);
-      } catch (error) {
-        preview.querySelector("[data-create-error]").innerHTML = errorMessage(error);
-        event.currentTarget.disabled = false;
+  if (form) {
+    formAction(form, async data => {
+      const file = form.elements.file.files[0];
+      const type = checkFile(file);
+      const settings = {
+        expires_at: requiredExpiry(data.get("expires_at")),
+        meal_type_ids: selectedMealTypeIds(data.getAll("meal_type_ids"), "Tick at least one meal type."),
+        event_name: String(data.get("event_name") ?? "").trim() || null,
+        department_id: !isSuperAdmin
+          ? context.user.department_id
+          : await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog })
+      };
+      const result = await api(`/visitor-batches/preview?${query({ filename: file.name })}`, { method: "POST", body: new Blob([file], { type }) });
+      if (!context.isCurrent()) return;
+      if (!result.valid) {
+        preview.innerHTML = `<div class="alert error" role="alert"><strong>${escape(result.errors.length)} problem${result.errors.length === 1 ? "" : "s"} found. Nothing was created.</strong> Correct the file and check it again.</div>${table(["Row", "Column", "Problem"], errorRows(result.errors), "Problems")}`;
+        return;
       }
-    };
-  });
+      preview.innerHTML = `<p><strong>${escape(result.row_count)} visitors</strong>, ${escape(result.email_count)} with an email address.</p>${previewTable(result.rows)}<div class="form-actions"><button type="button" class="button primary" id="create-visitor-batch">Create ${escape(result.row_count)} visitor QRs</button></div><div data-create-error></div>`;
+      preview.querySelector("#create-visitor-batch").onclick = async event => {
+        event.currentTarget.disabled = true;
+        try {
+          const created = await api("/visitor-batches", { method: "POST", body: { request_id: requestId(file), source_name: file.name, rows: result.rows, ...settings } });
+          notify(created.duplicate ? `This list was already created as batch ${created.batch_id}.` : `Batch ${created.batch_id} created.`);
+          preview.innerHTML = "";
+          form.reset();
+          await load();
+          await detail(created.batch_id);
+        } catch (error) {
+          preview.querySelector("[data-create-error]").innerHTML = errorMessage(error);
+          event.currentTarget.disabled = false;
+        }
+      };
+    });
+  }
   let rows = [];
   let cursor = null;
   let allowance = null;

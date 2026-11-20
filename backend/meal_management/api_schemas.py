@@ -129,7 +129,7 @@ class MasterQrInput(InputModel):
     phone: Annotated[str, Field(min_length=7, max_length=32)]
     meal_limit: Quantity
     meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
-    department_id: Identifier
+    department_id: Identifier | None = None
     event_name: Annotated[str, Field(max_length=150)] | None = None
     expires_at: datetime | None = None
 
@@ -164,7 +164,7 @@ class VisitorBatchInput(InputModel):
     rows: Annotated[list[VisitorRowInput], Field(min_length=1, max_length=200)]
     expires_at: datetime
     meal_type_ids: Annotated[list[Identifier], Field(min_length=1, max_length=50)]
-    department_id: Identifier
+    department_id: Identifier | None = None
     event_name: Annotated[str, Field(max_length=150)] | None = None
 
 
@@ -300,10 +300,11 @@ class CatalogActiveInput(InputModel):
 class StaffUpdateInput(InputModel):
     display_name: Name
     email: Annotated[str, Field(min_length=3, max_length=254)]
+    department_id: Identifier | None = None
 
 
 class StaffRolesInput(InputModel):
-    roles: Annotated[list[Literal["ADMIN", "WAITER", "AUDITOR"]], Field(min_length=1, max_length=3)]
+    roles: Annotated[list[Literal["SUPER_ADMIN", "ADMIN"]], Field(min_length=1, max_length=1)]
 
 
 class MealTypeIdsInput(InputModel):
@@ -342,7 +343,8 @@ class StaffInput(InputModel):
     display_name: Name
     email: Annotated[str, Field(min_length=3, max_length=254)]
     password: SecretStr
-    roles: Annotated[list[Literal["ADMIN", "WAITER", "AUDITOR"]], Field(min_length=1, max_length=3)]
+    roles: Annotated[list[Literal["SUPER_ADMIN", "ADMIN"]], Field(min_length=1, max_length=1)]
+    department_id: Identifier | None = None
 
 
 class ActiveInput(InputModel):

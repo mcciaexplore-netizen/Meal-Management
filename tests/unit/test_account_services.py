@@ -38,7 +38,7 @@ class AccountServiceTests(unittest.TestCase):
         self.tx.now.return_value = datetime(2026, 9, 9, 12, 0)
         self.db = TransactionDatabase(self.tx)
         self.context = ServerContext(generate_token())
-        self.actor = Actor(7, frozenset({"ADMIN"}))
+        self.actor = Actor(7, frozenset({"SUPER_ADMIN"}))
 
     def test_staff_roles_reject_unrecognized_values_before_database_access(self):
         service = StaffService(self.db)
@@ -81,11 +81,11 @@ class AccountServiceTests(unittest.TestCase):
             {"id": 7, "is_active": True},
             {"total": 1},
         ]
-        self.tx.all.return_value = [{"role_code": "ADMIN"}]
+        self.tx.all.return_value = [{"role_code": "SUPER_ADMIN"}]
         with patch("meal_management.accounts.require_actor", return_value=self.actor):
             with self.assertRaises(DomainError) as error:
-                StaffService(self.db).set_roles(self.context, 7, ["WAITER"])
-        self.assertEqual(error.exception.code, "LAST_ACTIVE_ADMIN")
+                StaffService(self.db).set_roles(self.context, 7, ["ADMIN"])
+        self.assertEqual(error.exception.code, "LAST_ACTIVE_SUPER_ADMIN")
         self.tx.execute.assert_not_called()
         self.assertTrue(self.db.rolled_back)
 
@@ -107,7 +107,7 @@ class AccountServiceTests(unittest.TestCase):
         with patch("meal_management.accounts.require_actor", return_value=self.actor):
             result = StaffService(self.db).current(self.context)
         self.assertEqual(result["staff_id"], 7)
-        self.assertEqual(result["roles"], ["ADMIN"])
+        self.assertEqual(result["roles"], ["SUPER_ADMIN"])
         self.assertEqual(self.tx.one.call_args.args[1], (7,))
         self.assertNotIn("password", self.tx.one.call_args.args[0])
         self.assertTrue(self.db.committed)
@@ -151,7 +151,7 @@ class AccountServiceTests(unittest.TestCase):
         self.assertTrue(self.db.rolled_back)
 
     def test_first_human_admin_can_bootstrap_after_scanner_setup(self):
-        self.tx.one.side_effect = [{"name": "bootstrap"}, None, {"code": "ADMIN"}]
+        self.tx.one.side_effect = [{"name": "bootstrap"}, None, {"code": "SUPER_ADMIN"}]
         self.tx.insert.return_value = 7
         with patch("meal_management.accounts.hash_password", return_value="secure-encoded"):
             identifier = StaffService(self.db).bootstrap_admin(
@@ -196,7 +196,7 @@ class EmployeeQrServiceTests(unittest.TestCase):
         self.qr = QrService(self.db, self.vault, self.renderer)
         self.employees = EmployeeService(self.db, self.qr)
         self.context = ServerContext(generate_token())
-        self.actor = Actor(7, frozenset({"ADMIN"}))
+        self.actor = Actor(7, frozenset({"SUPER_ADMIN"}))
         self.employee = {
             "id": 41,
             "full_name": "Asha Rao",

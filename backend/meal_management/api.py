@@ -29,7 +29,7 @@ from .http_security import DatabaseLoginLimiter, SecurityMiddleware, csrf_token,
 from .models import ScanInput, ServerContext
 from .paging import CURSOR_PATTERN
 from .meal_export import XLSX_TYPE, MealReportExport
-from .visitor_batches import VisitorBatchService
+from .visitor_batches import VisitorBatchService, generate_visitor_sample_csv, generate_visitor_sample_excel
 from .queries import QueryService
 from .runtime import RuntimeSettings
 from .scan_receipts import ScanReceiptService
@@ -103,14 +103,20 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         request.state.identity = identity
         return identity
 
+    def super_admin(request: Request, identity=Depends(current)):
+        if "SUPER_ADMIN" not in identity["roles"]:
+            raise DomainError("ROLE_REQUIRED")
+        csrf_guard(request)
+        return context(request)
+
     def admin(request: Request, identity=Depends(current)):
-        if "ADMIN" not in identity["roles"]:
+        if not {"SUPER_ADMIN", "ADMIN"}.intersection(identity["roles"]):
             raise DomainError("ROLE_REQUIRED")
         csrf_guard(request)
         return context(request)
 
     def waiter(request: Request, identity=Depends(current)):
-        if not {"ADMIN", "WAITER"}.intersection(identity["roles"]):
+        if not {"SUPER_ADMIN", "ADMIN", "WAITER"}.intersection(identity["roles"]):
             raise DomainError("ROLE_REQUIRED")
         csrf_guard(request)
         return context(request)
@@ -202,7 +208,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def catalog(ctx=Depends(authenticated), identity=Depends(current)):
         return {
             **app.state.queries.catalog(ctx),
-            "development_test_data": development_enabled and "ADMIN" in identity["roles"],
+            "development_test_data": development_enabled and bool({"ADMIN", "SUPER_ADMIN"}.intersection(identity["roles"])),
         }
 
     def development_data():
@@ -222,31 +228,31 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         })
 
     @app.post("/api/catalog/departments", status_code=201)
-    def department_create(body: DepartmentInput, ctx=Depends(admin)):
+    def department_create(body: DepartmentInput, ctx=Depends(super_admin)):
         return {"id": services.employees.create_department(ctx, body.name)}
 
     @app.post("/api/catalog/locations", status_code=201)
-    def location_create(body: CatalogInput, ctx=Depends(admin)):
+    def location_create(body: CatalogInput, ctx=Depends(super_admin)):
         return {"id": services.catalog.create_location(ctx, body.code, body.name)}
 
     @app.post("/api/catalog/meal-types", status_code=201)
-    def meal_type_create(body: CatalogInput, ctx=Depends(admin)):
+    def meal_type_create(body: CatalogInput, ctx=Depends(super_admin)):
         return {"id": services.catalog.create_meal_type(ctx, body.code, body.name)}
 
     @app.post("/api/catalog/scanners", status_code=201)
-    def scanner_create(body: ScannerInput, ctx=Depends(admin)):
+    def scanner_create(body: ScannerInput, ctx=Depends(super_admin)):
         return {"id": services.catalog.create_scanner(ctx, body.code, body.name, body.location_id)}
 
     @app.patch("/api/catalog/departments/{department_id}")
-    def department_update(department_id: PathIdentifier, body: DepartmentInput, ctx=Depends(admin)):
+    def department_update(department_id: PathIdentifier, body: DepartmentInput, ctx=Depends(super_admin)):
         return services.catalog.update_department(ctx, department_id, body.name)
 
     @app.get("/api/catalog/departments/{department_id}/usage")
-    def department_usage(department_id: PathIdentifier, ctx=Depends(admin)):
+    def department_usage(department_id: PathIdentifier, ctx=Depends(super_admin)):
         return services.catalog.department_usage(ctx, department_id)
 
     @app.patch("/api/catalog/departments/{department_id}/active")
-    def department_active(department_id: PathIdentifier, body: CatalogActiveInput, ctx=Depends(admin)):
+    def department_active(department_id: PathIdentifier, body: CatalogActiveInput, ctx=Depends(super_admin)):
         return services.catalog.set_department_active(ctx, department_id, body.is_active, body.confirm)
 
     catalog_kinds = {
@@ -257,12 +263,12 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
 
     @app.patch("/api/catalog/{kind}/{item_id}")
     def catalog_update(kind: Literal["locations", "meal-types", "scanners"], item_id: PathIdentifier,
-                       body: CatalogUpdateInput, ctx=Depends(admin)):
+                       body: CatalogUpdateInput, ctx=Depends(super_admin)):
         return getattr(services.catalog, catalog_kinds[kind][0])(ctx, item_id, body.code, body.name)
 
     @app.patch("/api/catalog/{kind}/{item_id}/active")
     def catalog_active(kind: Literal["locations", "meal-types", "scanners"], item_id: PathIdentifier,
-                       body: CatalogActiveInput, ctx=Depends(admin)):
+                       body: CatalogActiveInput, ctx=Depends(super_admin)):
         if body.confirm:
             raise DomainError("INVALID_INPUT")
         return getattr(services.catalog, catalog_kinds[kind][1])(ctx, item_id, body.is_active)
@@ -272,24 +278,25 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
             raise DomainError("CLIENT_REFRESH_REQUIRED")
 
     @app.get("/api/staff", dependencies=[Depends(current_cursor)])
-    def staff_list(limit: Limit = 50, before: Cursor = None, ctx=Depends(admin)):
+    def staff_list(limit: Limit = 50, before: Cursor = None, ctx=Depends(super_admin)):
         return app.state.queries.staff(ctx, limit=limit, before=before)
 
     @app.post("/api/staff", status_code=201)
-    def staff_create(body: StaffInput, ctx=Depends(admin)):
-        return {"staff_id": services.staff.create_staff(ctx, body.display_name, body.email, body.password.get_secret_value(), body.roles)}
+    def staff_create(body: StaffInput, ctx=Depends(super_admin)):
+        return {"staff_id": services.staff.create_staff(ctx, body.display_name, body.email, body.password.get_secret_value(), body.roles, department_id=body.department_id)}
 
     @app.patch("/api/staff/{staff_id}")
-    def staff_update(staff_id: PathIdentifier, body: StaffUpdateInput, ctx=Depends(admin)):
-        return services.staff.update(ctx, staff_id, body.display_name, body.email)
+    def staff_update(staff_id: PathIdentifier, body: StaffUpdateInput, ctx=Depends(super_admin)):
+        values = body.model_dump(exclude_unset=True)
+        return services.staff.update(ctx, staff_id, **values)
 
     @app.patch("/api/staff/{staff_id}/roles")
-    def staff_roles(staff_id: PathIdentifier, body: StaffRolesInput, ctx=Depends(admin)):
+    def staff_roles(staff_id: PathIdentifier, body: StaffRolesInput, ctx=Depends(super_admin)):
         services.staff.set_roles(ctx, staff_id, body.roles)
         return {"staff_id": staff_id, "roles": sorted(set(body.roles))}
 
     @app.patch("/api/staff/{staff_id}/active")
-    def staff_active(staff_id: PathIdentifier, body: ActiveInput, ctx=Depends(admin)):
+    def staff_active(staff_id: PathIdentifier, body: ActiveInput, ctx=Depends(super_admin)):
         services.staff.set_active(ctx, staff_id, body.is_active)
         return {"staff_id": staff_id, "is_active": body.is_active}
 
@@ -307,7 +314,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return services.employees.set_meal_types(ctx, employee_id, body.meal_type_ids)
 
     @app.post("/api/meals/{meal_id}/meal-type")
-    def meal_type_correction(meal_id: PathIdentifier, body: MealTypeCorrectionInput, ctx=Depends(admin)):
+    def meal_type_correction(meal_id: PathIdentifier, body: MealTypeCorrectionInput, ctx=Depends(super_admin)):
         return services.meals.correct_meal_type(ctx, meal_id, body.meal_type_id, body.reason)
 
     @app.post("/api/employees/bulk", status_code=201)
@@ -322,15 +329,15 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return await run_in_threadpool(services.employees.read_import_file, ctx, data, content_type, filename)
 
     @app.post("/api/employees/meal-types/preview")
-    def employee_meal_types_preview(body: BulkMealTypesInput, ctx=Depends(admin)):
+    def employee_meal_types_preview(body: BulkMealTypesInput, ctx=Depends(super_admin)):
         return services.employees.preview_meal_types_bulk(ctx, body.employee_ids, body.meal_type_ids)
 
     @app.post("/api/employees/meal-types")
-    def employee_meal_types_bulk(body: BulkMealTypesApplyInput, ctx=Depends(admin)):
+    def employee_meal_types_bulk(body: BulkMealTypesApplyInput, ctx=Depends(super_admin)):
         return services.employees.set_meal_types_bulk(ctx, body.employee_ids, body.meal_type_ids, body.expected_changes)
 
     @app.post("/api/employees/bulk-remove")
-    def employee_bulk_remove(body: BulkEmployeeRemovalInput, ctx=Depends(admin)):
+    def employee_bulk_remove(body: BulkEmployeeRemovalInput, ctx=Depends(super_admin)):
         return services.employees.archive_bulk(ctx, body.employee_ids, body.reason)
 
     @app.get("/api/employees/{employee_id}")
@@ -346,7 +353,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return app.state.queries.employee(ctx, employee_id)
 
     @app.delete("/api/employees/{employee_id}")
-    def employee_remove(employee_id: PathIdentifier, body: RemovalInput, ctx=Depends(admin)):
+    def employee_remove(employee_id: PathIdentifier, body: RemovalInput, ctx=Depends(super_admin)):
         services.employees.archive(ctx, employee_id, body.reason)
         return {"employee_id": employee_id, "removed": True}
 
@@ -440,8 +447,17 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return app.state.queries.master_qrs(ctx, limit=limit, before=before)
 
     @app.post("/api/master-qrs", status_code=201)
-    def master_create(body: MasterQrInput, ctx=Depends(admin)):
-        issued = services.qr.issue_master(ctx, expires_at=body.expires_at, **body.model_dump(exclude={"expires_at"}))
+    def master_create(body: MasterQrInput, ctx=Depends(admin), identity=Depends(current)):
+        values = body.model_dump(exclude={"expires_at", "department_id"})
+        if "SUPER_ADMIN" not in identity["roles"]:
+            if identity.get("department_id") is None:
+                raise DomainError("ADMIN_DEPARTMENT_REQUIRED")
+            values["department_id"] = identity["department_id"]
+        else:
+            if body.department_id is None:
+                raise HTTPException(status_code=422, detail="INVALID_INPUT")
+            values["department_id"] = body.department_id
+        issued = services.qr.issue_master(ctx, expires_at=body.expires_at, **values)
         return qr_response(ctx, issued.qr_id)
 
     def master_check(ctx, qr_id):
@@ -456,13 +472,40 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return qr_response(ctx, qr_id)
 
     @app.post("/api/master-qrs/{qr_id}/replace")
-    def master_replace(qr_id: PathIdentifier, body: MasterQrInput, ctx=Depends(admin)):
-        issued = services.qr.replace_master(ctx, qr_id, expires_at=body.expires_at, **body.model_dump(exclude={"expires_at"}))
+    def master_replace(qr_id: PathIdentifier, body: MasterQrInput, ctx=Depends(admin), identity=Depends(current)):
+        values = body.model_dump(exclude={"expires_at", "department_id"})
+        if "SUPER_ADMIN" not in identity["roles"]:
+            if identity.get("department_id") is None:
+                raise DomainError("ADMIN_DEPARTMENT_REQUIRED")
+            values["department_id"] = identity["department_id"]
+        else:
+            if body.department_id is None:
+                raise DomainError("INVALID_DEPARTMENT_ID")
+            values["department_id"] = body.department_id
+        issued = services.qr.replace_master(ctx, qr_id, expires_at=body.expires_at, **values)
         return qr_response(ctx, issued.qr_id)
 
     @app.post("/api/master-qrs/{qr_id}/email")
     def master_email(qr_id: PathIdentifier, body: VisitorEmailInput, ctx=Depends(admin)):
         return app.state.email_actions.send_visitor(ctx, qr_id, app.state.visitor_batches)
+
+    @app.get("/api/visitor-batches/sample.xlsx")
+    def visitor_sample_excel(ctx=Depends(admin)):
+        content = generate_visitor_sample_excel()
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="visitor-import-sample.xlsx"'},
+        )
+
+    @app.get("/api/visitor-batches/sample.csv")
+    def visitor_sample_csv(ctx=Depends(admin)):
+        content = generate_visitor_sample_csv()
+        return Response(
+            content=content,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="visitor-import-sample.csv"'},
+        )
 
     @app.post("/api/visitor-batches/preview")
     async def visitor_batch_preview(request: Request, filename: Annotated[str, Query(min_length=1, max_length=255)],
@@ -472,10 +515,18 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return await run_in_threadpool(app.state.visitor_batches.preview, ctx, data, content_type, filename)
 
     @app.post("/api/visitor-batches", status_code=201)
-    def visitor_batch_create(body: VisitorBatchInput, ctx=Depends(admin)):
+    def visitor_batch_create(body: VisitorBatchInput, ctx=Depends(admin), identity=Depends(current)):
+        if "SUPER_ADMIN" not in identity["roles"]:
+            if identity.get("department_id") is None:
+                raise DomainError("ADMIN_DEPARTMENT_REQUIRED")
+            department_id = identity["department_id"]
+        else:
+            if body.department_id is None:
+                raise HTTPException(status_code=422, detail="INVALID_INPUT")
+            department_id = body.department_id
         rows = [row.model_dump() for row in body.rows]
         return app.state.visitor_batches.create(
-            ctx, body.request_id, rows, body.expires_at, body.meal_type_ids, body.department_id,
+            ctx, body.request_id, rows, body.expires_at, body.meal_type_ids, department_id,
             event_name=body.event_name, source_name=body.source_name,
         )
 
@@ -515,15 +566,15 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
         return {"authorization_id": authorization_id, "revoked": True}
 
     @app.get("/api/scanner-phones")
-    def scanner_phone_list(ctx=Depends(admin)):
+    def scanner_phone_list(ctx=Depends(super_admin)):
         return app.state.scanner_phones.list(ctx)
 
     @app.post("/api/scanner-phones", status_code=201)
-    def scanner_phone_code(body: ScannerCodeInput, ctx=Depends(admin)):
+    def scanner_phone_code(body: ScannerCodeInput, ctx=Depends(super_admin)):
         return app.state.scanner_phones.create_code(ctx, body.label, body.active_until)
 
     @app.post("/api/scanner-phones/{phone_id}/revoke")
-    def scanner_phone_revoke(phone_id: PathIdentifier, ctx=Depends(admin)):
+    def scanner_phone_revoke(phone_id: PathIdentifier, ctx=Depends(super_admin)):
         return app.state.scanner_phones.revoke(ctx, phone_id)
 
     @app.post("/api/scan-app/read")
@@ -562,7 +613,7 @@ def create_app(services=None, runtime=None, queries=None, storage=None, limiter=
     def meal_history_export(start: Annotated[date, Query(alias="from")], through: date,
                             department_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
                             employee_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None,
-                            meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(admin)):
+                            meal_type_id: Annotated[int | None, Query(gt=0, le=2**64 - 1)] = None, ctx=Depends(super_admin)):
         result = app.state.meal_export.export(ctx, start, through, employee_id=employee_id,
                                               department_id=department_id, meal_type_id=meal_type_id)
         return FileResponse(result["path"], media_type=XLSX_TYPE, filename=result["filename"],

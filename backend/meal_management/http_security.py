@@ -102,6 +102,8 @@ def error_body(code, request_id=None):
         "SHARED_SCANNER_SETTING_PROTECTED": "The Meal Scanner uses this item. You can rename it, but not change its code or deactivate it.",
         "SCANNER_ACCOUNT_PROTECTED": "The built-in Meal Scanner account cannot be changed.",
         "LAST_ACTIVE_ADMIN": "At least one active administrator must remain.",
+        "LAST_ACTIVE_SUPER_ADMIN": "At least one active super administrator must remain.",
+        "ADMIN_DEPARTMENT_REQUIRED": "Your administrator account has no department assigned. Ask a super admin to assign a department before creating visitor QRs.",
         "SCANNER_PHONE_ALREADY_REVOKED": "That scanner phone or code is already revoked.",
         "REAL_EMAIL_NOT_AUTHORIZED": "Email sending is disabled. An administrator must enable the configured email provider before sending.",
         "EMAIL_APPROVAL_REQUIRED": "Approve this bulk email before sending it.",
@@ -114,7 +116,7 @@ def error_body(code, request_id=None):
 def status_for(code):
     if code in {"AUTHENTICATION_REQUIRED", "INVALID_CREDENTIALS", "STAFF_INACTIVE", "SESSION_IDLE_EXPIRED", "SCANNER_BROWSER_REQUIRED", "SCANNER_ACTIVATION_REQUIRED", "SCANNER_ACTIVATION_INVALID"}:
         return 401
-    if code in {"ROLE_REQUIRED", "FORBIDDEN", "CSRF_REJECTED", "ORIGIN_REJECTED"}:
+    if code in {"ROLE_REQUIRED", "FORBIDDEN", "CSRF_REJECTED", "ORIGIN_REJECTED", "ADMIN_DEPARTMENT_REQUIRED"}:
         return 403
     if code in {"RATE_LIMITED", "SCANNER_RATE_LIMITED"}:
         return 429

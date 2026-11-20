@@ -78,7 +78,7 @@ class MealTypeApiTests(ApiTestCase):
         return self.client.patch(path, json=body, headers=self.harness.headers())
 
     def test_admin_corrects_meal_types_and_sets_eligibility(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         response = self.harness.post("/api/meals/9/meal-type", json={"meal_type_id": 3, "reason": "Wrong service chosen"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.harness.services.meals.correct_meal_type.call_args.args[1:], (9, 3, "Wrong service chosen"))
@@ -94,6 +94,8 @@ class MealTypeApiTests(ApiTestCase):
         self.assert_error(self.harness.post("/api/meals/9/meal-type", json={"meal_type_id": 3, "reason": "Same"}), 400, "MEAL_TYPE_UNCHANGED")
 
     def test_waiters_cannot_correct_meals_or_change_eligibility(self):
+        self.harness.login("admin")
+        self.assert_error(self.harness.post("/api/meals/9/meal-type", json={"meal_type_id": 3, "reason": "x"}), 403, "ROLE_REQUIRED")
         self.harness.login("waiter")
         self.assert_error(self.harness.post("/api/meals/9/meal-type", json={"meal_type_id": 3, "reason": "x"}), 403, "ROLE_REQUIRED")
         self.assert_error(self.patch("/api/employees/7/meal-types", {"meal_type_ids": [3]}), 403, "ROLE_REQUIRED")

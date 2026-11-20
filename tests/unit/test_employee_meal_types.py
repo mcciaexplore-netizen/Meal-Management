@@ -41,7 +41,7 @@ class BulkMealTypeInputTests(unittest.TestCase):
 
 class BulkMealTypeApiTests(ApiTestCase):
     def test_routes_pass_selection_and_previewed_count(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         employees = self.harness.services.employees
         employees.preview_meal_types_bulk.return_value = {"selected": 2, "changing": 1, "unchanged": 1, "examples": []}
         employees.set_meal_types_bulk.return_value = {"selected": 2, "changed": 1, "meal_type_ids": [2, 4]}
@@ -53,7 +53,7 @@ class BulkMealTypeApiTests(ApiTestCase):
         self.assertEqual(employees.set_meal_types_bulk.call_args.args[1:], ([7, 8], [2, 4], 1))
 
     def test_inputs_are_bounded_and_the_count_must_be_sent(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         for path, body in (
             ("/api/employees/meal-types/preview", {"employee_ids": list(range(1, 502)), "meal_type_ids": [2]}),
             ("/api/employees/meal-types/preview", {"employee_ids": [1], "meal_type_ids": []}),
@@ -65,14 +65,17 @@ class BulkMealTypeApiTests(ApiTestCase):
         self.harness.services.employees.set_meal_types_bulk.assert_not_called()
 
     def test_stale_preview_is_a_conflict_and_waiters_are_refused(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         self.harness.services.employees.set_meal_types_bulk.side_effect = DomainError("EMPLOYEE_MEAL_TYPES_COUNT_CHANGED")
         response = self.harness.post("/api/employees/meal-types", json={"employee_ids": [1], "meal_type_ids": [2], "expected_changes": 1})
         self.assert_error(response, 409, "EMPLOYEE_MEAL_TYPES_COUNT_CHANGED")
         self.assertIn("Preview again", response.text)
-        self.harness.login("waiter")
-        for path, body in (("/api/employees/meal-types/preview", {"employee_ids": [1], "meal_type_ids": [2]}),
-                           ("/api/employees/meal-types", {"employee_ids": [1], "meal_type_ids": [2], "expected_changes": 0})):
+        for role in ("waiter", "admin"):
+            self.harness.login(role)
+            for path, body in (("/api/employees/meal-types/preview", {"employee_ids": [1], "meal_type_ids": [2]}),
+                               ("/api/employees/meal-types", {"employee_ids": [1], "meal_type_ids": [2], "expected_changes": 0})):
+                with self.subTest(role=role, path=path):
+                    self.assert_error(self.harness.post(path, json=body), 403, "ROLE_REQUIRED")
             self.assert_error(self.harness.post(path, json=body), 403, "ROLE_REQUIRED")
 
 

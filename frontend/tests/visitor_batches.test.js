@@ -45,7 +45,7 @@ test("the visitor QR form asks for a department, an optional event and an option
   assert.match(screens, /selectField\("Department", "department_id", employeeDepartmentOptions\(context\.catalog\?\.departments/);
   assert.match(screens, /field\("Event name \(optional\)", "event_name"/);
   assert.match(screens, /field\("Email \(optional\)", "email", values\?\.email \?\? "", "email", 'maxlength="254"/);
-  assert.match(screens, /body\.department_id = await resolveEmployeeDepartment\(/);
+  assert.match(screens, /resolveEmployeeDepartment\(/);
   assert.match(screens, /<span>Department<\/span><strong>\$\{escape\(qr\.department_name/);
   assert.match(screens, /<span>Email status<\/span><strong>\$\{emailStatusBadge\(qr\)\}/);
   assert.match(screens, /api\(`\/master-qrs\/\$\{id\}\/email`, \{ method: "POST", body: \{ confirm: true \} \}\)/);
@@ -66,6 +66,9 @@ test("the bulk page previews first, confirms the count and sends only when email
   assert.match(page, /<td><span class="mono">\$\{escape\(batch\.id\)\}<\/span><span class="cell-subtitle">/);
   assert.match(page, /table\(\["Sr\. No\.", "Person", "Phone", "QR", "Email"\],/);
   assert.match(page, /emailStatusBadge\(person\)\}<\/span>\$\{emailActionLabel\(person\)/);
+  assert.match(page, /id="visitor-sample-excel">Download sample Excel<\/button>/);
+  assert.match(page, /id="visitor-sample-csv">Download sample CSV<\/button>/);
+  assert.match(page, /Your administrator account has no department assigned/);
   const app = await source("app.js");
   assert.match(app, /\["visitor-batches", \["Bulk visitor QRs", "qr", visitorBatches\]\]/);
 });

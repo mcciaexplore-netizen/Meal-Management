@@ -25,8 +25,15 @@ let disposeScreen = () => {};
 let navigationVersion = 0;
 
 function pageList() {
-  const pages = new Map(user.roles.includes("ADMIN") ? adminPages : []);
-  if (user.roles.includes("ADMIN") && catalog?.development_test_data === true) pages.set("test-data", ["Development QRs", "qr", developmentGallery]);
+  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
+  const isAdmin = isSuperAdmin || user.roles.includes("ADMIN");
+  if (!isAdmin) return new Map();
+  const pages = new Map(adminPages);
+  if (!isSuperAdmin) {
+    pages.delete("scanner-access");
+    pages.delete("settings");
+  }
+  if (catalog?.development_test_data === true) pages.set("test-data", ["Development QRs", "qr", developmentGallery]);
   return pages;
 }
 
@@ -52,7 +59,7 @@ async function openWorkspace() {
   try {
     application = await loadApplication(api);
     if (!user || version !== navigationVersion) return;
-    if (!user.roles.includes("ADMIN") && user.roles.includes("WAITER")) { window.location.replace(application.scanner_url); return; }
+    if (!user.roles.includes("ADMIN") && !user.roles.includes("SUPER_ADMIN") && user.roles.includes("WAITER")) { window.location.replace(application.scanner_url); return; }
     catalog = await api("/catalog");
   } catch (error) {
     if (!user || version !== navigationVersion) return;
@@ -64,7 +71,8 @@ async function openWorkspace() {
   if (version !== navigationVersion || !user) return;
   const pages = pageList();
   const initials = user.display_name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("");
-  root.innerHTML = `<div class="workspace"><aside class="sidebar"><a class="brand" href="#${pages.keys().next().value}">${icon("plate")}<span>Meal Office<span>STAFF WORKSPACE</span></span></a><div class="workspace-caption">WORKSPACE</div><nav aria-label="Main navigation">${[...pages].map(([key, [label, name]]) => `<a href="#${key}" data-page="${key}">${icon(name)}<span>${label}</span></a>`).join("")}<a href="${escape(application.scanner_url)}">${icon("scan")}<span>Open Meal Scanner</span></a></nav><div class="sidebar-bottom"><span class="avatar">${escape(initials)}</span><div><strong>${escape(user.display_name)}</strong><span>${user.roles.includes("ADMIN") ? "Administrator" : "Waiter"}</span></div><button class="icon-button" id="logout" aria-label="Sign out">${icon("logout")}</button></div></aside><div class="workspace-main"><header class="topbar"><span class="topbar-label">Office meal management</span><span class="date-label">${escape(new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date()))}</span></header><main id="main" tabindex="-1"></main><footer class="page-footer">Meal Office <span>Times shown in ${escape(Intl.DateTimeFormat().resolvedOptions().timeZone)}</span></footer></div></div>`;
+  const roleTitle = user.roles.includes("SUPER_ADMIN") ? "Super Administrator" : user.roles.includes("ADMIN") ? "Administrator" : "Waiter";
+  root.innerHTML = `<div class="workspace"><aside class="sidebar"><a class="brand" href="#${pages.keys().next().value}">${icon("plate")}<span>Meal Office<span>STAFF WORKSPACE</span></span></a><div class="workspace-caption">WORKSPACE</div><nav aria-label="Main navigation">${[...pages].map(([key, [label, name]]) => `<a href="#${key}" data-page="${key}">${icon(name)}<span>${label}</span></a>`).join("")}<a href="${escape(application.scanner_url)}">${icon("scan")}<span>Open Meal Scanner</span></a></nav><div class="sidebar-bottom"><span class="avatar">${escape(initials)}</span><div><strong>${escape(user.display_name)}</strong><span>${roleTitle}</span></div><button class="icon-button" id="logout" aria-label="Sign out">${icon("logout")}</button></div></aside><div class="workspace-main"><header class="topbar"><span class="topbar-label">Office meal management</span><span class="date-label">${escape(new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date()))}</span></header><main id="main" tabindex="-1"></main><footer class="page-footer">Meal Office <span>Times shown in ${escape(Intl.DateTimeFormat().resolvedOptions().timeZone)}</span></footer></div></div>`;
   document.getElementById("logout").onclick = logout;
   await navigate();
 }

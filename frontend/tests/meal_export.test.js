@@ -38,7 +38,8 @@ test("the button is busy while preparing and shows a friendly error", async () =
 
 test("Meal history has the Export to Excel button wired to the filter form", async () => {
   const screens = await readFile(new URL("../src/screens.js", import.meta.url), "utf8");
-  assert.match(screens, /type="submit">Apply filters<\/button><button class="button" type="button" id="export-report">Export to Excel<\/button>/);
+  assert.match(screens, /id="export-report">Export to Excel<\/button>/);
+  assert.match(screens, /isSuperAdmin/);
   assert.match(screens, /downloadMealReport\(form, event\.currentTarget, form\.querySelector\("\[data-form-error\]"\)\)/);
   const source = await readFile(new URL("../src/meal_export.js", import.meta.url), "utf8");
   assert.match(source, /request\(exportPath\(data\), \{ responseType: "blob" \}\)/);

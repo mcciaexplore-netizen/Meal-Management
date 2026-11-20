@@ -95,7 +95,7 @@ class FakeSession:
             lines = self.direct + (self.from_role if " USING " in sql else [])
             return [{"Grants for " + self.user: line} for line in lines]
         if sql.startswith("SELECT version, status FROM schema_migrations"):
-            return [{"version": version, "status": "APPLIED"} for version in range(1, 17)]
+            return [{"version": version, "status": "APPLIED"} for version in range(1, 18)]
         if sql.startswith("SELECT role_code FROM staff_account_roles"):
             return [{"role_code": code} for code in self.staff_roles.get(params[0], [])]
         if sql.startswith("SELECT id, label, source"):
@@ -140,8 +140,8 @@ class PreflightTests(unittest.TestCase):
             ({"operator": "someone@mcciapune.in"}, "RESET_OPERATOR_NOT_FOUND", "no staff account has the email someone@mcciapune.in"),
             ({"staff": staff(is_active=0)}, "RESET_OPERATOR_INACTIVE", "staff account 2 (mcciaexplore@gmail.com) is inactive"),
             ({"staff": staff(is_scanner=1)}, "RESET_OPERATOR_IS_SCANNER", "is a scanner account"),
-            ({"staff_roles": {1: ["WAITER"], 2: ["AUDITOR"]}}, "RESET_OPERATOR_NOT_ADMIN", "has roles AUDITOR, not ADMIN"),
-            ({"staff_roles": {1: ["ADMIN"]}}, "RESET_OPERATOR_NOT_ADMIN", "has roles none, not ADMIN"),
+            ({"staff_roles": {1: ["WAITER"], 2: ["AUDITOR"]}}, "RESET_OPERATOR_NOT_ADMIN", "has roles AUDITOR, not ADMIN or SUPER_ADMIN"),
+            ({"staff_roles": {1: ["ADMIN"]}}, "RESET_OPERATOR_NOT_ADMIN", "has roles none, not ADMIN or SUPER_ADMIN"),
         )
         for session, code, detail in cases:
             with self.subTest(code=code), self.assertRaises(ResetRefused) as caught:

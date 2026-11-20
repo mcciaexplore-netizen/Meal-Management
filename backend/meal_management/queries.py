@@ -134,16 +134,17 @@ class QueryService:
         filters, params = ["s.is_scanner = 0"], []
         order = _where(filters, params, "s.created_at", "s.id", cursor)
         with self.db.transaction() as tx:
-            require_actor(tx, context, {"ADMIN"})
+            require_actor(tx, context, {"SUPER_ADMIN"})
             roles = (
                 "STRING_AGG(r.role_code, ',' ORDER BY r.role_code)" if is_postgres(tx)
                 else "GROUP_CONCAT(r.role_code ORDER BY r.role_code SEPARATOR ',')"
             )
             rows = tx.all(
-                "SELECT s.id, s.display_name, s.email, s.is_active, s.created_at, "
+                "SELECT s.id, s.display_name, s.email, s.is_active, s.department_id, d.name AS department_name, s.created_at, "
                 + roles + " AS role_codes "
                 "FROM staff_accounts s LEFT JOIN staff_account_roles r ON r.staff_id = s.id "
-                "WHERE " + " AND ".join(filters) + " GROUP BY s.id, s.display_name, s.email, s.is_active, s.created_at"
+                "LEFT JOIN departments d ON d.id = s.department_id "
+                "WHERE " + " AND ".join(filters) + " GROUP BY s.id, s.display_name, s.email, s.is_active, s.department_id, d.name, s.created_at"
                 + order,
                 (*params, limit + 1),
             )

@@ -469,3 +469,68 @@ class VisitorBatchService:
                           after={"qr_id": qr_id, "previous_email_id": latest["id"]})
             self.qr.email_queue.approve_visitor(tx, actor, email_id, qr_id)
         return email_id
+
+
+def generate_visitor_sample_excel():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws_visitors = wb.active
+    ws_visitors.title = "Visitors"
+
+    bold = Font(bold=True)
+    headers = list(HEADERS)
+    ws_visitors.append(headers)
+    for col_num in range(1, len(headers) + 1):
+        cell = ws_visitors.cell(row=1, column=col_num)
+        cell.font = bold
+
+    example_rows = [
+        ("1", "Example Visitor 1 (Sample)", "Example Corp (Sample)", "+91 98765 43210", "example1@example.com"),
+        ("2", "Example Visitor 2 (Sample)", "Example Corp (Sample)", "+91 98765 43211", "example2@example.com"),
+    ]
+    for row_idx, values in enumerate(example_rows, start=2):
+        for col_idx, val in enumerate(values, start=1):
+            cell = ws_visitors.cell(row=row_idx, column=col_idx, value=str(val))
+            cell.number_format = "@"
+
+    ws_instructions = wb.create_sheet(title="Instructions")
+    instructions = [
+        ["Bulk Visitor Import Instructions"],
+        [""],
+        ["1. Row Limit: You can import up to 200 visitor rows in a single file."],
+        ["2. Required Columns: The first sheet ('Visitors') must keep the exact headers in row 1: Sr. No., Person Name, Company Name, Phone, Email."],
+        ["3. Sr. No.: Must be sequential positive whole numbers (1, 2, 3...) formatted as text or plain numbers."],
+        ["4. Phone Rules: Must be a valid 10-digit Indian phone number or international format (+91)."],
+        ["5. Email Rules: Email is optional for each person. When provided, it must be a valid email address."],
+        ["6. Sample Addresses: example.com addresses shown in the sample rows are for illustration only and must be replaced with real visitor email addresses."],
+        ["7. Duplicates Rejected: Duplicate Sr. No., duplicate Phone numbers, and duplicate Email addresses within the file are rejected."],
+        ["8. Plain Values: Values must be plain text without Excel formulas."],
+    ]
+    for r_idx, row in enumerate(instructions, start=1):
+        for c_idx, val in enumerate(row, start=1):
+            cell = ws_instructions.cell(row=r_idx, column=c_idx, value=val)
+            if r_idx == 1:
+                cell.font = bold
+
+    ws_visitors.column_dimensions["A"].width = 10
+    ws_visitors.column_dimensions["B"].width = 30
+    ws_visitors.column_dimensions["C"].width = 28
+    ws_visitors.column_dimensions["D"].width = 18
+    ws_visitors.column_dimensions["E"].width = 30
+    ws_instructions.column_dimensions["A"].width = 110
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    return stream.getvalue()
+
+
+def generate_visitor_sample_csv():
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow(list(HEADERS))
+    writer.writerow(["1", "Example Visitor 1 (Sample)", "Example Corp (Sample)", "+91 98765 43210", "example1@example.com"])
+    writer.writerow(["2", "Example Visitor 2 (Sample)", "Example Corp (Sample)", "+91 98765 43211", "example2@example.com"])
+    return output.getvalue().encode("utf-8")
+
