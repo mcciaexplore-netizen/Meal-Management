@@ -7,8 +7,9 @@ import { canApproveEmail, canPreviewEmail, canProcessEmail, canSendEmail, emailD
 import { BulkEmailOperation, SingleEmailOperation } from "./email_actions.js";
 import { showEmployeeImport } from "./employee_import.js";
 import { openBulkMealTypes } from "./employee_meal_types.js";
+import { downloadMealReport } from "./meal_export.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
-import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
+import { bindCatalogPanel, catalogKinds, isActive, staffDepartmentField, staffDepartmentId, staffEditDialog } from "./office_settings.js";
 import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds, visitorMealTypeLines } from "./meal_types.js";
 import { SENDING_DISABLED, confirmSendText, departmentEventLine, emailActionLabel, emailStatusBadge } from "./visitor_qrs.js";
 
@@ -35,7 +36,9 @@ function employeeForm(catalog, employee = {}) {
 }
 
 export async function employees(target, context) {
-  target.innerHTML = `${heading("PEOPLE & ACCESS", "Employees", "Personal reusable QRs. A separate record for every meal.", '<div class="inline-actions"><button class="button" id="set-meal-types">Set meal types</button><button class="button" id="import-employees">Import employees</button><button class="button primary" id="new-employee">' + icon("plus") + ' Add employee</button></div>')}<section class="panel"><form id="employee-filters" class="filter-bar"><label class="grow">Search employees<input name="q" type="search" placeholder="Name, email, or employee code" maxlength="150"></label><label>Status<select name="active"><option value="">All employees</option><option value="true" selected>Active</option><option value="false">Inactive</option></select></label><button class="button" type="submit">Apply</button></form><div id="employee-list">${loading()}</div><div class="pagination" id="employee-pagination"></div></section>`;
+  const isSuperAdmin = (context.user.roles ?? []).includes("SUPER_ADMIN");
+  const actionsHtml = '<div class="inline-actions">' + (isSuperAdmin ? '<button class="button" id="set-meal-types">Set meal types</button>' : '') + '<button class="button" id="import-employees">Import employees</button><button class="button primary" id="new-employee">' + icon("plus") + ' Add employee</button></div>';
+  target.innerHTML = `${heading("PEOPLE & ACCESS", "Employees", "Personal reusable QRs. A separate record for every meal.", actionsHtml)}<section class="panel"><form id="employee-filters" class="filter-bar"><label class="grow">Search employees<input name="q" type="search" placeholder="Name, email, or employee code" maxlength="150"></label><label>Status<select name="active"><option value="">All employees</option><option value="true" selected>Active</option><option value="false">Inactive</option></select></label><button class="button" type="submit">Apply</button></form><div id="employee-list">${loading()}</div><div class="pagination" id="employee-pagination"></div></section>`;
   let cursor = null;
   let rows = [];
   let photoEditor = null;
@@ -51,10 +54,12 @@ export async function employees(target, context) {
     target.querySelectorAll('[data-action="employee-open"]').forEach(button => button.onclick = () => employeeDetail(Number(button.dataset.id), context, load));
   }
   formAction(target.querySelector("#employee-filters"), () => load());
-  target.querySelector("#set-meal-types").onclick = () => {
-    photoEditor?.dispose();
-    openBulkMealTypes(context, load);
-  };
+  if (isSuperAdmin) {
+    target.querySelector("#set-meal-types").onclick = () => {
+      photoEditor?.dispose();
+      openBulkMealTypes(context, load);
+    };
+  }
   target.querySelector("#import-employees").onclick = () => {
     photoEditor?.dispose();
     showEmployeeImport(context, load);
@@ -108,7 +113,9 @@ export async function employeeDetail(id, context, onChange) {
     const emailSettings = emailDeliverySettings(deliverySettings);
     const qr = qrResponse.qr;
     const noQr = qrResponse.error?.status === 404 || ["QR_NOT_FOUND", "ACTIVE_QR_NOT_FOUND"].includes(qrResponse.error?.code);
-    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div><div class="detail-section danger-zone"><h3>Remove employee</h3><p class="muted small">Removes the employee from administration, revokes their QR, and preserves historical audit records.</p><button class="button danger-outline" id="employee-remove">Remove employee</button></div></div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
+    const isSuperAdmin = (context.user.roles ?? []).includes("SUPER_ADMIN");
+    const removeSection = isSuperAdmin ? '<div class="detail-section danger-zone"><h3>Remove employee</h3><p class="muted small">Removes the employee from administration, revokes their QR, and preserves historical audit records.</p><button class="button danger-outline" id="employee-remove">Remove employee</button></div>' : '';
+    dialog.querySelector(".modal-content").innerHTML = `<div class="employee-detail"><div><div class="detail-identity"><span class="large-avatar">${escape(employee.full_name.slice(0, 1))}</span><div><h3>${escape(employee.full_name)}</h3><p class="muted small">${escape(employee.employee_code)} · ${employee.is_active ? "Active" : "Inactive"}</p></div></div><form id="employee-edit">${employeeForm(context.catalog, employee)}${formEnd("Save changes")}</form><div class="detail-section"><h3>Selfie photo</h3>${employee.selfie_object_key ? `<img class="employee-photo" src="/api/employees/${id}/photo" alt="${escape(employee.full_name)} employee photo">` : '<p class="muted small">No photo uploaded.</p>'}<form id="employee-photo"><label>Upload a photo<input type="file" name="photo" accept="image/jpeg,image/png" required></label><p class="field-help">JPG or PNG, up to ${employeePhotoLimitLabel(context.max_photo_bytes)}.</p>${formEnd("Save photo")}</form></div><div class="detail-section"><h3>Employee access</h3><p class="muted small">${employee.is_active ? "Deactivation prevents future employee meals. Existing meal history is retained." : "Reactivate this employee to enable eligible QR meals."}</p><button class="button ${employee.is_active ? "danger-outline" : ""}" id="employee-status">${employee.is_active ? "Deactivate employee" : "Reactivate employee"}</button></div>${removeSection}</div><div><section class="inset-panel"><h3>Personal employee QR</h3>${qr ? qrCard(qr) : noQr ? empty("No active QR", "Issue a replacement to restore QR access.", "qr") : errorMessage(qrResponse.error)}<div class="stack-actions">${qr?.svg ? '<button class="button" id="resend-qr">' + icon("mail") + ' Prepare email resend</button>' : ""}<button class="button" id="replace-qr">${qr ? "Replace QR" : "Issue QR"}</button>${qr && !qr.revoked_at ? '<button class="button danger-outline" id="revoke-qr">Revoke QR</button>' : ""}</div><p class="field-help">Treat this QR as a private credential. Replacing it invalidates the previous QR.</p></section><section class="detail-section"><h3>Email delivery</h3><p class="field-help">${escape(emailModeLabel(emailSettings))}</p><p class="field-help">${escape(emailModeDescription(emailSettings))}</p><div id="employee-email-history">${emailTable(list(queue), true, emailSettings, { single: true })}</div></section></div></div>`;
     formAction(dialog.querySelector("#employee-edit"), async data => {
       const mealTypeIds = selectedMealTypeIds(data.getAll("meal_type_ids"));
       const body = { employee_code: data.get("employee_code"), full_name: data.get("full_name"), email: data.get("email"), company_name: data.get("company_name"), phone: data.get("phone") };
@@ -131,12 +138,12 @@ export async function employeeDetail(id, context, onChange) {
       await onChange();
       await employeeDetail(id, context, onChange);
     });
-    dialog.querySelector("#employee-remove").onclick = () => removalDialog("Remove employee", `Remove ${employee.full_name}? Their QR will be revoked and they will disappear from the employee list.`, "Remove employee", async reason => {
+    dialog.querySelector("#employee-remove")?.addEventListener("click", () => removalDialog("Remove employee", `Remove ${employee.full_name}? Their QR will be revoked and they will disappear from the employee list.`, "Remove employee", async reason => {
       await api(`/employees/${id}`, { method: "DELETE", body: { reason } });
       closeModal();
       notify("Employee removed.");
       await onChange();
-    });
+    }));
     dialog.querySelector("#resend-qr")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;
       try {
@@ -190,7 +197,11 @@ export function visitorMealTypeChoices(mealTypes, values) {
 
 function masterRequestDialog(title, values, context, callback) {
   const mealTypes = context.catalog?.meal_types ?? [];
-  const dialog = modal(title, `<p class="muted">Create one QR for this visitor group. Each successful scan records one meal for the selected meal type and reduces that meal type's remaining allowance by one.</p><form><div class="form-grid">${field("Company Name", "company_name", values?.company_name ?? "", "text", 'required maxlength="150" autocomplete="organization"')}${field("POC Name", "contact_name", values?.contact_name ?? "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email (optional)", "email", values?.email ?? "", "email", 'maxlength="254" autocomplete="email"')}${field("Phone Number", "phone", values?.phone ?? "", "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Number of people", "meal_limit", values?.meal_limit ?? 1, "number", 'required min="1" max="65535" step="1"')}${field("Expiry, local time", "expires_at", "", "datetime-local")}${selectField("Department", "department_id", employeeDepartmentOptions(context.catalog?.departments ?? [], values?.department_id), values?.department_id ?? "")}${field("Event name (optional)", "event_name", values?.event_name ?? "", "text", 'maxlength="150"')}</div><p class="field-help">With an email, a draft is created; nothing is sent until you choose Email QR. Leave it blank to create no email.</p><p class="field-help">${VISITOR_ALLOWANCE_HELP} Number of people is the allowance for each ticked meal type.</p>${visitorMealTypeChoices(mealTypes, values)}<p class="field-help">The QR expires automatically once every ticked meal type is used up. You may also set an earlier date and time.</p>${formEnd("Generate master QR")}</form>`);
+  const isSuperAdmin = (context.user.roles ?? []).includes("SUPER_ADMIN");
+  const departmentField = !isSuperAdmin
+    ? `<label>Department<input type="text" value="${escape(context.user.department_name || 'Department')}" readonly><input type="hidden" name="department_id" value="${context.user.department_id}"></label>`
+    : selectField("Department", "department_id", employeeDepartmentOptions(context.catalog?.departments ?? [], values?.department_id), values?.department_id ?? "");
+  const dialog = modal(title, `<p class="muted">Create one QR for this visitor group. Each successful scan records one meal for the selected meal type and reduces that meal type's remaining allowance by one.</p><form><div class="form-grid">${field("Company Name", "company_name", values?.company_name ?? "", "text", 'required maxlength="150" autocomplete="organization"')}${field("POC Name", "contact_name", values?.contact_name ?? "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email (optional)", "email", values?.email ?? "", "email", 'maxlength="254" autocomplete="email"')}${field("Phone Number", "phone", values?.phone ?? "", "tel", 'required minlength="7" maxlength="32" autocomplete="tel"')}${field("Number of people", "meal_limit", values?.meal_limit ?? 1, "number", 'required min="1" max="65535" step="1"')}${field("Expiry, local time", "expires_at", "", "datetime-local")}${departmentField}${field("Event name (optional)", "event_name", values?.event_name ?? "", "text", 'maxlength="150"')}</div><p class="field-help">With an email, a draft is created; nothing is sent until you choose Email QR. Leave it blank to create no email.</p><p class="field-help">${VISITOR_ALLOWANCE_HELP} Number of people is the allowance for each ticked meal type.</p>${visitorMealTypeChoices(mealTypes, values)}<p class="field-help">The QR expires automatically once every ticked meal type is used up. You may also set an earlier date and time.</p>${formEnd("Generate master QR")}</form>`);
   formAction(dialog.querySelector("form"), async data => {
     const body = {
       company_name: data.get("company_name"),
@@ -202,7 +213,9 @@ function masterRequestDialog(title, values, context, callback) {
       event_name: String(data.get("event_name") ?? "").trim() || null,
       expires_at: optionalExpiry(data.get("expires_at"))
     };
-    body.department_id = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
+    body.department_id = !isSuperAdmin
+      ? context.user.department_id
+      : await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
     return callback(body);
   });
 }
@@ -216,7 +229,11 @@ export function visitorMealTypeCell(qr) {
 export async function masters(target, context) {
   let emailSettings = null;
   try { emailSettings = await api("/email-settings"); } catch { emailSettings = null; }
-  target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Visitor master QRs", "Create one limited QR for each visitor group.", '<button class="button primary" id="new-master">' + icon("plus") + ' Create visitor QR</button>')}<div class="info-banner">${icon("qr")}<span>Enter the visitor group details and number of people here. The scanner records one meal per scan and expires the QR after the final allowed meal.</span></div><section class="panel"><div id="master-list">${loading()}</div><div class="pagination" id="master-pagination"></div></section>`;
+  const isSuperAdmin = (context.user.roles ?? []).includes("SUPER_ADMIN");
+  const canCreate = isSuperAdmin || Boolean(context.user.department_id);
+  const actionBtn = canCreate ? '<button class="button primary" id="new-master">' + icon("plus") + ' Create visitor QR</button>' : '';
+  const blockBanner = !canCreate ? '<div class="alert warning" role="status">Your administrator account has no department assigned. Ask a super admin to assign a department before creating visitor QRs.</div>' : '';
+  target.innerHTML = `${heading("VISITOR MEAL ACCESS", "Visitor master QRs", "Create one limited QR for each visitor group.", actionBtn)}${blockBanner}<div class="info-banner">${icon("qr")}<span>Enter the visitor group details and number of people here. The scanner records one meal per scan and expires the QR after the final allowed meal.</span></div><section class="panel"><div id="master-list">${loading()}</div><div class="pagination" id="master-pagination"></div></section>`;
   let rows = [];
   let cursor = null;
   async function load(append = false) {
@@ -234,13 +251,16 @@ export async function masters(target, context) {
     try {
       const qr = await api(`/master-qrs/${id}`);
       if (!dialog.open) return;
-      dialog.querySelector(".modal-content").innerHTML = `${qrCard(qr)}<div class="detail-grid"><div><span>Company</span><strong>${escape(qr.company_name ?? "Legacy credential")}</strong></div><div><span>POC</span><strong>${escape(qr.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escape(qr.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escape(qr.phone ?? "—")}</strong></div><div><span>Department</span><strong>${escape(qr.department_name ?? NO_DEPARTMENT)}</strong></div><div><span>Event</span><strong>${escape(qr.event_name ?? "—")}</strong></div><div><span>Email status</span><strong>${emailStatusBadge(qr)}</strong></div><div><span>Number of people</span><strong>${escape(qr.meal_limit ?? "—")} per meal type</strong></div><div><span>Valid for</span><strong>${visitorMealTypeCell(qr)}</strong></div></div><p class="field-help">Each deliberate scan records one meal for the selected meal type. After every meal type is used up, this QR is expired automatically.</p><div class="stack-actions">${emailActionLabel(qr) ? `<button class="button primary" id="email-master" ${emailSettings?.sending_enabled ? "" : "disabled"}>${escape(emailActionLabel(qr))}</button>${emailSettings?.sending_enabled ? "" : `<p class="field-help">${escape(SENDING_DISABLED)}</p>`}` : ""}<button class="button" id="replace-master">Create another visitor QR</button>${!qr.revoked_at && !qr.exhausted_at ? '<button class="button danger-outline" id="revoke-master">Revoke master QR</button>' : ""}<a class="button primary" href="${escape(context.scanner_url)}">Open Meal Scanner</a></div>`;
-      dialog.querySelector("#replace-master").onclick = () => masterRequestDialog("Create another visitor QR", qr, context, async body => {
-        const result = await api("/master-qrs", { method: "POST", body });
-        notify("Visitor master QR created.");
-        await load();
-        await detail(result.qr_id ?? result.id);
-      });
+      const replaceBtn = canCreate ? '<button class="button" id="replace-master">Create another visitor QR</button>' : '';
+      dialog.querySelector(".modal-content").innerHTML = `${qrCard(qr)}<div class="detail-grid"><div><span>Company</span><strong>${escape(qr.company_name ?? "Legacy credential")}</strong></div><div><span>POC</span><strong>${escape(qr.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escape(qr.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escape(qr.phone ?? "—")}</strong></div><div><span>Department</span><strong>${escape(qr.department_name ?? NO_DEPARTMENT)}</strong></div><div><span>Event</span><strong>${escape(qr.event_name ?? "—")}</strong></div><div><span>Email status</span><strong>${emailStatusBadge(qr)}</strong></div><div><span>Number of people</span><strong>${escape(qr.meal_limit ?? "—")} per meal type</strong></div><div><span>Valid for</span><strong>${visitorMealTypeCell(qr)}</strong></div></div><p class="field-help">Each deliberate scan records one meal for the selected meal type. After every meal type is used up, this QR is expired automatically.</p><div class="stack-actions">${emailActionLabel(qr) ? `<button class="button primary" id="email-master" ${emailSettings?.sending_enabled ? "" : "disabled"}>${escape(emailActionLabel(qr))}</button>${emailSettings?.sending_enabled ? "" : `<p class="field-help">${escape(SENDING_DISABLED)}</p>`}` : ""}${replaceBtn}${!qr.revoked_at && !qr.exhausted_at ? '<button class="button danger-outline" id="revoke-master">Revoke master QR</button>' : ""}<a class="button primary" href="${escape(context.scanner_url)}">Open Meal Scanner</a></div>`;
+      if (canCreate) {
+        dialog.querySelector("#replace-master")?.addEventListener("click", () => masterRequestDialog("Create another visitor QR", qr, context, async body => {
+          const result = await api("/master-qrs", { method: "POST", body });
+          notify("Visitor master QR created.");
+          await load();
+          await detail(result.qr_id ?? result.id);
+        }));
+      }
       dialog.querySelector("#email-master")?.addEventListener("click", event => {
         const holder = document.createElement("div");
         holder.className = "inline-confirm";
@@ -267,12 +287,14 @@ export async function masters(target, context) {
       }));
     } catch (error) { if (dialog.open) dialog.querySelector(".modal-content").innerHTML = errorMessage(error); }
   }
-  target.querySelector("#new-master").onclick = () => masterRequestDialog("Create visitor master QR", null, context, async body => {
-    const result = await api("/master-qrs", { method: "POST", body });
-    notify("Visitor master QR created.");
-    await load();
-    await detail(result.qr_id ?? result.id);
-  });
+  if (canCreate) {
+    target.querySelector("#new-master")?.addEventListener("click", () => masterRequestDialog("Create visitor master QR", null, context, async body => {
+      const result = await api("/master-qrs", { method: "POST", body });
+      notify("Visitor master QR created.");
+      await load();
+      await detail(result.qr_id ?? result.id);
+    }));
+  }
   await load();
 }
 
@@ -318,7 +340,9 @@ export async function reports(target, context) {
   const month = new Date();
   month.setDate(1);
   let view = location.hash.includes("view=rejected") ? "rejected" : "meals";
-  target.innerHTML = `${heading("HISTORY & ACCOUNTABILITY", "Meal history", "Filter individual meal records and review rejected scan attempts.")}<form id="report-filters" class="panel filter-bar"><label>From<input name="start" type="date" value="${dateInput(month)}" required></label><label>Through<input name="end" type="date" value="${dateInput()}" required></label><label>Employee ID <span class="optional">Optional</span><input name="employee_id" type="number" min="1" step="1" placeholder="All employees and visitors"></label><label>Department<select name="department_id"><option value="">All departments</option>${options((context.catalog.departments ?? []).filter(row => row.is_active !== false), "")}</select></label><label>Meal type<select name="meal_type_id"><option value="">All meal types</option>${(context.catalog.meal_types ?? []).map(row => `<option value="${escape(row.id)}">${escape(row.name)}${row.is_active ? "" : " (inactive)"}</option>`).join("")}</select></label><button class="button primary" type="submit">Apply filters</button><div data-form-error></div></form><p class="field-help">Dates include the full local day. Totals cover all employees and visitors in the selected dates.</p><div id="report-totals">${stats()}</div><section class="panel"><div class="tabs" role="tablist" aria-label="Report type"><button role="tab" data-report="meals">Meal records</button><button role="tab" data-report="rejected">Rejected scans</button></div><div id="report-results">${loading()}</div><div class="pagination" id="report-pagination"></div></section>`;
+  const isSuperAdmin = (context.user.roles ?? []).includes("SUPER_ADMIN");
+  const exportBtn = isSuperAdmin ? '<button class="button" type="button" id="export-report">Export to Excel</button>' : '';
+  target.innerHTML = `${heading("HISTORY & ACCOUNTABILITY", "Meal history", "Filter individual meal records and review rejected scan attempts.")}<form id="report-filters" class="panel filter-bar"><label>From<input name="start" type="date" value="${dateInput(month)}" required></label><label>Through<input name="end" type="date" value="${dateInput()}" required></label><label>Employee ID <span class="optional">Optional</span><input name="employee_id" type="number" min="1" step="1" placeholder="All employees and visitors"></label><label>Department<select name="department_id"><option value="">All departments</option>${options((context.catalog.departments ?? []).filter(row => row.is_active !== false), "")}</select></label><label>Meal type<select name="meal_type_id"><option value="">All meal types</option>${(context.catalog.meal_types ?? []).map(row => `<option value="${escape(row.id)}">${escape(row.name)}${row.is_active ? "" : " (inactive)"}</option>`).join("")}</select></label><button class="button primary" type="submit">Apply filters</button>${exportBtn}<div data-form-error></div></form><p class="field-help">Dates include the full local day. Totals cover all employees and visitors in the selected dates.</p><div id="report-totals">${stats()}</div><section class="panel"><div class="tabs" role="tablist" aria-label="Report type"><button role="tab" data-report="meals">Meal records</button><button role="tab" data-report="rejected">Rejected scans</button></div><div id="report-results">${loading()}</div><div class="pagination" id="report-pagination"></div></section>`;
   let rows = [];
   let cursor = null;
   let loadVersion = 0;
@@ -335,24 +359,32 @@ export async function reports(target, context) {
     rows = append ? rows.concat(list(result)) : list(result);
     cursor = result.next_cursor;
     if (totals) target.querySelector("#report-totals").innerHTML = stats(totals.totals);
-    target.querySelector("#report-results").innerHTML = view === "meals" ? mealTable(rows, true) : scanTable(rows);
-    target.querySelectorAll('[data-action="meal-type-correct"]').forEach(button => button.onclick = () => {
-      const meal = rows.find(row => Number(row.meal_id ?? row.id) === Number(button.dataset.id));
-      const choices = activeMealTypes(context.catalog.meal_types).filter(row => Number(row.id) !== Number(meal.meal_type_id));
-      const dialog = modal("Change meal type", `<p class="muted">Meal ${escape(meal.meal_id ?? meal.id)} is recorded as <strong>${escape(meal.meal_type_name)}</strong>. The original stays in the audit log; nothing is deleted.</p><form>${selectField("Correct meal type", "meal_type_id", choices)}${field("Reason", "reason", "", "text", 'required maxlength="255" autocomplete="off"')}${formEnd("Change meal type")}</form>`);
-      formAction(dialog.querySelector("form"), async data => {
-        const reason = String(data.get("reason") ?? "").trim();
-        if (!reason) throw new Error("Enter the reason for the correction.");
-        await api(`/meals/${positive(button.dataset.id, "meal ID")}/meal-type`, { method: "POST", body: { meal_type_id: positive(data.get("meal_type_id"), "meal type"), reason } });
-        closeModal();
-        notify("Meal type changed. The original is kept in the audit log.");
-        await load();
+    target.querySelector("#report-results").innerHTML = view === "meals" ? mealTable(rows, isSuperAdmin) : scanTable(rows);
+    if (isSuperAdmin) {
+      target.querySelectorAll('[data-action="meal-type-correct"]').forEach(button => button.onclick = () => {
+        const meal = rows.find(row => Number(row.meal_id ?? row.id) === Number(button.dataset.id));
+        const choices = activeMealTypes(context.catalog.meal_types).filter(row => Number(row.id) !== Number(meal.meal_type_id));
+        const dialog = modal("Change meal type", `<p class="muted">Meal ${escape(meal.meal_id ?? meal.id)} is recorded as <strong>${escape(meal.meal_type_name)}</strong>. The original stays in the audit log; nothing is deleted.</p><form>${selectField("Correct meal type", "meal_type_id", choices)}${field("Reason", "reason", "", "text", 'required maxlength="255" autocomplete="off"')}${formEnd("Change meal type")}</form>`);
+        formAction(dialog.querySelector("form"), async data => {
+          const reason = String(data.get("reason") ?? "").trim();
+          if (!reason) throw new Error("Enter the reason for the correction.");
+          await api(`/meals/${positive(button.dataset.id, "meal ID")}/meal-type`, { method: "POST", body: { meal_type_id: positive(data.get("meal_type_id"), "meal type"), reason } });
+          closeModal();
+          notify("Meal type changed. The original is kept in the audit log.");
+          await load();
+        });
       });
-    });
+    }
     target.querySelector("#report-pagination").innerHTML = `<span>${rows.length} records shown</span>${cursor ? '<button class="button" id="more-reports">Load more</button>' : ""}`;
     target.querySelector("#more-reports")?.addEventListener("click", () => load(true).catch(error => notify(error.message, "error")));
   }
   formAction(target.querySelector("#report-filters"), () => load());
+  if (isSuperAdmin) {
+    target.querySelector("#export-report")?.addEventListener("click", event => {
+      const form = target.querySelector("#report-filters");
+      downloadMealReport(form, event.currentTarget, form.querySelector("[data-form-error]"));
+    });
+  }
   target.querySelectorAll("[data-report]").forEach(button => button.onclick = () => { view = button.dataset.report; load().catch(error => notify(error.message, "error")); });
   await load();
 }
@@ -630,16 +662,21 @@ export async function settings(target, context) {
   let staffView = "active";
   function drawStaff() {
     const shown = staffRows.filter(row => staffView === "active" ? isActive(row) : !isActive(row));
-    target.querySelector("#staff-list").innerHTML = shown.length ? table(["Staff member", "Roles", "Status", ""], shown.map(row => {
+    target.querySelector("#staff-list").innerHTML = shown.length ? table(["Staff member", "Role", "Department", "Status", ""], shown.map(row => {
       const id = row.staff_id ?? row.id;
       const self = id === context.user.staff_id;
-      return `<tr><td><strong>${escape(row.display_name)}</strong><span class="cell-subtitle">${escape(row.email)}</span></td><td>${(row.roles ?? []).map(role => badge(role)).join(" ")}</td><td>${badge(row.is_active ? "Active" : "Disabled", row.is_active ? "positive" : "neutral")}</td><td class="row-actions">${action("staff-edit", id, "Edit")}${self ? badge("You") : action("staff-status", id, row.is_active ? "Deactivate" : "Reactivate")}</td></tr>`;
+      const roleBadge = (row.roles ?? []).includes("SUPER_ADMIN")
+        ? badge("Super Admin", "primary")
+        : (row.roles ?? []).includes("ADMIN")
+          ? badge("Administrator")
+          : badge("Waiter");
+      return `<tr><td><strong>${escape(row.display_name)}</strong><span class="cell-subtitle">${escape(row.email)}</span></td><td>${roleBadge}</td><td>${escape(row.department_name ?? "—")}</td><td>${badge(row.is_active ? "Active" : "Disabled", row.is_active ? "positive" : "neutral")}</td><td class="row-actions">${action("staff-edit", id, "Edit")}${self ? badge("You") : action("staff-status", id, row.is_active ? "Deactivate" : "Reactivate")}</td></tr>`;
     }), "Staff accounts") : empty(staffView === "active" ? "No active staff accounts" : "No inactive staff accounts", staffView === "active" ? "Add an account to give a waiter access." : "Deactivated accounts appear here with a Reactivate button.", "people");
     target.querySelector("#staff-pagination").innerHTML = `<span>${staffRows.length} accounts loaded</span>${staffCursor ? '<button class="button" id="more-staff">Load more</button>' : ""}`;
     target.querySelector("#more-staff")?.addEventListener("click", () => loadStaff(true).catch(error => notify(error.message, "error")));
     target.querySelectorAll('[data-action="staff-edit"]').forEach(button => button.onclick = () => {
       const account = staffRows.find(row => Number(row.staff_id ?? row.id) === Number(button.dataset.id));
-      staffEditDialog(account, async () => { await context.refreshCatalog(); await loadStaff(); });
+      staffEditDialog(account, context, async () => { await context.refreshCatalog(); await loadStaff(); });
     });
     target.querySelectorAll('[data-action="staff-status"]').forEach(button => button.onclick = () => {
       const account = staffRows.find(row => Number(row.staff_id ?? row.id) === Number(button.dataset.id));
@@ -665,9 +702,10 @@ export async function settings(target, context) {
     drawStaff();
   });
   target.querySelector("#new-staff").onclick = () => {
-    const dialog = modal("Create a staff account", `<p class="muted small">Choose a strong, unique password and share it privately with the staff member.</p><form>${field("Display name", "display_name", "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", "", "email", 'required maxlength="254" autocomplete="off"')}${field("Password", "password", "", "password", 'required minlength="12" maxlength="1024" autocomplete="new-password"')}<label>Workspace role<select name="role"><option value="WAITER">Waiter</option><option value="ADMIN">Administrator</option></select></label>${formEnd("Create account")}</form>`);
+    const dialog = modal("Create a staff account", `<p class="muted small">Choose a strong, unique password and share it privately with the staff member.</p><form>${field("Display name", "display_name", "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", "", "email", 'required maxlength="254" autocomplete="off"')}${field("Password", "password", "", "password", 'required minlength="12" maxlength="1024" autocomplete="new-password"')}<label>Workspace role<select name="role"><option value="ADMIN">Administrator</option><option value="SUPER_ADMIN">Super Administrator</option></select></label>${staffDepartmentField(context.catalog?.departments)}${formEnd("Create account")}</form>`);
     formAction(dialog.querySelector("form"), async data => {
-      await api("/staff", { method: "POST", body: { display_name: data.get("display_name"), email: data.get("email"), password: data.get("password"), roles: [data.get("role")] } });
+      const department_id = await staffDepartmentId(data.get("department_id"), context);
+      await api("/staff", { method: "POST", body: { display_name: data.get("display_name"), email: data.get("email"), password: data.get("password"), roles: [data.get("role")], department_id } });
       closeModal();
       notify("Staff account created.");
       await context.refreshCatalog();

@@ -131,7 +131,7 @@ class StaffEditTests(unittest.TestCase):
         self.db.transaction.return_value.__enter__.return_value = self.tx
         self.service = StaffService(self.db)
         self.context = ServerContext(generate_token())
-        patcher = patch("meal_management.accounts.require_actor", return_value=Actor(1, frozenset({"ADMIN"})))
+        patcher = patch("meal_management.accounts.require_actor", return_value=Actor(1, frozenset({"SUPER_ADMIN"})))
         patcher.start()
         self.addCleanup(patcher.stop)
         audit = patch("meal_management.accounts.audit")
@@ -139,7 +139,7 @@ class StaffEditTests(unittest.TestCase):
         self.addCleanup(audit.stop)
 
     def test_email_change_ends_sessions_and_is_audited(self):
-        self.tx.one.side_effect = [{"id": 7, "display_name": "Asha", "email": "asha@example.com", "is_scanner": False}, None]
+        self.tx.one.side_effect = [{"id": 7, "display_name": "Asha", "email": "asha@example.com", "department_id": None, "is_scanner": False}, None]
         result = self.service.update(self.context, 7, "Asha Rao", "Asha.Rao@Example.com")
         self.assertEqual(result, {"staff_id": 7, "sessions_ended": 2})
         statements = [call.args[0] for call in self.tx.execute.call_args_list]
@@ -147,26 +147,26 @@ class StaffEditTests(unittest.TestCase):
         self.assertTrue(statements[1].startswith("UPDATE staff_sessions SET revoked_at"))
         self.audit.assert_called_once_with(
             self.tx, 1, "STAFF_UPDATED", "staff_accounts", 7,
-            before={"display_name": "Asha", "email": "asha@example.com"},
-            after={"display_name": "Asha Rao", "email": "asha.rao@example.com", "sessions_ended": 2},
+            before={"display_name": "Asha", "email": "asha@example.com", "department_id": None},
+            after={"display_name": "Asha Rao", "email": "asha.rao@example.com", "department_id": None, "sessions_ended": 2},
         )
 
     def test_name_only_change_keeps_sessions(self):
-        self.tx.one.side_effect = [{"id": 7, "display_name": "Asha", "email": "asha@example.com", "is_scanner": False}]
+        self.tx.one.side_effect = [{"id": 7, "display_name": "Asha", "email": "asha@example.com", "department_id": None, "is_scanner": False}]
         self.assertEqual(self.service.update(self.context, 7, "Asha Rao", "asha@example.com"), {"staff_id": 7, "sessions_ended": 0})
         self.assertEqual(len(self.tx.execute.call_args_list), 1)
 
     def test_used_email_and_scanner_identity_are_refused(self):
-        self.tx.one.side_effect = [{"id": 7, "display_name": "Asha", "email": "asha@example.com", "is_scanner": False}, {"id": 8}]
+        self.tx.one.side_effect = [{"id": 7, "display_name": "Asha", "email": "asha@example.com", "department_id": None, "is_scanner": False}, {"id": 8}]
         with self.assertRaisesRegex(DomainError, "STAFF_EMAIL_EXISTS"):
             self.service.update(self.context, 7, "Asha", "taken@example.com")
-        self.tx.one.side_effect = [{"id": 2, "display_name": "Meal Scanner", "email": "meal-scanner@system.invalid", "is_scanner": True}]
+        self.tx.one.side_effect = [{"id": 2, "display_name": "Meal Scanner", "email": "meal-scanner@system.invalid", "department_id": None, "is_scanner": True}]
         with self.assertRaisesRegex(DomainError, "SCANNER_ACCOUNT_PROTECTED"):
             self.service.update(self.context, 2, "Renamed", "meal-scanner@system.invalid")
         self.tx.execute.assert_not_called()
 
     def test_scanner_identity_cannot_be_deactivated(self):
-        self.tx.one.side_effect = [{"name": "bootstrap"}, {"id": 2, "is_active": True, "is_scanner": True}]
+        self.tx.one.side_effect = [{"name": "bootstrap"}, {"id": 2, "is_active": True, "department_id": None, "is_scanner": True}]
         with self.assertRaisesRegex(DomainError, "SCANNER_ACCOUNT_PROTECTED"):
             self.service.set_active(self.context, 2, False)
         self.tx.execute.assert_not_called()
@@ -192,7 +192,7 @@ class SettingsApiTests(ApiTestCase):
         return self.client.patch(path, json=body, headers=self.harness.headers())
 
     def test_admin_routes_call_the_matching_services(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         self.assertEqual(self.patch("/api/catalog/departments/6", {"name": "Auditorium"}).status_code, 200)
         self.assertEqual(self.client.get("/api/catalog/departments/6/usage").json()["active_employees"], 3)
         self.patch("/api/catalog/departments/6/active", {"is_active": False, "confirm": True})
@@ -206,11 +206,11 @@ class SettingsApiTests(ApiTestCase):
                 self.assertEqual(self.patch(f"/api/catalog/{kind}/8/active", {"is_active": False}).status_code, 200)
                 self.assertEqual(getattr(self.catalog, status).call_args.args[1:], (8, False))
         self.assertEqual(self.patch("/api/staff/7", {"display_name": "Asha", "email": "asha@example.com"}).json()["sessions_ended"], 1)
-        self.assertEqual(self.patch("/api/staff/7/roles", {"roles": ["WAITER", "ADMIN"]}).json(), {"staff_id": 7, "roles": ["ADMIN", "WAITER"]})
-        self.assertEqual(self.harness.staff.set_roles.call_args.args[1:], (7, ["WAITER", "ADMIN"]))
+        self.assertEqual(self.patch("/api/staff/7/roles", {"roles": ["ADMIN"]}).json(), {"staff_id": 7, "roles": ["ADMIN"]})
+        self.assertEqual(self.harness.staff.set_roles.call_args.args[1:], (7, ["ADMIN"]))
 
     def test_invalid_kinds_bodies_and_confirm_outside_departments_are_rejected(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         for path, body in (("/api/catalog/staff/8", {"code": "C", "name": "N"}),
                            ("/api/catalog/locations/8", {"name": "No code"}),
                            ("/api/catalog/locations/0", {"code": "C", "name": "N"}),
@@ -224,7 +224,7 @@ class SettingsApiTests(ApiTestCase):
         self.catalog.set_scanner_active.assert_not_called()
 
     def test_conflicts_return_409_with_clear_messages(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         cases = (
             ("set_department_active", "/api/catalog/departments/6/active", {"is_active": False}, "DEPARTMENT_HAS_ACTIVE_EMPLOYEES", "active employees"),
             ("update_scanner", "/api/catalog/scanners/3", {"code": "NEW", "name": "Meal Scanner"}, "SHARED_SCANNER_SETTING_PROTECTED", "Meal Scanner uses this item"),
@@ -237,12 +237,13 @@ class SettingsApiTests(ApiTestCase):
                 self.assert_error(response, 409, code)
                 self.assertIn(text, response.json()["error"]["message"])
 
-    def test_waiters_cannot_edit_or_deactivate_settings(self):
-        self.harness.login("waiter")
-        for path, body in (("/api/catalog/departments/6", {"name": "A"}), ("/api/catalog/scanners/8/active", {"is_active": False}),
-                           ("/api/staff/7", {"display_name": "A", "email": "a@example.com"}), ("/api/staff/7/roles", {"roles": ["ADMIN"]})):
-            with self.subTest(path=path):
-                self.assert_error(self.patch(path, body), 403, "ROLE_REQUIRED")
-        self.assert_error(self.client.get("/api/catalog/departments/6/usage"), 403, "ROLE_REQUIRED")
+    def test_waiters_and_admins_cannot_edit_or_deactivate_settings(self):
+        for role in ("waiter", "admin"):
+            self.harness.login(role)
+            for path, body in (("/api/catalog/departments/6", {"name": "A"}), ("/api/catalog/scanners/8/active", {"is_active": False}),
+                               ("/api/staff/7", {"display_name": "A", "email": "a@example.com"}), ("/api/staff/7/roles", {"roles": ["ADMIN"]})):
+                with self.subTest(role=role, path=path):
+                    self.assert_error(self.patch(path, body), 403, "ROLE_REQUIRED")
+            self.assert_error(self.client.get("/api/catalog/departments/6/usage"), 403, "ROLE_REQUIRED")
         self.catalog.update_department.assert_not_called()
         self.harness.staff.update.assert_not_called()

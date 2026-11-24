@@ -23,7 +23,7 @@ class ScannerPhoneAdminApiTests(ApiTestCase):
         self.phones.revoke.return_value = {"id": 7, "revoked": True}
 
     def test_admin_lists_generates_and_revokes_through_the_service(self):
-        self.assertEqual(self.harness.login().status_code, 200)
+        self.assertEqual(self.harness.login("super_admin").status_code, 200)
         response = self.client.get("/api/scanner-phones")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["latest_active_date"], "2027-04-25")
@@ -43,12 +43,12 @@ class ScannerPhoneAdminApiTests(ApiTestCase):
                         "active_until": "2026-11-30T18:30:00", "active_until_date": "2026-11-30"}],
             "codes": [], "latest_active_date": "2027-04-25", "today": "2026-10-25",
         }
-        self.harness.login()
+        self.harness.login("super_admin")
         body = self.client.get("/api/scanner-phones").json()
         self.assertNotIn("code", body["phones"][0])
 
     def test_generation_input_requires_a_calendar_date_and_bounded_label(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         for body in ({"label": "Counter", "active_until": "2026-11-30T00:00:00Z"},
                      {"label": "Counter", "active_until": "30/11/2026"},
                      {"label": "Counter", "active_until": 20261130},
@@ -63,7 +63,7 @@ class ScannerPhoneAdminApiTests(ApiTestCase):
         self.phones.revoke.assert_not_called()
 
     def test_service_errors_map_to_clear_statuses(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         self.phones.create_code.side_effect = DomainError("ACTIVE_UNTIL_OUT_OF_RANGE")
         response = self.harness.post("/api/scanner-phones", json={"label": "Counter", "active_until": "2028-01-01"})
         self.assert_error(response, 400, "ACTIVE_UNTIL_OUT_OF_RANGE")
@@ -84,12 +84,15 @@ class ScannerPhoneAdminApiTests(ApiTestCase):
         self.harness.login("waiter")
         for call in calls:
             self.assert_error(call(), 403, "ROLE_REQUIRED")
+        self.harness.login("admin")
+        for call in calls:
+            self.assert_error(call(), 403, "ROLE_REQUIRED")
         self.phones.list.assert_not_called()
         self.phones.create_code.assert_not_called()
         self.phones.revoke.assert_not_called()
 
     def test_generation_requires_csrf(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         response = self.client.post("/api/scanner-phones", json={"label": "Counter", "active_until": "2026-11-30"},
                                     headers={"Origin": self.harness.runtime.app_origin})
         self.assert_error(response, 403, "CSRF_REJECTED")

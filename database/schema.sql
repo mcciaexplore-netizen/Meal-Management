@@ -53,6 +53,7 @@ CREATE TABLE staff_accounts (
     display_name VARCHAR(150) NOT NULL,
     email VARCHAR(254) NOT NULL,
     password_hash VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    department_id BIGINT UNSIGNED NULL,
     is_scanner BOOLEAN NOT NULL DEFAULT FALSE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -60,6 +61,10 @@ CREATE TABLE staff_accounts (
         ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uq_staff_email (email),
+    KEY ix_staff_accounts_department (department_id),
+    CONSTRAINT fk_staff_accounts_department
+        FOREIGN KEY (department_id) REFERENCES departments (id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT chk_staff_required CHECK (
         CHAR_LENGTH(TRIM(display_name)) > 0
         AND CHAR_LENGTH(TRIM(email)) > 0
@@ -701,7 +706,7 @@ CREATE TABLE scan_attempts (
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-INSERT INTO roles (code) VALUES ('ADMIN'), ('WAITER'), ('AUDITOR');
+INSERT INTO roles (code) VALUES ('ADMIN'), ('WAITER'), ('AUDITOR'), ('SUPER_ADMIN');
 INSERT INTO system_locks (name) VALUES ('bootstrap');
 
 DELIMITER $$
@@ -1067,7 +1072,7 @@ BEGIN
         AND NOT EXISTS (
             SELECT 1 FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id
             WHERE s.id = NEW.approved_by_staff_id AND s.is_active = 1
-                AND s.is_scanner = 0 AND r.role_code = 'ADMIN'
+                AND s.is_scanner = 0 AND r.role_code IN ('ADMIN', 'SUPER_ADMIN')
         ) THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Email approval requires an administrator';
     END IF;

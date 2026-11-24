@@ -23,7 +23,7 @@ KEEP_TABLES = (
 )
 PHONE_TABLE = "scanner_phones"
 FRESH_COUNTER_TABLES = ("audit_events",)
-REQUIRED_MIGRATIONS = tuple(range(1, 17))
+REQUIRED_MIGRATIONS = tuple(range(1, 18))
 RUNTIME_USER = "meal_runtime"
 SNAPSHOT_ID = re.compile(r"(?:rds:)?[A-Za-z](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,254}")
 PHOTO_KEY = re.compile(r"(?:shift-selfies/)?[0-9a-f]{64}\.(?:jpg|png)")
@@ -145,7 +145,7 @@ class TestDataReset:
             pending = [str(row["version"]) + " (" + str(row["status"]) + ")" for row in ledger if row["status"] != "APPLIED"]
             reasons = (["missing " + ", ".join(missing)] if missing else []) + (["unexpected " + ", ".join(extra)] if extra else []) \
                 + (["not applied " + ", ".join(pending)] if pending else [])
-            raise ResetRefused("RESET_REQUIRES_MIGRATIONS_ONE_TO_SIXTEEN", "; ".join(reasons))
+            raise ResetRefused("RESET_REQUIRES_MIGRATIONS_ONE_TO_SEVENTEEN", "; ".join(reasons))
         operator_id = self._check_operator(tx)
         phones = tx.all(
             "SELECT id, label, source, activated_at, active_until, revoked_at FROM scanner_phones ORDER BY id"
@@ -202,10 +202,10 @@ class TestDataReset:
         roles = [row["role_code"] for row in tx.all(
             "SELECT role_code FROM staff_account_roles WHERE staff_id = %s ORDER BY role_code", (staff["id"],),
         )]
-        if "ADMIN" not in roles:
+        if not ({"ADMIN", "SUPER_ADMIN"} & set(roles)):
             raise ResetRefused(
                 "RESET_OPERATOR_NOT_ADMIN",
-                "staff account " + str(staff["id"]) + " (" + email + ") has roles " + (", ".join(roles) or "none") + ", not ADMIN",
+                "staff account " + str(staff["id"]) + " (" + email + ") has roles " + (", ".join(roles) or "none") + ", not ADMIN or SUPER_ADMIN",
             )
         return staff["id"]
 
@@ -430,7 +430,7 @@ class TestDataReset:
             raise DomainError("RESET_FOREIGN_KEY_CHECKS_OFF")
         admins = tx.one(
             "SELECT COUNT(*) AS count FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id "
-            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'ADMIN'"
+            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code IN ('ADMIN', 'SUPER_ADMIN')"
         )["count"]
         if admins < 1:
             raise DomainError("RESET_NO_ACTIVE_ADMIN")

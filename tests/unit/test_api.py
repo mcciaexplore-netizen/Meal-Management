@@ -31,7 +31,9 @@ class FakeStaff:
         self.password = secrets.token_urlsafe(32)
         self.sessions = {}
         self.users = {
-            "admin@example.com": {"staff_id": 1, "display_name": "Admin", "roles": ["ADMIN"]},
+            "super_admin@example.com": {"staff_id": 99, "display_name": "Super Admin", "roles": ["SUPER_ADMIN"]},
+            "admin@example.com": {"staff_id": 1, "display_name": "Admin", "roles": ["ADMIN"], "department_id": 1, "department_name": "Auditorium"},
+            "admin_no_dept@example.com": {"staff_id": 10, "display_name": "Admin No Dept", "roles": ["ADMIN"], "department_id": None},
             "waiter@example.com": {"staff_id": 2, "display_name": "Waiter", "roles": ["WAITER"]},
             "second@example.com": {"staff_id": 3, "display_name": "Second waiter", "roles": ["WAITER"]},
             "auditor@example.com": {"staff_id": 4, "display_name": "Auditor", "roles": ["AUDITOR"]},
@@ -484,12 +486,13 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.assertEqual(self.harness.services.employees.set_active.call_args.args[1:], (7, False))
 
     def test_employee_removal_requires_reason_and_uses_authenticated_service(self):
+        self.harness.login("super_admin")
         self.assert_error(self.harness.delete("/api/employees/7", json={"reason": ""}), 422, "INVALID_INPUT")
         response = self.harness.delete("/api/employees/7", json={"reason": "Duplicate employee record"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"employee_id": 7, "removed": True})
         context, employee_id, reason = self.harness.services.employees.archive.call_args.args
-        self.assertEqual(self.harness.staff.current(context)["staff_id"], 1)
+        self.assertEqual(self.harness.staff.current(context)["staff_id"], 99)
         self.assertEqual((employee_id, reason), (7, "Duplicate employee record"))
 
     def test_recorded_meals_cannot_be_removed_through_any_route(self):
@@ -503,14 +506,16 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.assertFalse(hasattr(MealService, "void_bulk"))
 
     def test_bulk_employee_removal_uses_authenticated_admin(self):
+        self.harness.login("super_admin")
         employees = self.harness.post("/api/employees/bulk-remove", json={"employee_ids": [8, 7], "reason": "Duplicate import"})
         self.assertEqual(employees.status_code, 200)
         self.assertEqual(employees.json(), {"employee_ids": [7, 8], "removed_count": 2})
         employee_context, employee_ids, employee_reason = self.harness.services.employees.archive_bulk.call_args.args
-        self.assertEqual(self.harness.staff.current(employee_context)["staff_id"], 1)
+        self.assertEqual(self.harness.staff.current(employee_context)["staff_id"], 99)
         self.assertEqual((employee_ids, employee_reason), ([8, 7], "Duplicate import"))
 
     def test_bulk_removal_validates_identifiers_reason_and_batch_size(self):
+        self.harness.login("super_admin")
         requests = (
             ("/api/employees/bulk-remove", {"employee_ids": [], "reason": "Cleanup"}),
             ("/api/employees/bulk-remove", {"employee_ids": [7, 7], "reason": "Cleanup"}),
@@ -522,14 +527,15 @@ class EmployeeAdminApiTests(ApiTestCase):
         self.harness.services.employees.archive_bulk.assert_not_called()
 
     def test_waiter_cannot_remove_employees(self):
-        self.harness.login("waiter")
-        for path, body in (
-            ("/api/employees/7", {"reason": "Unauthorized change"}),
-            ("/api/employees/bulk-remove", {"employee_ids": [7], "reason": "Unauthorized change"}),
-        ):
-            with self.subTest(path=path):
-                response = self.harness.delete(path, json=body) if path == "/api/employees/7" else self.harness.post(path, json=body)
-                self.assert_error(response, 403, "ROLE_REQUIRED")
+        for role in ("admin", "waiter"):
+            self.harness.login(role)
+            for path, body in (
+                ("/api/employees/7", {"reason": "Unauthorized change"}),
+                ("/api/employees/bulk-remove", {"employee_ids": [7], "reason": "Unauthorized change"}),
+            ):
+                with self.subTest(role=role, path=path):
+                    response = self.harness.delete(path, json=body) if path == "/api/employees/7" else self.harness.post(path, json=body)
+                    self.assert_error(response, 403, "ROLE_REQUIRED")
         self.harness.services.employees.archive.assert_not_called()
         self.harness.services.employees.archive_bulk.assert_not_called()
         self.harness.services.meals.void.assert_not_called()
@@ -675,6 +681,7 @@ class MasterAuthorizationApiTests(ApiTestCase):
         return {"request_id": str(uuid4()), "master_qr_id": 201, "waiter_id": 2, "scanner_code": "EAST-01", "meal_type_id": 1, "quantity": 3, "visitor_name": "Ravi Patel"}
 
     def test_master_creation_returns_master_category(self):
+        self.harness.login("super_admin")
         body = {
             "company_name": "Example Visitors", "contact_name": "Ravi Patel",
             "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [3, 1],
@@ -690,7 +697,17 @@ class MasterAuthorizationApiTests(ApiTestCase):
         self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["department_id"], 4)
         self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["event_name"], "Expo")
 
+        self.harness.login("admin")
+        response = self.harness.post("/api/master-qrs", json=body)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.harness.services.qr.issue_master.call_args.kwargs["department_id"], 1)
+
+        self.harness.login("admin_no_dept")
+        response = self.harness.post("/api/master-qrs", json=body)
+        self.assert_error(response, 403, "ADMIN_DEPARTMENT_REQUIRED")
+
     def test_master_creation_requires_group_details_and_rejects_a_third_category(self):
+        self.harness.login("super_admin")
         valid = {"company_name": "Example", "contact_name": "Ravi", "email": "ravi@example.test", "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1], "department_id": 4}
         without_types = {key: value for key, value in valid.items() if key != "meal_type_ids"}
         for body in ({}, {**valid, "meal_limit": 0}, {**valid, "kind": "GUEST"}, {**valid, "phone": "123"},
@@ -1016,7 +1033,7 @@ class HealthApiTests(ApiTestCase):
         self.assertNotIn("hidden", response.text)
 
     def test_readiness_requires_employee_contact_migration(self):
-        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 200), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], 200)):
+        for versions, expected_status in (([1, 2], 503), ([1, 2, 3], 503), ([1, 2, 3, 4], 503), ([1, 2, 3, 4, 5], 503), ([1, 2, 3, 4, 5, 6], 503), ([1, 2, 3, 4, 5, 6, 7], 503), ([1, 2, 3, 4, 5, 6, 7, 8], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 503), ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], 200)):
             with self.subTest(versions=versions):
                 tx = Mock()
                 tx.one.return_value = {"version": "8.4.11"}

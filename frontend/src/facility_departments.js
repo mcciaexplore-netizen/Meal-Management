@@ -59,6 +59,9 @@ export async function resolveEmployeeDepartment(value, { request, refreshCatalog
     const created = await request("/catalog/departments", { method: "POST", body: { name: department.name } });
     positive(created?.id, "department");
   } catch (error) {
+    if (error.code === "ROLE_REQUIRED") {
+      throw Object.assign(new Error(department.name + " has not been set up yet. Ask a super admin to add it in Office settings."), { code: error.code });
+    }
     if (error.code !== "DEPARTMENT_NAME_EXISTS") throw error;
   }
   const identifier = findExisting(await refreshCatalog());

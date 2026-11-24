@@ -232,7 +232,7 @@ class VisitorBatchApiTests(ApiTestCase):
         return values
 
     def test_preview_passes_the_raw_file_and_create_passes_every_setting(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         response = self.client.post("/api/visitor-batches/preview?filename=guests.csv", content=csv_bytes(("1", "A", "B", "9876543210", "")),
                                     headers={**self.harness.headers(), "Content-Type": "text/csv"})
         self.assertEqual(response.status_code, 200, response.text)
@@ -245,14 +245,62 @@ class VisitorBatchApiTests(ApiTestCase):
         self.assertEqual(args[3].utcoffset().total_seconds(), 19800)
         self.assertEqual((args[4], args[5], kwargs["event_name"], kwargs["source_name"]), ([2, 3], 4, "Expo", "guests.csv"))
 
+        self.harness.login("admin")
+        response = self.harness.post("/api/visitor-batches", json=self.body(department_id=99))
+        self.assertEqual(response.status_code, 201, response.text)
+        args, kwargs = self.batches.create.call_args
+        self.assertEqual(args[5], 1)
+
+        self.harness.login("admin_no_dept")
+        response = self.harness.post("/api/visitor-batches", json=self.body())
+        self.assert_error(response, 403, "ADMIN_DEPARTMENT_REQUIRED")
+
     def test_create_requires_every_setting_and_bounds_rows(self):
-        self.harness.login()
+        self.harness.login("super_admin")
         for body in (self.body(expires_at=None), self.body(department_id=None), self.body(meal_type_ids=[]),
                      self.body(rows=[]), self.body(rows=[self.body()["rows"][0]] * 201), self.body(request_id="x"),
                      self.body(event_name="e" * 151), {k: v for k, v in self.body().items() if k != "source_name"}):
             with self.subTest(keys=sorted(body)):
                 self.assert_error(self.harness.post("/api/visitor-batches", json=body), 422, "INVALID_INPUT")
         self.batches.create.assert_not_called()
+
+    def test_sample_files_download_and_reimport_cleanly(self):
+        from openpyxl import load_workbook
+
+        self.harness.login("admin")
+        response = self.client.get("/api/visitor-batches/sample.xlsx")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], XLSX)
+        self.assertIn('filename="visitor-import-sample.xlsx"', response.headers["content-disposition"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+        wb = load_workbook(io.BytesIO(response.content))
+        self.assertEqual(wb.sheetnames, ["Visitors", "Instructions"])
+        sheet = wb["Visitors"]
+        headers = [cell.value for cell in sheet[1]]
+        self.assertEqual(headers, ["Sr. No.", "Person Name", "Company Name", "Phone", "Email"])
+        self.assertEqual(sheet.max_row, 3)
+        self.assertEqual(sheet["A2"].data_type, "s")
+        self.assertEqual(sheet["D2"].data_type, "s")
+        instr_text = " ".join(str(cell.value) for row in wb["Instructions"].iter_rows() for cell in row if cell.value)
+        self.assertIn("200", instr_text)
+        self.assertIn("example.com", instr_text)
+
+        rows = read_rows(response.content, XLSX, "sample.xlsx")
+        self.assertEqual(len(rows), 2)
+        clean, errors = validate_rows(rows)
+        self.assertEqual(len(clean), 2)
+        self.assertEqual(errors, [])
+
+        response_csv = self.client.get("/api/visitor-batches/sample.csv")
+        self.assertEqual(response_csv.status_code, 200)
+        self.assertEqual(response_csv.headers["content-type"], "text/csv; charset=utf-8")
+        self.assertIn('filename="visitor-import-sample.csv"', response_csv.headers["content-disposition"])
+        rows_csv = read_rows(response_csv.content, "text/csv", "sample.csv")
+        self.assertEqual(len(rows_csv), 2)
+        clean_csv, errors_csv = validate_rows(rows_csv)
+        self.assertEqual(len(clean_csv), 2)
+        self.assertEqual(errors_csv, [])
 
     def test_sending_needs_confirmation_and_admin_role(self):
         self.harness.login()

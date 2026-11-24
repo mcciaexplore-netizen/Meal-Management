@@ -178,9 +178,9 @@ class SettingsMySQLTests(MealServicesFixture):
         self.staff.set_roles(self.admin_context, staff_id, ["WAITER"])
         self.assertEqual([row["role_code"] for row in self.rows("SELECT role_code FROM staff_account_roles WHERE staff_id = %s", (staff_id,))], ["WAITER"])
         self.assertIn("STAFF_ROLES_CHANGED", self.audit_actions("staff_accounts", staff_id))
-        admins = self.scalar("SELECT COUNT(*) FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'ADMIN'")
+        admins = self.scalar("SELECT COUNT(*) FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'SUPER_ADMIN'")
         if admins == 1:
-            with self.assertRaisesRegex(DomainError, "LAST_ACTIVE_ADMIN"):
+            with self.assertRaisesRegex(DomainError, "LAST_ACTIVE_SUPER_ADMIN"):
                 self.staff.set_roles(self.admin_context, self.admin_id, ["WAITER"])
 
     def test_settings_changes_use_only_runtime_grants(self):
@@ -223,7 +223,7 @@ class LastAdminConcurrencyMySQLTests(MealServicesFixture):
     def new_admin(self):
         password = secrets.token_urlsafe(24)
         email = f"admin-{uuid4().hex[:10]}@example.test"
-        staff_id = self.staff.create_staff(self.admin_context, "Extra Admin", email, password, {"ADMIN"})
+        staff_id = self.staff.create_staff(self.admin_context, "Extra Admin", email, password, {"SUPER_ADMIN"})
         return staff_id, email, password
 
     def test_concurrent_deactivation_of_the_last_two_admins_leaves_one(self):
@@ -231,7 +231,7 @@ class LastAdminConcurrencyMySQLTests(MealServicesFixture):
 
         others = [row["id"] for row in self.rows(
             "SELECT s.id FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id "
-            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'ADMIN' AND s.id <> %s", (self.admin_id,),
+            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'SUPER_ADMIN' AND s.id <> %s", (self.admin_id,),
         )]
         for other in others:
             self.staff.set_active(self.admin_context, other, False)
@@ -251,7 +251,7 @@ class LastAdminConcurrencyMySQLTests(MealServicesFixture):
             results = sorted(pool.map(lambda pair: deactivate(*pair), [(self.admin_context, first), (first_context, self.admin_id)]))
         remaining = self.scalar(
             "SELECT COUNT(*) FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id "
-            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'ADMIN'"
+            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'SUPER_ADMIN'"
         )
         self.assertEqual(remaining, 1)
         self.assertIn("DONE", results)

@@ -196,6 +196,7 @@ The gallery is disabled unless the environment is development, the email backend
 | `GET` | `/api/reports/meals` | Admin | Paginated individual meal history, optionally filtered by `employee_id` |
 | `GET` | `/api/reports/totals` | Admin | Meal and serving totals, grouped by kind, meal type, location, waiter, and authorizing admin |
 | `GET` | `/api/reports/scans` | Admin | Paginated scan attempts, optionally filtered by `outcome` |
+| `GET` | `/api/reports/meals/export?from=YYYY-MM-DD&through=YYYY-MM-DD` | Admin | Download an .xlsx report (sheets Meals, Summary, Rejected scans) for India-time days, with optional `employee_id`, `department_id`, `meal_type_id` as in Meal history. At most 366 days and 50,000 rows (`REPORT_TOO_LARGE`, 413); no rows gives `REPORT_EMPTY` (404); one export runs at a time (`REPORT_EXPORT_RUNNING`, 409). Each export writes a `MEAL_REPORT_EXPORTED` audit entry with the filters and row counts |
 | `GET` | `/api/email-settings` | Admin | Safe backend, sending/automatic flags, approval_required=true, worker status, poll interval, batch size, and preview availability; no credentials |
 | `GET` | `/api/email-queue` | Admin | Paginated bulk/legacy metadata by default; employee_id returns full employee history; bulk_batch_id filters one import |
 | `GET` | `/api/email-queue/{email_id}/preview` | Admin in development preview mode | Render an employee email without sending it |

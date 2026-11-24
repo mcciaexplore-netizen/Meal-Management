@@ -176,7 +176,7 @@ Meal types (Breakfast, Lunch, High Tea and Dinner are seeded) are managed in **O
 - **Lock:** once a meal type is recorded for an employee, the same type is refused for `MEAL_TYPE_LOCK_HOURS` (default 12; 0 turns it off): "Breakfast already recorded at 08:15 (India time)." Other types still work, simultaneous scans are serialized on the employee, and network retries return the original meal.
 - **Corrections:** an administrator can change a recorded meal's type with a required reason (**Change meal type** in Meal history). The original serving is kept, the correction is stored separately and audited, and reports, history and the lock use the corrected type from the original serving time.
 - **Visitors:** visitor master QRs are recorded under the selected meal type, without eligibility checks or the lock; their allowance still applies.
-- **Reports:** Meal history filters by meal type and marks corrected meals; totals are broken down by meal type.
+- **Reports:** Meal history filters by meal type and marks corrected meals; totals are broken down by meal type. **Export to Excel** downloads every meal matching the current filters (India-time days, up to 366 days and 50,000 rows) as an .xlsx with a Meals sheet, a Summary (filters, who exported it, totals by meal type, day, department, waiter and employee) and the Rejected scans for the same dates. Text is written as plain text, never formulas. One export runs at a time, and each export is recorded in the audit log because the file contains emails and phone numbers.
 
 ## Scanner phones as waiters
 

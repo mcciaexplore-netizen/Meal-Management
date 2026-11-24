@@ -469,3 +469,69 @@ class VisitorBatchService:
                           after={"qr_id": qr_id, "previous_email_id": latest["id"]})
             self.qr.email_queue.approve_visitor(tx, actor, email_id, qr_id)
         return email_id
+
+
+def generate_visitor_sample_excel():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws_visitors = wb.active
+    ws_visitors.title = "Visitors"
+
+    bold = Font(bold=True)
+    headers = list(HEADERS)
+    ws_visitors.append(headers)
+    for col_num in range(1, len(headers) + 1):
+        cell = ws_visitors.cell(row=1, column=col_num)
+        cell.font = bold
+
+    example_rows = [
+        ("1", "Example Visitor 1 (Sample)", "Example Corp (Sample)", "+91 98765 43210", "example1@example.com"),
+        ("2", "Example Visitor 2 (Sample)", "Example Corp (Sample)", "+91 98765 43211", "example2@example.com"),
+    ]
+    for row_idx, values in enumerate(example_rows, start=2):
+        for col_idx, val in enumerate(values, start=1):
+            cell = ws_visitors.cell(row=row_idx, column=col_idx, value=str(val))
+            cell.number_format = "@"
+
+    ws_instructions = wb.create_sheet(title="Instructions")
+    instructions = [
+        ["Bulk visitor QRs: how to fill this file"],
+        [""],
+        ["1. Keep the first sheet (Visitors) and its row 1 headers exactly: Sr. No., Person Name, Company Name, Phone, Email."],
+        ["2. The two rows in Visitors are EXAMPLES. Delete or overwrite them with your real visitors before uploading."],
+        ["3. example.com email addresses are examples only and must be replaced with each visitor's real email, or left blank."],
+        ["4. Up to 200 people per file, and the file must be at most 1 MB."],
+        ["5. Sr. No.: a positive whole number (up to 6 digits), different on every row."],
+        ["6. Person Name and Company Name: required, at most 150 characters."],
+        ["7. Phone: required, 7 to 15 digits; +, spaces, brackets, dashes and dots are allowed. Each phone must be different."],
+        ["8. Email: optional. People without one get no email. Each email must be different."],
+        ["9. Type plain values only, no formulas. Sr. No. and Phone are text cells so leading zeros and + are kept."],
+    ]
+    for r_idx, row in enumerate(instructions, start=1):
+        for c_idx, val in enumerate(row, start=1):
+            cell = ws_instructions.cell(row=r_idx, column=c_idx, value=val)
+            if r_idx == 1:
+                cell.font = bold
+
+    ws_visitors.column_dimensions["A"].width = 10
+    ws_visitors.column_dimensions["B"].width = 30
+    ws_visitors.column_dimensions["C"].width = 28
+    ws_visitors.column_dimensions["D"].width = 18
+    ws_visitors.column_dimensions["E"].width = 30
+    ws_instructions.column_dimensions["A"].width = 110
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    return stream.getvalue()
+
+
+def generate_visitor_sample_csv():
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow(list(HEADERS))
+    writer.writerow(["1", "Example Visitor 1 (Sample)", "Example Corp (Sample)", "+91 98765 43210", "example1@example.com"])
+    writer.writerow(["2", "Example Visitor 2 (Sample)", "Example Corp (Sample)", "+91 98765 43211", "example2@example.com"])
+    return output.getvalue().encode("utf-8")
+

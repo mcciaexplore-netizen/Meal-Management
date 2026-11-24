@@ -25,6 +25,60 @@ def _where(filters, params, time_column, id_column, cursor):
     return order
 
 
+MEAL_FROM = (
+    "FROM meals m JOIN servings s ON s.id = m.serving_id "
+    "LEFT JOIN employees e ON e.id = s.employee_id "
+    "LEFT JOIN master_qr_allocations ma ON ma.qr_id = s.qr_id AND s.kind = 'MASTER' "
+    "LEFT JOIN departments md ON md.id = COALESCE(e.department_id, ma.department_id) "
+    "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
+    "JOIN meal_types ot ON ot.id = s.meal_type_id "
+    "JOIN staff_accounts w ON w.id = s.waiter_id "
+    + scanner_phone_join("s.request_id") +
+    "JOIN locations l ON l.id = s.location_id "
+    "JOIN scanner_devices d ON d.id = s.scanner_id "
+    "LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id "
+    "LEFT JOIN staff_accounts admin ON admin.id = a.authorized_by WHERE "
+)
+MEAL_SELECT = (
+    "SELECT m.id, m.id AS meal_id, m.served_at, m.unit_number, s.id AS serving_id, "
+    "s.request_id, s.kind, s.quantity AS serving_quantity, s.employee_id, "
+    "COALESCE(e.department_id, ma.department_id) AS department_id, md.name AS department_name, "
+    "ma.event_name, "
+    "e.employee_code, e.full_name AS employee_name, e.company_name AS employee_company_name, "
+    "e.email AS employee_email, e.phone AS employee_phone, t.id AS meal_type_id, "
+    "s.meal_type_id AS recorded_meal_type_id, ot.name AS recorded_meal_type_name, "
+    "(SELECT COUNT(*) FROM meal_type_corrections c WHERE c.meal_id = m.id) AS correction_count, "
+    "(SELECT c.reason FROM meal_type_corrections c WHERE c.meal_id = m.id ORDER BY c.id DESC LIMIT 1) AS correction_reason, "
+    "t.code AS meal_type_code, t.name AS meal_type_name, s.waiter_id, "
+    "COALESCE(ph.label, w.display_name) AS waiter_name, ph.id AS scanner_phone_id, "
+    "s.location_id, l.name AS location_name, "
+    "s.scanner_id, d.code AS scanner_code, "
+    "COALESCE(s.visitor_company_name, a.visitor_organization) AS visitor_company_name, "
+    "COALESCE(s.visitor_name, a.visitor_name) AS visitor_name, "
+    "s.visitor_email, s.visitor_phone, a.visitor_organization, "
+    "a.visit_purpose, a.authorized_by, admin.display_name AS admin_name "
+    + MEAL_FROM
+)
+
+
+def meal_filters(start_utc, end_utc, employee_id=None, meal_type_id=None, department_id=None):
+    filters = [
+        "m.served_at >= %s", "m.served_at < %s",
+        "NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id)",
+    ]
+    params = [start_utc, end_utc]
+    if employee_id is not None:
+        filters.append("s.employee_id = %s")
+        params.append(positive_integer(employee_id, "EMPLOYEE_ID"))
+    if meal_type_id is not None:
+        filters.append(EFFECTIVE_MEAL_TYPE + " = %s")
+        params.append(positive_integer(meal_type_id, "MEAL_TYPE_ID"))
+    if department_id is not None:
+        filters.append("COALESCE(e.department_id, ma.department_id) = %s")
+        params.append(positive_integer(department_id, "DEPARTMENT_ID"))
+    return filters, params
+
+
 def _record(row):
     result = dict(row)
     for key, value in result.items():
@@ -80,16 +134,17 @@ class QueryService:
         filters, params = ["s.is_scanner = 0"], []
         order = _where(filters, params, "s.created_at", "s.id", cursor)
         with self.db.transaction() as tx:
-            require_actor(tx, context, {"ADMIN"})
+            require_actor(tx, context, {"SUPER_ADMIN"})
             roles = (
                 "STRING_AGG(r.role_code, ',' ORDER BY r.role_code)" if is_postgres(tx)
                 else "GROUP_CONCAT(r.role_code ORDER BY r.role_code SEPARATOR ',')"
             )
             rows = tx.all(
-                "SELECT s.id, s.display_name, s.email, s.is_active, s.created_at, "
+                "SELECT s.id, s.display_name, s.email, s.is_active, s.department_id, d.name AS department_name, s.created_at, "
                 + roles + " AS role_codes "
                 "FROM staff_accounts s LEFT JOIN staff_account_roles r ON r.staff_id = s.id "
-                "WHERE " + " AND ".join(filters) + " GROUP BY s.id, s.display_name, s.email, s.is_active, s.created_at"
+                "LEFT JOIN departments d ON d.id = s.department_id "
+                "WHERE " + " AND ".join(filters) + " GROUP BY s.id, s.display_name, s.email, s.is_active, s.department_id, d.name, s.created_at"
                 + order,
                 (*params, limit + 1),
             )
@@ -246,56 +301,12 @@ class QueryService:
     def meal_history(self, context, start, end, limit=50, before=None, employee_id=None, meal_type_id=None, department_id=None):
         cursor = _pagination(limit, before)
         start_utc, end_utc = _date_range(start, end)
-        filters = [
-            "m.served_at >= %s", "m.served_at < %s",
-            "NOT EXISTS (SELECT 1 FROM meal_voids v WHERE v.meal_id = m.id)",
-        ]
-        params = [start_utc, end_utc]
-        if employee_id is not None:
-            filters.append("s.employee_id = %s")
-            params.append(positive_integer(employee_id, "EMPLOYEE_ID"))
-        if meal_type_id is not None:
-            filters.append(EFFECTIVE_MEAL_TYPE + " = %s")
-            params.append(positive_integer(meal_type_id, "MEAL_TYPE_ID"))
-        if department_id is not None:
-            filters.append("COALESCE(e.department_id, ma.department_id) = %s")
-            params.append(positive_integer(department_id, "DEPARTMENT_ID"))
+        filters, params = meal_filters(start_utc, end_utc, employee_id, meal_type_id, department_id)
         order = _where(filters, params, "m.served_at", "m.id", cursor)
         params.append(limit + 1)
         with self.db.transaction() as tx:
             require_actor(tx, context, {"ADMIN"})
-            rows = tx.all(
-                "SELECT m.id, m.id AS meal_id, m.served_at, m.unit_number, s.id AS serving_id, "
-                "s.request_id, s.kind, s.quantity AS serving_quantity, s.employee_id, "
-                "COALESCE(e.department_id, ma.department_id) AS department_id, md.name AS department_name, "
-                "ma.event_name, "
-                "e.employee_code, e.full_name AS employee_name, e.company_name AS employee_company_name, "
-                "e.email AS employee_email, e.phone AS employee_phone, t.id AS meal_type_id, "
-                "s.meal_type_id AS recorded_meal_type_id, ot.name AS recorded_meal_type_name, "
-                "(SELECT COUNT(*) FROM meal_type_corrections c WHERE c.meal_id = m.id) AS correction_count, "
-                "t.code AS meal_type_code, t.name AS meal_type_name, s.waiter_id, "
-                "COALESCE(ph.label, w.display_name) AS waiter_name, ph.id AS scanner_phone_id, "
-                "s.location_id, l.name AS location_name, "
-                "s.scanner_id, d.code AS scanner_code, "
-                "COALESCE(s.visitor_company_name, a.visitor_organization) AS visitor_company_name, "
-                "COALESCE(s.visitor_name, a.visitor_name) AS visitor_name, "
-                "s.visitor_email, s.visitor_phone, a.visitor_organization, "
-                "a.visit_purpose, a.authorized_by, admin.display_name AS admin_name "
-                "FROM meals m JOIN servings s ON s.id = m.serving_id "
-                "LEFT JOIN employees e ON e.id = s.employee_id "
-                "LEFT JOIN master_qr_allocations ma ON ma.qr_id = s.qr_id AND s.kind = 'MASTER' "
-                "LEFT JOIN departments md ON md.id = COALESCE(e.department_id, ma.department_id) "
-                "JOIN meal_types t ON t.id = " + EFFECTIVE_MEAL_TYPE + " "
-                "JOIN meal_types ot ON ot.id = s.meal_type_id "
-                "JOIN staff_accounts w ON w.id = s.waiter_id "
-                + scanner_phone_join("s.request_id") +
-                "JOIN locations l ON l.id = s.location_id "
-                "JOIN scanner_devices d ON d.id = s.scanner_id "
-                "LEFT JOIN visitor_authorizations a ON a.id = s.authorization_id "
-                "LEFT JOIN staff_accounts admin ON admin.id = a.authorized_by WHERE "
-                + " AND ".join(filters) + order,
-                params,
-            )
+            rows = tx.all(MEAL_SELECT + " AND ".join(filters) + order, params)
         return _page(rows, limit, "served_at")
 
     def scans(self, context, start, end, limit=50, before=None, outcome=None):
@@ -342,7 +353,7 @@ class QueryService:
             waiters = tx.all(
                 "SELECT DISTINCT s.id, s.display_name FROM staff_accounts s "
                 "JOIN staff_account_roles r ON r.staff_id = s.id "
-                "WHERE s.is_active = 1 AND r.role_code IN ('ADMIN', 'WAITER') ORDER BY s.display_name"
+                "WHERE s.is_active = 1 AND r.role_code IN ('SUPER_ADMIN', 'ADMIN', 'WAITER') ORDER BY s.display_name"
             ) if admin else []
             shared = tx.one(
                 "SELECT p.scanner_id, p.meal_type_id, d.location_id FROM scan_app_settings p "

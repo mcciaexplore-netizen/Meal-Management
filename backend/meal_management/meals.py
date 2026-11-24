@@ -137,7 +137,7 @@ class ApprovalService:
             waiter = tx.one("SELECT id, is_active FROM staff_accounts WHERE id = %s FOR UPDATE", (waiter_id,))
             waiter_role = tx.one(
                 "SELECT role_code FROM staff_account_roles WHERE staff_id = %s "
-                "AND role_code IN ('ADMIN', 'WAITER') FOR SHARE",
+                "AND role_code IN ('SUPER_ADMIN', 'ADMIN', 'WAITER') FOR SHARE",
                 (waiter_id,),
             )
             if not waiter or not waiter["is_active"] or not waiter_role:
@@ -249,7 +249,7 @@ class MealService:
         positive_integer(meal_type_id, "MEAL_TYPE_ID")
         reason = required_text(reason, "correction_reason", 255)
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             meal = tx.one(
                 "SELECT m.id, s.id AS serving_id, s.employee_id, s.kind, " + EFFECTIVE_MEAL_TYPE + " AS meal_type_id "
                 "FROM meals m JOIN servings s ON s.id = m.serving_id WHERE m.id = %s",
@@ -615,7 +615,7 @@ class MealService:
         if any(approval[key] != value for key, value in expected.items()):
             raise DomainError("AUTHORIZATION_SCOPE_MISMATCH")
         admin = tx.one("SELECT is_active FROM staff_accounts WHERE id = %s FOR SHARE", (approval["authorized_by"],))
-        role = tx.one("SELECT role_code FROM staff_account_roles WHERE staff_id = %s AND role_code = 'ADMIN' FOR SHARE", (approval["authorized_by"],))
+        role = tx.one("SELECT role_code FROM staff_account_roles WHERE staff_id = %s AND role_code IN ('SUPER_ADMIN', 'ADMIN') FOR SHARE", (approval["authorized_by"],))
         if not admin or not admin["is_active"] or not role:
             raise DomainError("AUTHORIZING_ADMIN_UNAVAILABLE")
         if approval["revoked_at"] is not None:

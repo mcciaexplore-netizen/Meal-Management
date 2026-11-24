@@ -205,7 +205,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(set(result), {"departments", "meal_types", "locations", "scanners", "waiters", "shared"})
         self.assertEqual(set(result["shared"]), {"scanner_id", "meal_type_id", "location_id"})
         self.assertEqual(self.tx.all.call_count, 5)
-        self.assertIn("r.role_code IN ('ADMIN', 'WAITER')", self.tx.all.call_args.args[0])
+        self.assertIn("r.role_code IN ('SUPER_ADMIN', 'ADMIN', 'WAITER')", self.tx.all.call_args.args[0])
         self.assertIn("SELECT DISTINCT", self.tx.all.call_args.args[0])
 
     def test_waiter_authorizations_are_scoped_to_authenticated_actor(self):
@@ -226,22 +226,22 @@ class QueryServiceTests(unittest.TestCase):
 
     def test_unrestricted_queries_require_admin_role(self):
         operations = [
-            lambda: self.service.staff(self.context),
-            lambda: self.service.list_employees(self.context),
-            lambda: self.service.employee(self.context, 7),
-            lambda: self.service.current_employee_qr(self.context, 7),
-            lambda: self.service.master_qrs(self.context),
-            lambda: self.service.qr_metadata(self.context, 9),
-            lambda: self.service.email_status(self.context),
-            lambda: self.service.meal_history(self.context, self.start, self.end),
-            lambda: self.service.scans(self.context, self.start, self.end),
+            (lambda: self.service.staff(self.context), {"SUPER_ADMIN"}),
+            (lambda: self.service.list_employees(self.context), {"ADMIN"}),
+            (lambda: self.service.employee(self.context, 7), {"ADMIN"}),
+            (lambda: self.service.current_employee_qr(self.context, 7), {"ADMIN"}),
+            (lambda: self.service.master_qrs(self.context), {"ADMIN"}),
+            (lambda: self.service.qr_metadata(self.context, 9), {"ADMIN"}),
+            (lambda: self.service.email_status(self.context), {"ADMIN"}),
+            (lambda: self.service.meal_history(self.context, self.start, self.end), {"ADMIN"}),
+            (lambda: self.service.scans(self.context, self.start, self.end), {"ADMIN"}),
         ]
         self.require_actor.side_effect = DomainError("ROLE_REQUIRED")
-        for operation in operations:
+        for operation, expected_roles in operations:
             with self.subTest(operation=operation):
                 with self.assertRaises(DomainError):
                     operation()
-                self.require_actor.assert_called_with(self.tx, self.context, {"ADMIN"})
+                self.require_actor.assert_called_with(self.tx, self.context, expected_roles)
         self.tx.one.assert_not_called()
         self.tx.all.assert_not_called()
 

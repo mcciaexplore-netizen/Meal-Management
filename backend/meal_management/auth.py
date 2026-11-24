@@ -32,10 +32,13 @@ def require_actor(tx, context, roles):
         raise DomainError("STAFF_INACTIVE")
     assigned = tx.all("SELECT role_code FROM staff_account_roles WHERE staff_id = %s FOR SHARE", (session["staff_id"],))
     actual = frozenset(row["role_code"] for row in assigned)
-    if roles and not actual.intersection(roles):
+    effective = set(actual)
+    if "SUPER_ADMIN" in actual:
+        effective.add("ADMIN")
+    if roles and not effective.intersection(roles):
         raise DomainError("ROLE_REQUIRED")
     tx.execute("UPDATE staff_sessions SET last_seen_at = %s WHERE id = %s", (now, session["id"]))
-    return Actor(session["staff_id"], actual)
+    return Actor(session["staff_id"], frozenset(effective))
 
 
 def require_scan_actor(tx, context):

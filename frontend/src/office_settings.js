@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { escape } from "./core.js";
-import { badge, closeModal, empty, field, formAction, modal, notify } from "./ui.js";
+import { badge, closeModal, empty, field, formAction, modal, notify, selectField } from "./ui.js";
+import { employeeDepartmentOptions, resolveEmployeeDepartment } from "./facility_departments.js";
 
 export const catalogKinds = Object.freeze({
   departments: { title: "Departments", singular: "department", code: null, nameLimit: 100, shared: null },
@@ -46,10 +47,23 @@ export function staffChanges(original, values) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email address.");
   if (!roles.length) throw new Error("Choose at least one role.");
   const currentRoles = [...(original.roles ?? [])].sort();
+  const originalDept = original.department_id ?? null;
+  const newDept = values.department_id === undefined ? originalDept : (values.department_id ? Number(values.department_id) : null);
+  const deptChanged = values.department_id !== undefined && newDept !== originalDept;
+  const nameChanged = display_name !== original.display_name;
+  const emailChanged = email !== String(original.email ?? "").toLowerCase();
+  const profileChanged = nameChanged || emailChanged || deptChanged;
+  let profile = null;
+  if (profileChanged) {
+    profile = { display_name, email };
+    if (values.department_id !== undefined) {
+      profile.department_id = newDept;
+    }
+  }
   return {
-    profile: display_name !== original.display_name || email !== String(original.email ?? "").toLowerCase() ? { display_name, email } : null,
+    profile,
     roles: roles.join(",") !== currentRoles.join(",") ? roles : null,
-    emailChanged: email !== String(original.email ?? "").toLowerCase()
+    emailChanged
   };
 }
 
@@ -128,17 +142,41 @@ export function bindCatalogPanel(section, kind, getRows, shared, refresh) {
   return render;
 }
 
-export function staffEditDialog(account, done) {
-  const roles = new Set(account.roles ?? []);
-  const checkbox = (value, label) => `<label class="checkbox"><input type="checkbox" name="roles" value="${value}" ${roles.has(value) ? "checked" : ""}> ${label}</label>`;
-  const dialog = modal("Edit staff account", `<form>${field("Display name", "display_name", account.display_name, "text", 'required maxlength="150" autocomplete="off"')}${field("Email address", "email", account.email, "email", 'required maxlength="254" autocomplete="off"')}<p class="alert" role="status" data-email-warning hidden>Changing the email changes this person's sign-in email. They will be signed out everywhere and must sign in with the new address.</p><fieldset class="role-choices"><legend>Roles</legend>${checkbox("ADMIN", "Administrator")}${checkbox("WAITER", "Waiter")}</fieldset><div data-form-error></div><div class="form-actions"><button type="submit" class="button primary">Save changes</button></div></form>`);
+export const staffDepartmentField = (departments, selected = "") =>
+  selectField("Department", "department_id", employeeDepartmentOptions(departments ?? [], selected || null), selected ?? "", { required: false, placeholder: "No department" });
+
+export async function staffDepartmentId(value, context) {
+  if (value === null || value === undefined || value === "") return null;
+  return resolveEmployeeDepartment(value, { request: api, refreshCatalog: context.refreshCatalog });
+}
+
+export function staffEditDialog(account, context, done) {
+  const isSuperAdmin = (account.roles ?? []).includes("SUPER_ADMIN");
+  const isInteractive = !account.is_scanner && !(account.roles ?? []).includes("WAITER");
+  const roleField = isInteractive
+    ? `<label>Workspace role<select name="role"><option value="ADMIN" ${!isSuperAdmin ? "selected" : ""}>Administrator</option><option value="SUPER_ADMIN" ${isSuperAdmin ? "selected" : ""}>Super Administrator</option></select></label>`
+    : `<input type="hidden" name="role" value="${account.roles?.[0] || 'WAITER'}">`;
+  const departmentField = isInteractive
+    ? staffDepartmentField(context.catalog?.departments, account.department_id ?? "")
+    : "";
+  const dialog = modal("Edit staff account", `<form>${field("Display name", "display_name", account.display_name, "text", 'required maxlength="150" autocomplete="off"')}${field("Email address", "email", account.email, "email", 'required maxlength="254" autocomplete="off"')}<p class="alert" role="status" data-email-warning hidden>Changing the email changes this person's sign-in email. They will be signed out everywhere and must sign in with the new address.</p>${roleField}${departmentField}<div data-form-error></div><div class="form-actions"><button type="submit" class="button primary">Save changes</button></div></form>`);
   const form = dialog.querySelector("form");
   const warning = form.querySelector("[data-email-warning]");
   form.querySelector('[name="email"]').addEventListener("input", event => {
     warning.hidden = event.target.value.trim().toLowerCase() === String(account.email ?? "").toLowerCase();
   });
   formAction(form, async data => {
-    const changes = staffChanges(account, { display_name: data.get("display_name"), email: data.get("email"), roles: data.getAll("roles") });
+    let deptId = undefined;
+    if (isInteractive) {
+      deptId = await staffDepartmentId(data.get("department_id"), context);
+    }
+    const role = data.get("role") || account.roles?.[0] || "ADMIN";
+    const changes = staffChanges(account, {
+      display_name: data.get("display_name"),
+      email: data.get("email"),
+      roles: [role],
+      department_id: deptId,
+    });
     const id = encodeURIComponent(account.staff_id ?? account.id);
     if (changes.profile) await api(`/staff/${id}`, { method: "PATCH", body: changes.profile });
     if (changes.roles) await api(`/staff/${id}/roles`, { method: "PATCH", body: { roles: changes.roles } });
