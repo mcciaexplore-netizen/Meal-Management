@@ -9,6 +9,7 @@ MODULES = (
     "test_scan_app_mysql", "test_scan_receipts_mysql", "test_scanner_phones_mysql", "test_settings_mysql",
     "test_shared_scanner_mysql", "test_scanner_without_shifts_mysql", "test_visitor_meal_types_mysql", "test_visitor_bulk_mysql", "test_newest_first_mysql",
     "test_import_departments_mysql", "test_employee_meal_types_mysql", "test_meal_export_mysql",
+    "test_roles_dept_mysql",
 )
 
 

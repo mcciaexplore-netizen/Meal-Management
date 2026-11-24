@@ -112,7 +112,7 @@ class ScannerPhoneService:
     def create_code(self, context, label, active_until):
         label = required_text(label, "SCANNER_LABEL", 100)
         with self.database.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             now = tx.now()
             until = active_until_for(active_until, now)
             expires = now + CODE_LIFETIME
@@ -137,7 +137,7 @@ class ScannerPhoneService:
 
     def list(self, context):
         with self.database.transaction() as tx:
-            require_actor(tx, context, {"ADMIN"})
+            require_actor(tx, context, {"SUPER_ADMIN"})
             now = tx.now()
             phones = tx.all(
                 "SELECT id, label, source, created_at, code_expires_at, activated_at, active_until "
@@ -162,7 +162,7 @@ class ScannerPhoneService:
     def revoke(self, context, phone_id):
         phone_id = _phone_id(phone_id)
         with self.database.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             row = tx.one(
                 "SELECT id, label, source, activated_at, revoked_at FROM scanner_phones WHERE id = %s FOR UPDATE",
                 (phone_id,),

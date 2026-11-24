@@ -97,7 +97,7 @@ class EmployeeService:
     def create_department(self, context, name):
         name = required_text(name, "department_name", 100)
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             try:
                 department_id = tx.insert(
                     "INSERT INTO departments (name, is_active) VALUES (%s, %s)",
@@ -266,7 +266,7 @@ class EmployeeService:
         if meal_type_ids is None:
             raise DomainError("INVALID_MEAL_TYPE_IDS")
         with self.db.transaction() as tx:
-            require_actor(tx, context, {"ADMIN"})
+            require_actor(tx, context, {"SUPER_ADMIN"})
             employees, current, changing = self._meal_type_plan(tx, employee_ids, tuple(meal_type_ids), lock=False)
             names = {row["id"]: row["name"] for row in tx.all("SELECT id, name FROM meal_types")}
         return {
@@ -287,7 +287,7 @@ class EmployeeService:
         if type(expected_changes) is not int or not 0 <= expected_changes <= len(employee_ids):
             raise DomainError("INVALID_EXPECTED_CHANGES")
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             employees, current, changing = self._meal_type_plan(tx, employee_ids, tuple(meal_type_ids), lock=True)
             if len(changing) != expected_changes:
                 raise DomainError("EMPLOYEE_MEAL_TYPES_COUNT_CHANGED")
@@ -553,7 +553,7 @@ class EmployeeService:
         _positive_id(employee_id, "employee_id")
         reason = required_text(reason, "removal_reason", 255)
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             employee = tx.one(
                 "SELECT id, employee_code, full_name, email, is_active "
                 "FROM employees WHERE id = %s FOR UPDATE",
@@ -604,7 +604,7 @@ class EmployeeService:
         reason = required_text(reason, "removal_reason", 255)
         placeholders = ", ".join(["%s"] * len(identifiers))
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             employees = tx.all(
                 "SELECT id, employee_code, full_name, email, is_active "
                 f"FROM employees WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE",

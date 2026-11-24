@@ -353,7 +353,7 @@ class QueryService:
             waiters = tx.all(
                 "SELECT DISTINCT s.id, s.display_name FROM staff_accounts s "
                 "JOIN staff_account_roles r ON r.staff_id = s.id "
-                "WHERE s.is_active = 1 AND r.role_code IN ('ADMIN', 'WAITER') ORDER BY s.display_name"
+                "WHERE s.is_active = 1 AND r.role_code IN ('SUPER_ADMIN', 'ADMIN', 'WAITER') ORDER BY s.display_name"
             ) if admin else []
             shared = tx.one(
                 "SELECT p.scanner_id, p.meal_type_id, d.location_id FROM scan_app_settings p "

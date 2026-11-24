@@ -112,7 +112,7 @@ class MealReportExport:
         filename = report_filename(start, end)
         with self.lock.hold():
             with self.database.transaction() as tx:
-                actor = require_actor(tx, context, {"ADMIN"})
+                actor = require_actor(tx, context, {"SUPER_ADMIN"})
                 staff = tx.one("SELECT display_name, email FROM staff_accounts WHERE id = %s", (actor.staff_id,))
                 filters, params = meal_filters(start_utc, end_utc, employee_id, meal_type_id, department_id)
                 counted = tx.one("SELECT COUNT(*) AS n, MAX(m.id) AS top " + MEAL_FROM + " AND ".join(filters), params)
@@ -138,7 +138,7 @@ class MealReportExport:
                 if summary["meals"] != counted["n"]:
                     raise DomainError("REPORT_UNCONFIRMED")
                 with self.database.transaction() as tx:
-                    actor = require_actor(tx, context, {"ADMIN"})
+                    actor = require_actor(tx, context, {"SUPER_ADMIN"})
                     audit(tx, actor.staff_id, "MEAL_REPORT_EXPORTED", "meal_report", filename, after={
                         "from": start.isoformat(), "through": end.isoformat(), "employee_id": employee_id,
                         "department_id": department_id, "meal_type_id": meal_type_id,

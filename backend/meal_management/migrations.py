@@ -220,7 +220,6 @@ class MigrationRunner:
                 connection.commit()
                 for statement in migration.statements:
                     tx.execute(statement)
-                self._verify_post_migration(tx, migration.version)
                 tx.execute(
                     "UPDATE schema_migrations SET status = 'APPLIED', applied_at = UTC_TIMESTAMP(6) "
                     "WHERE version = %s AND checksum = %s",
@@ -231,48 +230,6 @@ class MigrationRunner:
             return tuple(applied)
         finally:
             self._close(connection, tx, lock_name)
-
-    def _verify_post_migration(self, tx, version):
-        if version == 17:
-            tables = {row["name"] for row in _schema_objects(tx)}
-            if "email_queue" in tables:
-                tx.execute("DROP TRIGGER IF EXISTS email_queue_approval_guard")
-                tx.execute(
-                    "CREATE TRIGGER email_queue_approval_guard "
-                    "BEFORE UPDATE ON email_queue "
-                    "FOR EACH ROW "
-                    "BEGIN "
-                    "    IF NOT (NEW.id <=> OLD.id) OR NOT (NEW.qr_id <=> OLD.qr_id) "
-                    "        OR NOT (NEW.recipient_email <=> OLD.recipient_email) "
-                    "        OR NOT (NEW.created_at <=> OLD.created_at) "
-                    "        OR NOT (NEW.delivery_mode <=> OLD.delivery_mode) "
-                    "        OR NOT (NEW.bulk_batch_id <=> OLD.bulk_batch_id) "
-                    "        OR (OLD.approved_by_staff_id IS NOT NULL AND ( "
-                    "            NOT (NEW.approved_by_staff_id <=> OLD.approved_by_staff_id) "
-                    "            OR NOT (NEW.approved_at <=> OLD.approved_at) "
-                    "        )) THEN "
-                    "        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Email approval attribution is immutable'; "
-                    "    END IF; "
-                    "    IF OLD.approved_by_staff_id IS NULL AND NEW.approved_by_staff_id IS NOT NULL "
-                    "        AND NOT EXISTS ( "
-                    "            SELECT 1 FROM staff_accounts s JOIN staff_account_roles r ON r.staff_id = s.id "
-                    "            WHERE s.id = NEW.approved_by_staff_id AND s.is_active = 1 "
-                    "                AND s.is_scanner = 0 AND r.role_code IN ('ADMIN', 'SUPER_ADMIN') "
-                    "        ) THEN "
-                    "        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Email approval requires an administrator'; "
-                    "    END IF; "
-                    "END"
-                )
-            if "staff_accounts" in tables and "staff_account_roles" in tables:
-                interactive_count = tx.one("SELECT COUNT(*) AS total FROM staff_accounts WHERE is_scanner = 0")["total"]
-                if interactive_count > 0:
-                    super_admin = tx.one(
-                        "SELECT COUNT(*) AS total FROM staff_accounts s "
-                        "JOIN staff_account_roles r ON r.staff_id = s.id "
-                        "WHERE s.email = 'mcciaexplore@gmail.com' AND r.role_code = 'SUPER_ADMIN' AND s.is_active = 1"
-                    )["total"]
-                    if super_admin < 1:
-                        raise DomainError("MIGRATION_017_ACTIVE_SUPER_ADMIN_REQUIRED")
 
 
 POSTGRES_MIGRATIONS = Path(__file__).resolve().parents[2] / "database" / "postgres"

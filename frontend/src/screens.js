@@ -9,7 +9,7 @@ import { showEmployeeImport } from "./employee_import.js";
 import { openBulkMealTypes } from "./employee_meal_types.js";
 import { downloadMealReport } from "./meal_export.js";
 import { bulkRemovalPayload } from "./bulk_removal.js";
-import { bindCatalogPanel, catalogKinds, isActive, staffEditDialog } from "./office_settings.js";
+import { bindCatalogPanel, catalogKinds, isActive, staffDepartmentField, staffDepartmentId, staffEditDialog } from "./office_settings.js";
 import { activeMealTypes, mealTypeCheckboxes, sameMealTypes, selectedMealTypeIds, visitorMealTypeLines } from "./meal_types.js";
 import { SENDING_DISABLED, confirmSendText, departmentEventLine, emailActionLabel, emailStatusBadge } from "./visitor_qrs.js";
 
@@ -676,7 +676,7 @@ export async function settings(target, context) {
     target.querySelector("#more-staff")?.addEventListener("click", () => loadStaff(true).catch(error => notify(error.message, "error")));
     target.querySelectorAll('[data-action="staff-edit"]').forEach(button => button.onclick = () => {
       const account = staffRows.find(row => Number(row.staff_id ?? row.id) === Number(button.dataset.id));
-      staffEditDialog(account, context.catalog, async () => { await context.refreshCatalog(); await loadStaff(); });
+      staffEditDialog(account, context, async () => { await context.refreshCatalog(); await loadStaff(); });
     });
     target.querySelectorAll('[data-action="staff-status"]').forEach(button => button.onclick = () => {
       const account = staffRows.find(row => Number(row.staff_id ?? row.id) === Number(button.dataset.id));
@@ -702,10 +702,9 @@ export async function settings(target, context) {
     drawStaff();
   });
   target.querySelector("#new-staff").onclick = () => {
-    const departments = employeeDepartmentOptions(context.catalog?.departments ?? []);
-    const dialog = modal("Create a staff account", `<p class="muted small">Choose a strong, unique password and share it privately with the staff member.</p><form>${field("Display name", "display_name", "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", "", "email", 'required maxlength="254" autocomplete="off"')}${field("Password", "password", "", "password", 'required minlength="12" maxlength="1024" autocomplete="new-password"')}<label>Workspace role<select name="role"><option value="ADMIN">Administrator</option><option value="SUPER_ADMIN">Super Administrator</option></select></label>${selectField("Department (optional)", "department_id", departments, "")}${formEnd("Create account")}</form>`);
+    const dialog = modal("Create a staff account", `<p class="muted small">Choose a strong, unique password and share it privately with the staff member.</p><form>${field("Display name", "display_name", "", "text", 'required maxlength="150" autocomplete="name"')}${field("Email address", "email", "", "email", 'required maxlength="254" autocomplete="off"')}${field("Password", "password", "", "password", 'required minlength="12" maxlength="1024" autocomplete="new-password"')}<label>Workspace role<select name="role"><option value="ADMIN">Administrator</option><option value="SUPER_ADMIN">Super Administrator</option></select></label>${staffDepartmentField(context.catalog?.departments)}${formEnd("Create account")}</form>`);
     formAction(dialog.querySelector("form"), async data => {
-      const department_id = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: context.refreshCatalog });
+      const department_id = await staffDepartmentId(data.get("department_id"), context);
       await api("/staff", { method: "POST", body: { display_name: data.get("display_name"), email: data.get("email"), password: data.get("password"), roles: [data.get("role")], department_id } });
       closeModal();
       notify("Staff account created.");

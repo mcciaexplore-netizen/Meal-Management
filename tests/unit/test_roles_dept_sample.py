@@ -163,3 +163,36 @@ class RolesDepartmentSampleSuite(ApiTestCase):
         clean_csv, errors_csv = validate_rows(rows_csv)
         self.assertEqual(len(clean_csv), 2)
         self.assertEqual(errors_csv, [])
+
+    def test_admin_with_no_department_blocked_from_visitor_qrs_only(self):
+        self.harness.login("admin_no_dept")
+        master_body = {
+            "company_name": "Vendors Inc", "contact_name": "Anita Roy", "email": "anita@example.test",
+            "phone": "+919876543210", "meal_limit": 5, "meal_type_ids": [1], "department_id": 1,
+        }
+        res_master = self.harness.post("/api/master-qrs", json=master_body)
+        self.assertEqual(res_master.status_code, 403)
+        self.assertEqual(res_master.json()["error"]["code"], "ADMIN_DEPARTMENT_REQUIRED")
+
+        res_replace = self.harness.post("/api/master-qrs/1/replace", json=master_body)
+        self.assertEqual(res_replace.status_code, 403)
+        self.assertEqual(res_replace.json()["error"]["code"], "ADMIN_DEPARTMENT_REQUIRED")
+
+        batch_body = {
+            "request_id": str(uuid4()), "source_name": "visitors.xlsx", "expires_at": "2026-11-30T18:00:00+05:30",
+            "meal_type_ids": [1], "department_id": 1,
+            "rows": [{"row": 2, "sr_no": "1", "person_name": "P1", "company_name": "C1", "phone": "+919876543210", "email": ""}],
+        }
+        res_batch = self.harness.post("/api/visitor-batches", json=batch_body)
+        self.assertEqual(res_batch.status_code, 403)
+        self.assertEqual(res_batch.json()["error"]["code"], "ADMIN_DEPARTMENT_REQUIRED")
+
+        self.assertEqual(self.client.get("/api/employees").status_code, 200)
+        self.assertEqual(self.client.get("/api/reports/meals?start=2026-11-01T00:00:00Z&end=2026-11-05T00:00:00Z").status_code, 200)
+        self.assertEqual(self.client.get("/api/reports/scans?start=2026-11-01T00:00:00Z&end=2026-11-05T00:00:00Z").status_code, 200)
+        self.assertEqual(self.client.get("/api/email-queue").status_code, 200)
+        self.assertEqual(self.client.get("/api/master-qrs").status_code, 200)
+        self.assertEqual(self.client.get("/api/visitor-batches").status_code, 200)
+        self.assertEqual(self.client.get("/api/visitor-batches/sample.xlsx").status_code, 200)
+        self.assertEqual(self.client.get("/api/visitor-batches/sample.csv").status_code, 200)
+

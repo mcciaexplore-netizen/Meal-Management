@@ -312,7 +312,7 @@ class ServingStaffAccessTests(unittest.TestCase):
                 self.context, identifier, token, 7, "SCANNER", 1, 2, "Ravi Patel"
             )
         self.assertEqual(authorization, 51)
-        self.assertIn("role_code IN ('ADMIN', 'WAITER')", self.tx.one.call_args_list[1].args[0])
+        self.assertIn("role_code IN ('SUPER_ADMIN', 'ADMIN', 'WAITER')", self.tx.one.call_args_list[1].args[0])
         self.assertEqual(self.tx.insert.call_args.args[1][5], 7)
 
     def test_waiter_cannot_gain_admin_authorization_permission(self):

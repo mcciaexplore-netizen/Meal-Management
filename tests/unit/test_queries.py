@@ -205,7 +205,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(set(result), {"departments", "meal_types", "locations", "scanners", "waiters", "shared"})
         self.assertEqual(set(result["shared"]), {"scanner_id", "meal_type_id", "location_id"})
         self.assertEqual(self.tx.all.call_count, 5)
-        self.assertIn("r.role_code IN ('ADMIN', 'WAITER')", self.tx.all.call_args.args[0])
+        self.assertIn("r.role_code IN ('SUPER_ADMIN', 'ADMIN', 'WAITER')", self.tx.all.call_args.args[0])
         self.assertIn("SELECT DISTINCT", self.tx.all.call_args.args[0])
 
     def test_waiter_authorizations_are_scoped_to_authenticated_actor(self):

@@ -45,7 +45,7 @@ class CatalogService:
         code = required_text(code, "LOCATION_CODE", 32)
         name = required_text(name, "LOCATION_NAME", 150)
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             try:
                 location_id = tx.insert(
                     "INSERT INTO locations (code, name, is_active) VALUES (%s, %s, %s)",
@@ -66,7 +66,7 @@ class CatalogService:
         name = required_text(name, "SCANNER_NAME", 150)
         _positive_id(location_id, "LOCATION_ID")
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             location = tx.one(
                 "SELECT id, is_active FROM locations WHERE id = %s FOR SHARE",
                 (location_id,),
@@ -93,7 +93,7 @@ class CatalogService:
         code = required_text(code, "MEAL_TYPE_CODE", 32)
         name = required_text(name, "MEAL_TYPE_NAME", 100)
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             try:
                 meal_type_id = tx.insert(
                     "INSERT INTO meal_types (code, name, is_active) VALUES (%s, %s, %s)",
@@ -117,7 +117,7 @@ class CatalogService:
             raise DomainError("INVALID_" + catalog + "_STATUS")
         table = _CATALOGS[catalog]
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             row = tx.one(
                 f"SELECT id, code, name, is_active FROM {table} WHERE id = %s FOR UPDATE",
                 (identifier,),
@@ -151,7 +151,7 @@ class CatalogService:
         name = required_text(name, catalog + "_NAME", name_limit)
         table = _CATALOGS[catalog]
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             row = tx.one(f"SELECT id, code, name FROM {table} WHERE id = %s FOR UPDATE", (identifier,))
             if row is None:
                 raise DomainError(catalog + "_NOT_FOUND")
@@ -186,7 +186,7 @@ class CatalogService:
         _positive_id(department_id, "DEPARTMENT_ID")
         name = required_text(name, "DEPARTMENT_NAME", 100)
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             row = tx.one("SELECT id, name FROM departments WHERE id = %s FOR UPDATE", (department_id,))
             if row is None:
                 raise DomainError("DEPARTMENT_NOT_FOUND")
@@ -215,7 +215,7 @@ class CatalogService:
     def department_usage(self, context, department_id):
         _positive_id(department_id, "DEPARTMENT_ID")
         with self.db.transaction() as tx:
-            require_actor(tx, context, {"ADMIN"})
+            require_actor(tx, context, {"SUPER_ADMIN"})
             if tx.one("SELECT id FROM departments WHERE id = %s", (department_id,)) is None:
                 raise DomainError("DEPARTMENT_NOT_FOUND")
             return {"id": department_id, "active_employees": int(self._active_employees(tx, department_id))}
@@ -225,7 +225,7 @@ class CatalogService:
         if type(is_active) is not bool or type(confirm) is not bool:
             raise DomainError("INVALID_DEPARTMENT_STATUS")
         with self.db.transaction() as tx:
-            actor = require_actor(tx, context, {"ADMIN"})
+            actor = require_actor(tx, context, {"SUPER_ADMIN"})
             row = tx.one("SELECT id, name, is_active FROM departments WHERE id = %s FOR UPDATE", (department_id,))
             if row is None:
                 raise DomainError("DEPARTMENT_NOT_FOUND")

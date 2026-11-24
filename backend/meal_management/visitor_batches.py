@@ -497,16 +497,17 @@ def generate_visitor_sample_excel():
 
     ws_instructions = wb.create_sheet(title="Instructions")
     instructions = [
-        ["Bulk Visitor Import Instructions"],
+        ["Bulk visitor QRs: how to fill this file"],
         [""],
-        ["1. Row Limit: You can import up to 200 visitor rows in a single file."],
-        ["2. Required Columns: The first sheet ('Visitors') must keep the exact headers in row 1: Sr. No., Person Name, Company Name, Phone, Email."],
-        ["3. Sr. No.: Must be sequential positive whole numbers (1, 2, 3...) formatted as text or plain numbers."],
-        ["4. Phone Rules: Must be a valid 10-digit Indian phone number or international format (+91)."],
-        ["5. Email Rules: Email is optional for each person. When provided, it must be a valid email address."],
-        ["6. Sample Addresses: example.com addresses shown in the sample rows are for illustration only and must be replaced with real visitor email addresses."],
-        ["7. Duplicates Rejected: Duplicate Sr. No., duplicate Phone numbers, and duplicate Email addresses within the file are rejected."],
-        ["8. Plain Values: Values must be plain text without Excel formulas."],
+        ["1. Keep the first sheet (Visitors) and its row 1 headers exactly: Sr. No., Person Name, Company Name, Phone, Email."],
+        ["2. The two rows in Visitors are EXAMPLES. Delete or overwrite them with your real visitors before uploading."],
+        ["3. example.com email addresses are examples only and must be replaced with each visitor's real email, or left blank."],
+        ["4. Up to 200 people per file, and the file must be at most 1 MB."],
+        ["5. Sr. No.: a positive whole number (up to 6 digits), different on every row."],
+        ["6. Person Name and Company Name: required, at most 150 characters."],
+        ["7. Phone: required, 7 to 15 digits; +, spaces, brackets, dashes and dots are allowed. Each phone must be different."],
+        ["8. Email: optional. People without one get no email. Each email must be different."],
+        ["9. Type plain values only, no formulas. Sr. No. and Phone are text cells so leading zeros and + are kept."],
     ]
     for r_idx, row in enumerate(instructions, start=1):
         for c_idx, val in enumerate(row, start=1):

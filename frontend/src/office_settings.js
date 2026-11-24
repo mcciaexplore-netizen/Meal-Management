@@ -142,18 +142,22 @@ export function bindCatalogPanel(section, kind, getRows, shared, refresh) {
   return render;
 }
 
-export function staffEditDialog(account, catalog, done) {
-  if (typeof catalog === "function") {
-    done = catalog;
-    catalog = null;
-  }
+export const staffDepartmentField = (departments, selected = "") =>
+  selectField("Department", "department_id", employeeDepartmentOptions(departments ?? [], selected || null), selected ?? "", { required: false, placeholder: "No department" });
+
+export async function staffDepartmentId(value, context) {
+  if (value === null || value === undefined || value === "") return null;
+  return resolveEmployeeDepartment(value, { request: api, refreshCatalog: context.refreshCatalog });
+}
+
+export function staffEditDialog(account, context, done) {
   const isSuperAdmin = (account.roles ?? []).includes("SUPER_ADMIN");
   const isInteractive = !account.is_scanner && !(account.roles ?? []).includes("WAITER");
   const roleField = isInteractive
     ? `<label>Workspace role<select name="role"><option value="ADMIN" ${!isSuperAdmin ? "selected" : ""}>Administrator</option><option value="SUPER_ADMIN" ${isSuperAdmin ? "selected" : ""}>Super Administrator</option></select></label>`
     : `<input type="hidden" name="role" value="${account.roles?.[0] || 'WAITER'}">`;
   const departmentField = isInteractive
-    ? selectField("Department (optional)", "department_id", employeeDepartmentOptions(catalog?.departments ?? [], account.department_id), account.department_id ?? "")
+    ? staffDepartmentField(context.catalog?.departments, account.department_id ?? "")
     : "";
   const dialog = modal("Edit staff account", `<form>${field("Display name", "display_name", account.display_name, "text", 'required maxlength="150" autocomplete="off"')}${field("Email address", "email", account.email, "email", 'required maxlength="254" autocomplete="off"')}<p class="alert" role="status" data-email-warning hidden>Changing the email changes this person's sign-in email. They will be signed out everywhere and must sign in with the new address.</p>${roleField}${departmentField}<div data-form-error></div><div class="form-actions"><button type="submit" class="button primary">Save changes</button></div></form>`);
   const form = dialog.querySelector("form");
@@ -164,7 +168,7 @@ export function staffEditDialog(account, catalog, done) {
   formAction(form, async data => {
     let deptId = undefined;
     if (isInteractive) {
-      deptId = await resolveEmployeeDepartment(data.get("department_id"), { request: api, refreshCatalog: () => {} });
+      deptId = await staffDepartmentId(data.get("department_id"), context);
     }
     const role = data.get("role") || account.roles?.[0] || "ADMIN";
     const changes = staffChanges(account, {

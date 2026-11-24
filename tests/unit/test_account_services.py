@@ -89,6 +89,20 @@ class AccountServiceTests(unittest.TestCase):
         self.tx.execute.assert_not_called()
         self.assertTrue(self.db.rolled_back)
 
+    def test_last_active_super_admin_cannot_be_deactivated(self):
+        self.tx.one.side_effect = [
+            {"name": "bootstrap"},
+            {"id": 7, "is_active": True},
+            {"total": 1},
+        ]
+        self.tx.all.return_value = [{"role_code": "SUPER_ADMIN"}]
+        with patch("meal_management.accounts.require_actor", return_value=self.actor):
+            with self.assertRaises(DomainError) as error:
+                StaffService(self.db).set_active(self.context, 7, False)
+        self.assertEqual(error.exception.code, "LAST_ACTIVE_SUPER_ADMIN")
+        self.tx.execute.assert_not_called()
+        self.assertTrue(self.db.rolled_back)
+
     def test_role_changes_require_authorized_server_context(self):
         self.tx.one.return_value = {"name": "bootstrap"}
         with patch(
@@ -151,7 +165,7 @@ class AccountServiceTests(unittest.TestCase):
         self.assertTrue(self.db.rolled_back)
 
     def test_first_human_admin_can_bootstrap_after_scanner_setup(self):
-        self.tx.one.side_effect = [{"name": "bootstrap"}, None, {"code": "SUPER_ADMIN"}]
+        self.tx.one.side_effect = [{"name": "bootstrap"}, None, {"code": "SUPER_ADMIN"}, {"code": "SUPER_ADMIN"}]
         self.tx.insert.return_value = 7
         with patch("meal_management.accounts.hash_password", return_value="secure-encoded"):
             identifier = StaffService(self.db).bootstrap_admin(

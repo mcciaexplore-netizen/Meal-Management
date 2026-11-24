@@ -38,7 +38,7 @@ def require_actor(tx, context, roles):
     if roles and not effective.intersection(roles):
         raise DomainError("ROLE_REQUIRED")
     tx.execute("UPDATE staff_sessions SET last_seen_at = %s WHERE id = %s", (now, session["id"]))
-    return Actor(session["staff_id"], actual)
+    return Actor(session["staff_id"], frozenset(effective))
 
 
 def require_scan_actor(tx, context):

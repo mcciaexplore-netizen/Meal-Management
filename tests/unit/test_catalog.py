@@ -32,7 +32,7 @@ class CatalogTests(unittest.TestCase):
         sql, params = self.tx.insert.call_args.args
         self.assertNotIn(name, sql)
         self.assertEqual(params, ("NORTH", name, True))
-        self.require_actor.assert_called_once_with(self.tx, self.context, {"ADMIN"})
+        self.require_actor.assert_called_once_with(self.tx, self.context, {"SUPER_ADMIN"})
         self.audit.assert_called_once_with(
             self.tx, 42, "LOCATION_CREATED", "locations", 7,
             after={"code": "NORTH", "name": name, "is_active": True},

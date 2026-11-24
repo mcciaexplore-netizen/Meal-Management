@@ -25,15 +25,30 @@ class MealServicesFixture(IsolatedMySQLTestCase):
         waiter_password = secrets.token_urlsafe(32)
         cls.admin_id = cls.staff.bootstrap_admin("Test Administrator", "admin@example.test", admin_password)
         cls.admin_context = cls.staff.authenticate("admin@example.test", admin_password)
-        cls.waiter_id = cls.staff.create_staff(
-            cls.admin_context, "Test Waiter", "waiter@example.test", waiter_password, {"WAITER"}
-        )
+        cls.legacy_schema = not cls.scalar_admin("SELECT COUNT(*) FROM roles WHERE code = 'SUPER_ADMIN'")
+        if not cls.legacy_schema:
+            cls.waiter_id = cls.staff.create_staff(
+                cls.admin_context, "Test Waiter", "waiter@example.test", waiter_password, {"WAITER"}
+            )
+        else:
+            from meal_management.security import hash_password
+
+            with cls.db.transaction() as tx:
+                cls.waiter_id = tx.insert(
+                    "INSERT INTO staff_accounts (display_name, email, password_hash) VALUES (%s, %s, %s)",
+                    ("Test Waiter", "waiter@example.test", hash_password(waiter_password)),
+                )
+                tx.execute("INSERT INTO staff_account_roles (staff_id, role_code) VALUES (%s, 'WAITER')", (cls.waiter_id,))
         cls.waiter_context = cls.staff.authenticate("waiter@example.test", waiter_password)
         cls.waiter_context_two = cls.staff.authenticate("waiter@example.test", waiter_password)
         cls.vault = TokenVault(cls.settings.qr_encryption_keys)
         cls.qr = QrService(cls.db, cls.vault, QrRenderer())
         cls.employees = EmployeeService(cls.db, cls.qr)
-        cls.department_id = cls.employees.create_department(cls.admin_context, "Integration Department")
+        if cls.legacy_schema:
+            with cls.db.transaction() as tx:
+                cls.department_id = tx.insert("INSERT INTO departments (name) VALUES (%s)", ("Integration Department",))
+        else:
+            cls.department_id = cls.employees.create_department(cls.admin_context, "Integration Department")
         cls.meals = MealService(cls.db, lock_hours=0)
         cls.approvals = ApprovalService(cls.db)
         with cls.db.transaction() as tx:
@@ -49,6 +64,15 @@ class MealServicesFixture(IsolatedMySQLTestCase):
                 "INSERT INTO meal_types (code, name) VALUES (%s, %s)",
                 ("TEST-LUNCH", "Integration Lunch"),
             )
+
+    @classmethod
+    def scalar_admin(cls, statement):
+        cursor = cls.admin_connection.cursor()
+        try:
+            cursor.execute(statement)
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
 
     def employee(self):
         suffix = uuid4().hex[:12]

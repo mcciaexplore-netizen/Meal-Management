@@ -1,5 +1,4 @@
 from datetime import timedelta
-from functools import lru_cache
 
 from .auth import audit, require_actor
 from .errors import DomainError
@@ -17,7 +16,6 @@ from .security import (
 _UNSET = object()
 
 
-@lru_cache(maxsize=1)
 def _dummy_password_hash():
     return hash_password(generate_token())
 
@@ -26,11 +24,20 @@ def _role_codes(roles):
     if not isinstance(roles, (list, tuple, set, frozenset)) or not roles:
         raise DomainError("INVALID_ROLES")
     result = {required_text(role, "role", 32).upper() for role in roles}
-    if not result <= {"SUPER_ADMIN", "ADMIN", "WAITER", "AUDITOR"}:
-        raise DomainError("INVALID_ROLES")
-    if len(result) != 1 or not result <= {"SUPER_ADMIN", "ADMIN"}:
+    if not result <= {"SUPER_ADMIN", "ADMIN", "WAITER", "AUDITOR"} or {"SUPER_ADMIN", "ADMIN"} <= result:
         raise DomainError("INVALID_ROLES")
     return sorted(result)
+
+
+def _department_id(tx, department_id):
+    if department_id is None:
+        return None
+    if type(department_id) is not int or not 1 <= department_id <= 2**64 - 1:
+        raise DomainError("INVALID_DEPARTMENT_ID")
+    department = tx.one("SELECT id, is_active FROM departments WHERE id = %s FOR SHARE", (department_id,))
+    if department is None or not department["is_active"]:
+        raise DomainError("DEPARTMENT_UNAVAILABLE")
+    return department_id
 
 
 class StaffService:
@@ -60,39 +67,20 @@ class StaffService:
     def _protect_last_super_admin(self, tx, staff, future_active, future_roles):
         current_roles = {
             row["role_code"]
-            for row in tx.all(
-                "SELECT role_code FROM staff_account_roles WHERE staff_id = %s",
-                (staff["id"],),
-            )
+            for row in tx.all("SELECT role_code FROM staff_account_roles WHERE staff_id = %s", (staff["id"],))
         }
-        removing_super_admin = (
-            staff["is_active"]
-            and "SUPER_ADMIN" in current_roles
-            and (not future_active or "SUPER_ADMIN" not in future_roles)
+        losing = staff["is_active"] and "SUPER_ADMIN" in current_roles and (
+            not future_active or "SUPER_ADMIN" not in future_roles
         )
-        if removing_super_admin:
-            count = tx.one(
-                "SELECT COUNT(*) AS total FROM staff_accounts AS s "
-                "JOIN staff_account_roles AS r ON r.staff_id = s.id "
-                "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = %s",
-                ("SUPER_ADMIN",),
-            )["total"]
-            if count <= 1:
-                raise DomainError("LAST_ACTIVE_SUPER_ADMIN")
-        removing_admin = (
-            staff["is_active"]
-            and "ADMIN" in current_roles
-            and (not future_active or "ADMIN" not in future_roles)
-        )
-        if removing_admin:
-            count = tx.one(
-                "SELECT COUNT(*) AS total FROM staff_accounts AS s "
-                "JOIN staff_account_roles AS r ON r.staff_id = s.id "
-                "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = %s",
-                ("ADMIN",),
-            )["total"]
-            if count <= 1:
-                raise DomainError("LAST_ACTIVE_ADMIN")
+        if not losing:
+            return
+        count = tx.one(
+            "SELECT COUNT(*) AS total FROM staff_accounts AS s "
+            "JOIN staff_account_roles AS r ON r.staff_id = s.id "
+            "WHERE s.is_active = 1 AND s.is_scanner = 0 AND r.role_code = 'SUPER_ADMIN'",
+        )["total"]
+        if count <= 1:
+            raise DomainError("LAST_ACTIVE_SUPER_ADMIN")
 
     def bootstrap_admin(self, display_name, email, password):
         display_name = required_text(display_name, "display_name", 150)
@@ -109,14 +97,15 @@ class StaffService:
                 "VALUES (%s, %s, %s, %s, %s, %s)",
                 (display_name, email, password_hash, True, now, now),
             )
-            self._add_roles(tx, staff_id, ["SUPER_ADMIN"])
+            role = "SUPER_ADMIN" if tx.one("SELECT code FROM roles WHERE code = 'SUPER_ADMIN'") else "ADMIN"
+            self._add_roles(tx, staff_id, [role])
             audit(
                 tx,
                 staff_id,
                 "STAFF_BOOTSTRAPPED",
                 "staff_accounts",
                 staff_id,
-                after={"display_name": display_name, "email": email, "roles": ["SUPER_ADMIN"]},
+                after={"display_name": display_name, "email": email, "roles": [role]},
             )
         return staff_id
 
@@ -130,12 +119,7 @@ class StaffService:
             actor = require_actor(tx, context, {"SUPER_ADMIN"})
             if tx.one("SELECT id FROM staff_accounts WHERE email = %s", (email,)):
                 raise DomainError("STAFF_EMAIL_EXISTS")
-            if department_id is not None:
-                if type(department_id) is not int or not 1 <= department_id <= 2**64 - 1:
-                    raise DomainError("INVALID_DEPARTMENT_ID")
-                dept = tx.one("SELECT id, is_active FROM departments WHERE id = %s", (department_id,))
-                if dept is None or not dept["is_active"]:
-                    raise DomainError("DEPARTMENT_UNAVAILABLE")
+            department_id = _department_id(tx, department_id)
             now = tx.now()
             staff_id = tx.insert(
                 "INSERT INTO staff_accounts "
@@ -270,23 +254,11 @@ class StaffService:
                 raise DomainError("STAFF_NOT_FOUND")
             if staff.get("is_scanner", False):
                 raise DomainError("SCANNER_ACCOUNT_PROTECTED")
-            if display_name is None:
-                display_name = staff["display_name"]
-            else:
-                display_name = required_text(display_name, "display_name", 150)
-            if email is None:
-                email = staff["email"]
-            else:
-                email = normalize_email(email)
-            if department_id is _UNSET:
-                department_id = staff.get("department_id")
-            elif department_id is not None:
-                if type(department_id) is not int or not 1 <= department_id <= 2**64 - 1:
-                    raise DomainError("INVALID_DEPARTMENT_ID")
-                dept = tx.one("SELECT id, is_active FROM departments WHERE id = %s", (department_id,))
-                if dept is None or not dept["is_active"]:
-                    raise DomainError("DEPARTMENT_UNAVAILABLE")
-            if (staff["display_name"], staff["email"], staff.get("department_id")) == (display_name, email, department_id):
+            display_name = staff["display_name"] if display_name is None else required_text(display_name, "display_name", 150)
+            email = staff["email"] if email is None else normalize_email(email)
+            department_id = staff.get("department_id") if department_id is _UNSET else _department_id(tx, department_id)
+            before = {"display_name": staff["display_name"], "email": staff["email"], "department_id": staff.get("department_id")}
+            if (before["display_name"], before["email"], before["department_id"]) == (display_name, email, department_id):
                 return {"staff_id": staff_id, "sessions_ended": 0}
             email_changed = staff["email"] != email
             if email_changed and tx.one("SELECT id FROM staff_accounts WHERE email = %s AND id <> %s", (email, staff_id)):
@@ -309,7 +281,7 @@ class StaffService:
                 )
             audit(
                 tx, actor.staff_id, "STAFF_UPDATED", "staff_accounts", staff_id,
-                before={"display_name": staff["display_name"], "email": staff["email"], "department_id": staff.get("department_id")},
+                before=before,
                 after={"display_name": display_name, "email": email, "department_id": department_id, "sessions_ended": ended},
             )
         return {"staff_id": staff_id, "sessions_ended": ended}

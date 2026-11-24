@@ -248,9 +248,9 @@ class TestDataResetMySQLTests(IsolatedMySQLTestCase):
         rows = self.query("SELECT s.id, s.display_name, s.email, s.is_active, s.is_scanner, r.role_code FROM staff_accounts s "
                           "JOIN staff_account_roles r ON r.staff_id = s.id WHERE s.id IN (1, 2) ORDER BY s.id")
         self.assertEqual([(row["id"], row["is_active"], row["is_scanner"], row["role_code"]) for row in rows],
-                         [(1, 1, 1, "WAITER"), (2, 1, 0, "ADMIN")])
+                         [(1, 1, 1, "WAITER"), (2, 1, 0, "SUPER_ADMIN")])
         self.assertEqual((rows[1]["display_name"], rows[1]["email"]), ("admin", "mcciaexplore@gmail.com"))
-        self.assertEqual({row["code"] for row in self.query("SELECT code FROM roles")}, {"ADMIN", "AUDITOR", "WAITER"})
+        self.assertEqual({row["code"] for row in self.query("SELECT code FROM roles")}, {"ADMIN", "AUDITOR", "SUPER_ADMIN", "WAITER"})
 
     def role_settings(self, default_role=True):
         grants = " ".join(row[0] for row in self.rows("SHOW GRANTS"))
